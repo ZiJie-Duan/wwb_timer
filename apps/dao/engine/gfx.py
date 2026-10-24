@@ -162,6 +162,8 @@ class Gfx:
         self.cut = Image.new("1", (W, H))
         self.k = SafeDraw(self.cut)
         self.threshold = BAYER_F  # 抖动阈值图：默认 Bayer（规则网点，在这个分辨率下最清楚）；BLUE 为蓝噪声
+        self.offset = (0, 0)     # 整帧平移（屏幕震动）
+        self.invert_all = False  # 整帧反色（闪白）
         self.tone = (0.06, 0.9)  # 色调：lum 在 lo 以下全黑、hi 以上全白，中间线性
         self.sharpen = 1.2       # 抖动前锐化（unsharp mask），小尺寸下保住边缘与形体；0 关闭
 
@@ -177,6 +179,8 @@ class Gfx:
         self.tone = (0.06, 0.9)
         self.sharpen = 1.2
         self.threshold = BAYER_F
+        self.offset = (0, 0)
+        self.invert_all = False
 
     def L(self) -> np.ndarray:
         """取灰度层来画（标记本帧用到了灰度）"""
@@ -186,6 +190,7 @@ class Gfx:
     def finish(self):
         """合成：灰度抖动 → 黑墨 → 白墨。引擎在场景画完一帧后调用"""
         if not self.lum_used and not self.cut.getbbox():
+            self._post()
             return
         ink = np.array(self.img, dtype=bool)
         if self.lum_used:
@@ -204,6 +209,26 @@ class Gfx:
             out &= ~np.array(self.cut, dtype=bool)
         out |= ink
         self.img.paste(Image.fromarray(out))
+        self._post()
+
+    def _post(self):
+        """屏幕震动与闪白"""
+        dx, dy = self.offset
+        if dx or dy or self.invert_all:
+            a = np.array(self.img, dtype=bool)
+            if dx or dy:
+                a = np.roll(a, (dy, dx), (0, 1))
+                if dy > 0:
+                    a[:dy] = False
+                elif dy < 0:
+                    a[dy:] = False
+                if dx > 0:
+                    a[:, :dx] = False
+                elif dx < 0:
+                    a[:, dx:] = False
+            if self.invert_all:
+                a = ~a
+            self.img.paste(Image.fromarray(a))
 
     # ------------------------------------------------------------ 文字
 
