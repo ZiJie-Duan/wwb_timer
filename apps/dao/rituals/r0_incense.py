@@ -138,7 +138,7 @@ class IncenseRitual(Ritual):
         left = "心香一炷"
         k = int(round(a * len(left)))
         g.vtext(3, 4, left[:k])
-        r = right if right is not None else f"第{cn_num(n)}炷"
+        r = right if right is not None else (f"第{cn_num(n)}炷" if n < 100 else f"{n}炷")  # 竖排最多 5 字
         g.vtext(113, 4, r[:max(0, int(round(a * len(r))))])
 
     def mx(self, g: Gfx, length: float, lit: tuple, t: float, smoke: bool = True):

@@ -4,8 +4,12 @@
     python -m wwb.remote wwb.showcase --seconds 30
     python -m wwb.remote wwb info                # 命令行也一样
     python -m wwb.remote --sync                  # 只同步
+    python -m wwb.remote --deploy apps.dao       # 同步并设为常驻程序（开机自启，崩溃重启）
+    python -m wwb.remote --deploy                # 同步并重启常驻程序（代码更新后）
+    python -m wwb.remote --svc status            # 常驻服务：status / start / stop / restart / logs [-f] / enable / disable
 
 输出实时传回本机；Ctrl+C 停止树莓派上的程序（程序照常发 RELEASE 交还设备）。
+常驻程序在运行时，临时运行别的程序会先停掉常驻程序，结束后再启动它（串口只能一个程序用）。
 用 ssh 公钥登录，复用同一条连接，rsync 只传有改动的文件。树莓派那边只需要 conda 环境（pyserial、numpy、pillow），
 不用安装 wwb：运行时 PYTHONPATH 指向同步过去的 host/。
 
@@ -48,19 +52,37 @@ def run(module: str, args: list[str]) -> int:
     return subprocess.run([*SSH, "-tt", "-o", "LogLevel=QUIET", TARGET, cmd]).returncode
 
 
+def svc(args: list[str], tty: bool = False) -> int:
+    """在树莓派上执行 python -m wwb.svc ..."""
+    cmd = f"cd {DIR} && WWB_PORT={shlex.quote(PORT)} PYTHONPATH=host exec {PYTHON} -m wwb.svc {shlex.join(args)}"
+    return subprocess.run([*SSH, *(["-tt", "-o", "LogLevel=QUIET"] if tty else []), TARGET, cmd]).returncode
+
+
 def main():
     argv = sys.argv[1:]
     if not argv or argv[0] in ("-h", "--help"):
         print(__doc__)
         return
+    if argv[0] == "--svc":
+        sys.exit(svc(argv[1:], tty=argv[1:2] == ["logs"]))
     sync()
     if argv[0] == "--sync":
         print(f"已同步到 {TARGET}:{DIR}")
         return
+    if argv[0] == "--deploy":
+        sys.exit(svc(["use", *argv[1:]]) if len(argv) > 1 else svc(["restart"]))
+    paused = svc(["active"]) == 0
+    if paused:
+        print("（常驻程序已暂停，结束后恢复）")
+        svc(["stop"])
     try:
-        sys.exit(run(argv[0], argv[1:]))
+        code = run(argv[0], argv[1:])
     except KeyboardInterrupt:  # Ctrl+C 已经送到树莓派，这里等 ssh 自己结束即可
-        pass
+        code = 130
+    finally:
+        if paused:
+            svc(["start"])
+    sys.exit(code)
 
 
 if __name__ == "__main__":

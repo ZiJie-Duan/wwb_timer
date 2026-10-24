@@ -49,6 +49,7 @@ class MyApp : public wwb::App {
   void input(Device &d, Input in, bool active, uint64_t t) override;  // 开关 / BOOT 变化，t 为变化时刻 µs
   void controller(Device &d, bool attached, uint64_t now) override;  // 控制器接入 / 断开
   void frame(Device &d, uint64_t now) override;                      // 约 60 次/秒，接管期间也调用（d.visible() 为 false）
+  size_t report(uint64_t now, uint8_t *out, size_t cap) override;    // 可选：给控制器的状态（协议 APP_STATE）
 };
 wwb::App *wwb::createApp() { return new MyApp(); }
 ```
@@ -57,6 +58,7 @@ wwb::App *wwb::createApp() { return new MyApp(); }
 - **数码管**：`d.seg(段码[4])`、`d.segConfig(亮度, 开/关)`；`wwb::segDigit()` 给数字段码。
 - **点阵**：`d.mx(行[8])`（行 0 在上，bit7 在左）、`d.mxIntensity(0-15)`。
 - **存储**：`d.load()` / `d.save()`，一小块二进制。
+- **上报**：`report()` 返回给控制器的状态，状态变了调 `d.changed()`，订阅了的控制器会收到 `APP_STATE` 事件。wwb timer 上报计时状态（格式见 [protocol.md](protocol.md)），控制器程序（如 dao timer）据此表演，时间始终以芯片为准。
 - 时间都是设备的 µs 时钟（与输入事件同一时钟）。不要用 `millis()` 之类平台函数，也不要用全局状态，模拟器重启设备时会重新 `createApp()`。
 
 换程序：改 `firmware/platformio.ini` 的 `build_src_filter` 和 `native/build_web.py` 的参数。

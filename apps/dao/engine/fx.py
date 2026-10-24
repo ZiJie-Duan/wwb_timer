@@ -211,33 +211,52 @@ def typewriter(g: Gfx, x: float, y: float, s: str, t: float, cps: float = 8.0, s
     return n >= len(s)
 
 
+_GLYPHS: dict = {}
+
+
+def _glyph(ch: str, size: int, scale: int):
+    """单字的字形遮罩（PIL '1'），缓存"""
+    from PIL import Image, ImageDraw
+    from .gfx import _FONT_FILES, font
+    key = (ch, size, scale)
+    img = _GLYPHS.get(key)
+    if img is None:
+        off = _FONT_FILES[size][1]
+        w = max(1, text_width(ch, size))
+        hh = _FONT_FILES[size][2] + 2
+        img = Image.new("1", (w, hh))
+        d = ImageDraw.Draw(img)
+        d.fontmode = "1"
+        d.text((0, -off), ch, font=font(size), fill=1)
+        if scale > 1:
+            img = img.resize((w * scale, hh * scale), Image.NEAREST)
+        _GLYPHS[key] = img
+    return img
+
+
 def brush_reveal(g: Gfx, x: float, y: float, s: str, p: float, size: int = 12, scale: int = 1, vertical: bool = False):
-    """毛笔书写：每个字从上到下“写”出来（扫描线遮罩）。p 0..1 为整串的进度"""
+    """毛笔书写：每个字从上到下“写”出来，笔尖跟着走。p 0..1 为整串的进度"""
     from .gfx import _FONT_FILES
     n = len(s)
     if n == 0:
         return
+    g.texts.append((s, size))
     ch_h = (_FONT_FILES[size][2] + 1) * scale
     per = 1 / n
-    cx, cy = x, y
+    cx, cy = int(round(x)), int(round(y))
     for i, ch in enumerate(s):
         k = clamp((p - i * per) / per)
         if k <= 0:
             break
-        cw = text_width(ch, size) * scale
+        glyph = _glyph(ch, size, scale)
+        cw = glyph.width
         if k >= 1:
-            g.text(cx, cy, ch, size, scale=scale)
+            g.img.paste(1, (cx, cy), glyph)
         else:
-            before = g.array()
-            g.text(cx, cy, ch, size, scale=scale)
-            after = g.array()
-            cut = int(cy + ch_h * k)
-            y0 = max(cut, 0)
-            after[y0:, int(cx):int(cx + cw + 1)] = before[y0:, int(cx):int(cx + cw + 1)]
-            g.put(after)
-            # 笔尖
-            g.d.rectangle((cx + cw * (0.3 + 0.4 * noise(p * 40, i)), cut - 1, cx + cw * (0.3 + 0.4 * noise(p * 40, i)) + 1, cut),
-                          fill=1)
+            cut = max(1, int(glyph.height * k))
+            g.img.paste(1, (cx, cy), glyph.crop((0, 0, cw, cut)))
+            tip = cx + cw * (0.3 + 0.4 * noise(p * 40, i))
+            g.d.rectangle((tip, cy + cut - 2, tip + 1, cy + cut - 1), fill=1)
         if vertical:
             cy += ch_h
         else:

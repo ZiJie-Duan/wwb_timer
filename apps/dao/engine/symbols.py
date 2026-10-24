@@ -60,7 +60,7 @@ def changed(lines) -> list[int]:
 
 
 def cast_coins(rng: random.Random) -> list[int]:
-    """三钱法：每爻掷三枚铜钱，正面（字）记 3、反面记 2，和为 6/7/8/9"""
+    """三钱法（火珠林）：每爻掷三枚铜钱，背面记 3、字面记 2，和为 6/7/8/9（三背老阳、三字老阴）"""
     return [sum(rng.choice((2, 3)) for _ in range(3)) for _ in range(6)]
 
 
@@ -85,10 +85,13 @@ def full_name(lines) -> str:
 def draw_line(g: Gfx, x: int, y: int, w: int, h: int, is_yang: bool, gap: int | None = None, fill: int = 1):
     """一爻：阳爻实线，阴爻中间断开"""
     if is_yang:
-        g.d.rectangle((x, y, x + w - 1, y + h - 1), fill=fill)
+        if w > 0 and h > 0:
+            g.d.rectangle((x, y, x + w - 1, y + h - 1), fill=fill)
     else:
         gap = gap if gap is not None else max(2, w // 4)
         half = (w - gap) // 2
+        if half <= 0 or h <= 0:
+            return
         g.d.rectangle((x, y, x + half - 1, y + h - 1), fill=fill)
         g.d.rectangle((x + w - half, y, x + w - 1, y + h - 1), fill=fill)
 
@@ -126,21 +129,31 @@ def _taiji_mask(n: int, r: float, cx: float, cy: float, angle: float) -> tuple[n
     return white & inside, inside
 
 
+_TAIJI_CACHE: dict = {}
+
+
+def _taiji_imgs(r: float, angle: float):
+    """(阳鱼遮罩, 阴鱼遮罩, 边长)，按角度量化缓存（每圈 96 档）"""
+    from PIL import Image
+    q = int(round(angle / (2 * math.pi) * 96)) % 96
+    key = (round(r * 2) / 2, q)
+    hit = _TAIJI_CACHE.get(key)
+    if hit is None:
+        n = int(2 * key[0] + 3)
+        white, inside = _taiji_mask(n, key[0], n / 2, n / 2, q / 96 * 2 * math.pi)
+        hit = (Image.fromarray(white), Image.fromarray(inside & ~white), n)
+        if len(_TAIJI_CACHE) > 600:
+            _TAIJI_CACHE.clear()
+        _TAIJI_CACHE[key] = hit
+    return hit
+
+
 def taiji(g: Gfx, cx: float, cy: float, r: float, angle: float = 0.0, outline: bool = True):
     """太极图：阳鱼亮、阴鱼暗（有外圈）；angle 弧度，正值顺时针"""
-    n = int(2 * r + 3)
+    white, dark, n = _taiji_imgs(r, angle)
     x0, y0 = int(round(cx - n / 2)), int(round(cy - n / 2))
-    white, inside = _taiji_mask(n, r, cx - x0, cy - y0, angle)
-    a = g.array()
-    for yy in range(n):
-        ay = y0 + yy
-        if not 0 <= ay < a.shape[0]:
-            continue
-        for_x = slice(max(0, -x0), min(n, a.shape[1] - x0))
-        ax = slice(x0 + for_x.start, x0 + for_x.stop)
-        row_in = inside[yy, for_x]
-        a[ay, ax] = np.where(row_in, white[yy, for_x], a[ay, ax])
-    g.put(a)
+    g.img.paste(1, (x0, y0), white)
+    g.img.paste(0, (x0, y0), dark)
     if outline:
         g.d.ellipse((cx - r - 1, cy - r - 1, cx + r + 1, cy + r + 1), outline=1)
 

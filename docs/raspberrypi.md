@@ -77,6 +77,27 @@ python -m wwb.remote --sync                  # 只同步
 - `PYTHONPATH` 指向同步过去的 `host/`，不需要 `pip install`；
 - `WWB_PORT` 设成串口，所有程序默认就用它。程序的 `--port` 默认值取自 `WWB_PORT`，没设时为 `/dev/ttyACM0`。
 
+## 常驻程序（开机自启）
+
+树莓派上用 systemd 用户服务 `wwb.service` 常驻一个程序（如 dao timer），崩溃 3 秒后自动重启，停止时程序照常交还设备。
+
+```bash
+# 电脑上
+python -m wwb.remote --deploy apps.dao       # 同步代码，设为常驻程序并启动
+python -m wwb.remote --deploy                # 代码更新后：同步并重启常驻程序
+python -m wwb.remote --svc status            # 状态、常驻程序、最近日志
+python -m wwb.remote --svc logs -f           # 跟随日志
+python -m wwb.remote --svc stop | start | restart | enable | disable
+
+# 树莓派上（--deploy 后会装好 ~/.local/bin/wwbctl）
+wwbctl status
+wwbctl use apps.dao_fast                     # 换常驻程序
+wwbctl logs -f
+```
+
+常驻程序在运行时，用 `wwb.remote` 临时运行别的程序会先停掉它，结束后再启动（串口同一时间只能给一个程序）。
+没登录也要开机运行，需要执行一次 `sudo loginctl enable-linger pi`。
+
 ## 注意
 
 - 波特率默认 921600，和固件一致。改波特率用 `UART_BAUD` 命令：设备先按旧波特率回复，再切到新波特率。重启后恢复 921600。

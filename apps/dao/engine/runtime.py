@@ -161,7 +161,7 @@ def gallery_acts(only: str | None = None, kinds=("special", "omen", "ritual", "r
                     return [Step(sc, "enter"), Step(sc, "hold", 6.0), Step(sc, "exit")]
                 return [Step(sc, "play")]
 
-            acts.append((f"{KIND_NAMES[kind]}·{cls.name}（{sid}）", build))
+            acts.append((f"{KIND_NAMES[kind]}·{cls.name}（{sid}）", build, kind))
     return acts
 
 
@@ -177,14 +177,15 @@ def gallery(d: Device, args):
     events: queue.Queue = queue.Queue()
     d.on_input(lambda ev: events.put(ev))
     d.subscribe(inputs=True)
-    print(f"画廊：{len(acts)} 幕。按 BOOT 跳到下一幕；开关拨下暂停", flush=True)
+    print(f"画廊：{len(acts)} 幕（{'、'.join(f'{KIND_NAMES[k]} {sum(a[2] == k for a in acts)}' for k in KIND_NAMES if any(a[2] == k for a in acts))}）。"
+          "短按 BOOT 下一幕，长按（0.8 秒）跳到下一类；开关拨下暂停", flush=True)
     player = Player(g)
     player.on_step = lambda s: print(f"    {PHASE_NAMES.get(s.phase) or '播放'}", flush=True)
-    st = {"i": -1, "paused": False}
+    st = {"i": -1, "paused": False, "down": None}
 
     def start(i):
         st["i"] = i % len(acts)
-        title, build = acts[st["i"]]
+        title, build, _ = acts[st["i"]]
         print(f"[{st['i'] + 1}/{len(acts)}] {title}", flush=True)
         player.go(build())
 
@@ -194,7 +195,18 @@ def gallery(d: Device, args):
         while not events.empty():
             ev = events.get_nowait()
             if ev.input == 1 and ev.active:
-                start(st["i"] + 1)
+                st["down"] = ev.t_us
+            elif ev.input == 1 and st["down"] is not None:
+                held = (ev.t_us - st["down"]) / 1e6
+                st["down"] = None
+                if held >= 0.8:  # 长按：下一类
+                    kind = acts[st["i"]][2]
+                    j = st["i"]
+                    while acts[j % len(acts)][2] == kind and j < st["i"] + len(acts):
+                        j += 1
+                    start(j)
+                else:
+                    start(st["i"] + 1)
             elif ev.input == 0:
                 st["paused"] = not ev.active
         if not st["paused"]:

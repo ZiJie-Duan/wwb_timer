@@ -45,6 +45,8 @@ class Step:
 
 
 def call(scene: Scene, phase: str, g: Gfx, t: float, e: float):
+    if phase == "hold":
+        scene.hold_t = t  # 歇的 exit 可以读 self.hold_t：持续阶段最后播到了哪
     fn = getattr(scene, phase)
     if isinstance(scene, Ritual) and phase != "enter":
         fn(g, t, e)
@@ -133,6 +135,7 @@ class Director:
         self.data: dict = {}       # 存在芯片里的进度
         self.ritual: Ritual | None = None
         self.ritual_done = False
+        self.ritual_shown = False  # 这场法事入过场没有（没入过场的再开始时播入场而不是恢复）
         self.rest: Rest | None = None
 
     # ------------------------------------------------------------ 持久化
@@ -195,6 +198,7 @@ class Director:
             lines = cast_coins(self.rng)
         self.ritual = self._make_ritual(cls, seed, lines)
         self.ritual_done = False
+        self.ritual_shown = False
         self.data.update(r=cls.id, sd=seed, g="".join(map(str, lines)), rs=int(self.total_ms))
         self._recent("h", cls.id)
         self._save()
@@ -211,7 +215,8 @@ class Director:
         if cur and isinstance(cur.scene, Rest) and cur.phase != "exit":
             steps.append(Step(cur.scene, "exit"))
         if self.ritual and not self.ritual_done:
-            steps += [Step(self.ritual, "resume"), Step(self.ritual, "hold")]
+            first = "resume" if self.ritual_shown else "enter"
+            steps += [Step(self.ritual, first), Step(self.ritual, "hold")]
         else:
             steps += self._new_ritual_path()
         return steps
@@ -246,6 +251,8 @@ class Director:
         self._save()
 
     def _on_step(self, s: Step):
+        if s.scene is self.ritual and s.phase in ("enter", "hold", "resume"):
+            self.ritual_shown = True
         self.log(f"· {s.scene.name or s.scene.id}（{s.scene.id}）{PHASE_NAMES.get(s.phase, s.phase)}")
 
     # ------------------------------------------------------------ 输入
@@ -276,6 +283,7 @@ class Director:
             lines = [int(c) for c in self.data.get("g", "777777")]
             self.ritual = self._make_ritual(REGISTRY["ritual"][rid], self.data.get("sd", 0), lines)
             self.ritual_done = False
+            self.ritual_shown = True
         elif rid:
             for k in ("r", "sd", "g", "rs"):  # 程序更新后这场法事没了
                 self.data.pop(k, None)

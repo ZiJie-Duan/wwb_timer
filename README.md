@@ -35,7 +35,7 @@ host/wwb/            上位机 Python 库
   remote.py          把程序同步到树莓派并在那里运行（UART 驱动设备）
   sim.py             网页模拟器的 Python 桥：程序启停、自动重启、协议转发
   app.py             程序入口 run(main)
-apps/                程序，每个一个包（stopwatch：秒表）
+apps/                程序，每个一个包（stopwatch：秒表；dao：道家赛博计时器，dao_fast / dao_gallery 是它的快进版与画廊）
 web/                 网页模拟器：三块屏 + 开关 + 程序列表
 docs/
   hardware.md        器件、接线、供电、实测结论
@@ -43,6 +43,7 @@ docs/
   benchmarks.md      性能极限实测
   simulator.md       网页模拟器
   offline.md         脱机程序与 wwb timer
+  dao.md             dao timer：道家赛博计时器（法事 / 歇 / 起卦，全部场景一览）
   raspberrypi.md     树莓派作上位机（GPIO 串口接 UART）
 results/             跑分原始数据（JSON）
 ```
@@ -74,6 +75,10 @@ python -m wwb.sim                    # 打开 http://127.0.0.1:8765，在右侧�
 模拟器按固件逐条执行协议命令，并模拟真机的刷新时序（OLED 约 95fps、数码管只写变化的位、20ms 消抖），实测刷新数与真机误差在 1% 左右。
 程序放在 `apps/<名字>/`（Python 包，入口用 `wwb.app.run(main)`），会自动出现在网页列表里，改了文件自动重启。
 同一个程序加 `--port sim` 跑在模拟器上，去掉就跑在真机上。详见 [docs/simulator.md](docs/simulator.md)。
+
+## dao timer
+
+道家赛博计时器：开关拨上开一场法事（燃香、画符、结印、炼丹……55 种），拨下是歇（品茗、高卧、观云……54 种），起卦 9 种。计时以芯片为准，法事进度存在芯片里，断线重连接得上。在模拟器里选“dao timer 画廊”逐个看。见 [docs/dao.md](docs/dao.md)。
 
 ## 树莓派作上位机
 

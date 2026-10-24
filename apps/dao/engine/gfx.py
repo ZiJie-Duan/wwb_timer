@@ -40,6 +40,29 @@ def text_width(s: str, size: int = 12) -> int:
     return int(font(size).getlength(s))
 
 
+_TEXT_CACHE: dict = {}
+
+
+def _text_img(s: str, size: int, scale: int) -> Image.Image:
+    """字串的遮罩图（缓存；字顶对齐到第 0 行）"""
+    key = (s, size, scale)
+    img = _TEXT_CACHE.get(key)
+    if img is None:
+        off = _FONT_FILES[size][1]
+        w = max(1, int(font(size).getlength(s)))
+        hh = size + 4
+        img = Image.new("1", (w, hh))
+        d = ImageDraw.Draw(img)
+        d.fontmode = "1"
+        d.text((0, -off), s, font=font(size), fill=1)
+        if scale > 1:
+            img = img.resize((w * scale, hh * scale), Image.NEAREST)
+        if len(_TEXT_CACHE) > 4000:
+            _TEXT_CACHE.clear()
+        _TEXT_CACHE[key] = img
+    return img
+
+
 class Sprite:
     """像素画。'#' = 亮，'.' = 暗（不透明，会盖住底下），空格 = 透明。
 
@@ -85,10 +108,41 @@ class Sprite:
         return Sprite(on=self.on.repeat(n, 0).repeat(n, 1), mask=self.mask.repeat(n, 0).repeat(n, 1))
 
 
+def _norm(xy):
+    """(x0,y0,x1,y1) 或 ((x0,y0),(x1,y1)) → 保证 x0≤x1、y0≤y1"""
+    if len(xy) == 2:
+        (x0, y0), (x1, y1) = xy
+    else:
+        x0, y0, x1, y1 = xy
+    return (min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1))
+
+
+class SafeDraw(ImageDraw.ImageDraw):
+    """坐标反了不抛异常（缩放动画里常见）"""
+
+    def rectangle(self, xy, *a, **k):
+        return super().rectangle(_norm(xy), *a, **k)
+
+    def ellipse(self, xy, *a, **k):
+        return super().ellipse(_norm(xy), *a, **k)
+
+    def rounded_rectangle(self, xy, *a, **k):
+        return super().rounded_rectangle(_norm(xy), *a, **k)
+
+    def arc(self, xy, *a, **k):
+        return super().arc(_norm(xy), *a, **k)
+
+    def chord(self, xy, *a, **k):
+        return super().chord(_norm(xy), *a, **k)
+
+    def pieslice(self, xy, *a, **k):
+        return super().pieslice(_norm(xy), *a, **k)
+
+
 class Gfx:
     def __init__(self):
         self.img = Image.new("1", (W, H))
-        self.d = ImageDraw.Draw(self.img)
+        self.d = SafeDraw(self.img)
         self.d.fontmode = "1"
         self.mx = np.zeros((8, 8), dtype=bool)
         self.mx_level = 1
@@ -105,27 +159,16 @@ class Gfx:
     def text(self, x: float, y: float, s: str, size: int = 12, fill: int = 1, align: str = "left",
              scale: int = 1) -> int:
         """y 为汉字顶端（12px 字高 11，8px 字高 7）。align: left / center / right（相对 x）。
-        scale>1 时放大成粗像素。返回宽度"""
+        scale>1 时放大成粗像素。返回宽度。渲染好的字串会缓存"""
         self.texts.append((s, size))
-        f = font(size)
-        off = _FONT_FILES[size][1]
-        w = int(f.getlength(s))
+        img = _text_img(s, size, scale)
+        w = img.width if s else 0
         if align == "center":
-            x -= w * scale / 2
+            x -= w / 2
         elif align == "right":
-            x -= w * scale
-        x, y = int(round(x)), int(round(y))
-        if scale == 1:
-            self.d.text((x, y - off), s, font=f, fill=fill)
-        else:
-            hh = size + 4
-            tmp = Image.new("1", (max(w, 1), hh))
-            td = ImageDraw.Draw(tmp)
-            td.fontmode = "1"
-            td.text((0, -off), s, font=f, fill=1)
-            tmp = tmp.resize((max(w, 1) * scale, hh * scale), Image.NEAREST)
-            self.img.paste(fill, (x, y), tmp)
-        return w * scale
+            x -= w
+        self.img.paste(fill, (int(round(x)), int(round(y))), img)
+        return w
 
     def vtext(self, x: float, y: float, s: str, size: int = 12, fill: int = 1, gap: int = 1) -> int:
         """竖排（从上到下），x 为列左边；返回总高度"""
@@ -162,6 +205,12 @@ class Gfx:
         x0, y0, x1, y1 = (int(v) for v in box)
         return max(x0, 0), max(y0, 0), min(x1, W), min(y1, H)
 
+    def _region(self, x0, y0, x1, y1) -> np.ndarray:
+        return np.array(self.img.crop((x0, y0, x1, y1)), dtype=bool)
+
+    def _put_region(self, a: np.ndarray, x0, y0):
+        self.img.paste(Image.fromarray(a), (x0, y0))
+
     def fade(self, level: float, box=None):
         """有序抖动淡出：box=(x0,y0,x1,y1)（不含 x1、y1）内只保留 level 比例的亮点"""
         if level >= 1:
@@ -169,40 +218,43 @@ class Gfx:
         x0, y0, x1, y1 = self._box(box)
         if x1 <= x0 or y1 <= y0:
             return
-        a = self.array()
-        keep = BAYER[y0:y1, x0:x1] < int(round(max(level, 0) * 16))
-        a[y0:y1, x0:x1] &= keep
-        self.put(a)
+        a = self._region(x0, y0, x1, y1)
+        a &= BAYER[y0:y1, x0:x1] < int(round(max(level, 0) * 16))
+        self._put_region(a, x0, y0)
 
     def shade(self, box, level: float, fill: int = 1):
-        """box 内按 level（0..1）画抖动灰度（只画亮点，不清除）"""
+        """box 内按 level（0..1）画抖动灰度（fill=1 只加亮点，fill=0 按图案挖暗）"""
         x0, y0, x1, y1 = self._box(box)
         if x1 <= x0 or y1 <= y0:
             return
-        a = self.array()
+        a = self._region(x0, y0, x1, y1)
         pat = BAYER[y0:y1, x0:x1] < int(round(max(min(level, 1), 0) * 16))
         if fill:
-            a[y0:y1, x0:x1] |= pat
+            a |= pat
         else:
-            a[y0:y1, x0:x1] &= ~pat
-        self.put(a)
+            a &= ~pat
+        self._put_region(a, x0, y0)
 
     def shade_poly(self, pts, level: float, outline: int | None = 1):
         """多边形内画抖动灰度（衣袖、山、云的明暗），可带轮廓"""
-        m = Image.new("1", (W, H))
-        ImageDraw.Draw(m).polygon(pts, fill=1)
-        a = self.array()
-        mask = np.array(m, dtype=bool)
-        a[mask] = BAYER[mask] < int(round(max(min(level, 1), 0) * 16))
-        self.put(a)
+        xs = [p[0] for p in pts]
+        ys = [p[1] for p in pts]
+        x0, y0, x1, y1 = self._box((min(xs), min(ys), max(xs) + 1, max(ys) + 1))
+        if x1 > x0 and y1 > y0:
+            m = Image.new("1", (x1 - x0, y1 - y0))
+            ImageDraw.Draw(m).polygon([(px - x0, py - y0) for px, py in pts], fill=1)
+            mask = np.array(m, dtype=bool)
+            a = self._region(x0, y0, x1, y1)
+            a[mask] = (BAYER[y0:y1, x0:x1] < int(round(max(min(level, 1), 0) * 16)))[mask]
+            self._put_region(a, x0, y0)
         if outline is not None:
             self.d.polygon(pts, outline=outline)
 
     def invert(self, box=None):
         x0, y0, x1, y1 = self._box(box)
-        a = self.array()
-        a[y0:y1, x0:x1] = ~a[y0:y1, x0:x1]
-        self.put(a)
+        if x1 <= x0 or y1 <= y0:
+            return
+        self._put_region(~self._region(x0, y0, x1, y1), x0, y0)
 
     # ------------------------------------------------------------ 点阵
 

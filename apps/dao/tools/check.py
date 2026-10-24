@@ -80,7 +80,9 @@ def diff(a: np.ndarray, b: np.ndarray) -> float:
 
 def check(cls) -> tuple[list[str], list[str], str]:
     errors, warns = [], []
-    ctx = Ctx(total=5000, running=True, completed=2, ritual_name=cls.name)
+    import random
+    from ..engine.symbols import cast_coins
+    ctx = Ctx(total=5000, running=True, completed=2, ritual_name=cls.name, lines=cast_coins(random.Random(7)))
     p = Probe()
     try:
         for seed in (1, 2, 3):
@@ -118,12 +120,23 @@ def check(cls) -> tuple[list[str], list[str], str]:
                 hf, _ = p.run(sc, "hold", 8.0)
                 if seed == 1 and diff(el, hf) > 0.6:
                     warns.append(f"入场→持续 跳变 {diff(el, hf):.2f}")
-                p.run(sc, "hold", 2.0, tag="hold")
+                for i in range(600):  # 定时小事件：0–300 秒每 0.5 秒抽一帧
+                    p.frame(sc, "hold", 8.0 + i * 0.5, 0.0, "hold-sample")
+                for t0 in (95.0, 3600.0, 86400.0 * 2):  # 播了很久以后，再退场
+                    n = int(2.0 / DT)
+                    for i in range(n):
+                        p.frame(sc, "hold", t0 + i * DT, 0.0, "hold")
                 p.run(sc, "exit", sc.T["exit"])
                 fresh = cls(seed + 10, ctx)
                 p.run(fresh, "hold", 1.0, tag="hold")
             else:
                 p.run(sc, "play", sc.T["play"])
+                if sc.kind == "omen":
+                    lines = getattr(sc, "lines", None)
+                    if not (isinstance(lines, list) and len(lines) == 6 and all(v in (6, 7, 8, 9) for v in lines)):
+                        errors.append(f"self.lines 不合法：{lines}")
+                    if seed == 1 and not 4 <= sc.T["play"] <= 9:
+                        warns.append(f"T[play]={sc.T['play']} 不在 4–9 秒")
     except Exception:
         errors.append(traceback.format_exc(limit=4).strip().splitlines()[-1])
         errors.append(traceback.format_exc(limit=6))
@@ -160,9 +173,11 @@ def main():
     bad = 0
     total = 0
     for mod, err in LOAD_ERRORS.items():
-        if not a.prefix or a.prefix.replace(".", "_") in mod.rsplit(".", 1)[-1] or not a.ids:
-            print(f"✗ 导入失败 {mod}\n    " + err.strip().replace("\n", "\n    "))
-            bad += 1
+        fname = mod.rsplit(".", 1)[-1]  # 如 r2_zhufu；前缀 r2. 对应文件名 r2_
+        if a.prefix and not fname.startswith(a.prefix.rstrip(".").replace(".", "_")):
+            continue
+        print(f"✗ 导入失败 {mod}\n    " + err.strip().replace("\n", "\n    "))
+        bad += 1
     for kind in ("special", "omen", "ritual", "rest"):
         for sid in sorted(REGISTRY[kind]):
             if a.ids and sid not in a.ids:

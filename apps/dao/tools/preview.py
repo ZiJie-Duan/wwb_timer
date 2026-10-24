@@ -29,10 +29,10 @@ def frame_tile(g: Gfx, label: str) -> Image.Image:
     tile.paste(Image.merge("RGB", (oled.point(lambda v: v * 0.55), oled.point(lambda v: v * 0.85), oled)), (0, 14))
     d = ImageDraw.Draw(tile)
     x0 = 128 * OLED_S + 8
-    lv = min(1.0, 0.45 + g.mx_level / 15 * 0.55)
+    lv = min(1.0, 0.75 + g.mx_level / 15 * 0.25)
     for y in range(8):
         for x in range(8):
-            c = (int(255 * lv), int(60 * lv), int(40 * lv)) if g.mx[y, x] else (60, 20, 20)
+            c = (int(255 * lv), int(70 * lv), int(50 * lv)) if g.mx[y, x] else (45, 14, 14)
             d.ellipse((x0 + x * MX_CELL + 1, 14 + y * MX_CELL + 1, x0 + x * MX_CELL + MX_CELL - 1,
                        14 + y * MX_CELL + MX_CELL - 1), fill=c)
     d.text((2, 1), label, fill=(220, 220, 220), font=_label_font())
@@ -61,14 +61,15 @@ def sheet(tiles: list[Image.Image], cols: int) -> Image.Image:
     return img
 
 
-def run_phase(sc, phase: str, length: float, step: float, efn=None, label: str = "", g: Gfx | None = None):
-    """以 30 帧/秒推进（有状态的场景要逐帧走），每 step 秒取一帧"""
+def run_phase(sc, phase: str, length: float, step: float, efn=None, label: str = "", g: Gfx | None = None,
+              t0: float = 0.0):
+    """以 30 帧/秒推进（有状态的场景要逐帧走），每 step 秒取一帧；t0：从这个 t 开始（看很久以后的样子）"""
     g = g or Gfx()
     tiles = []
     n = int(round(length / DT))
     every = max(1, int(round(step / DT)))
     for i in range(n + 1):
-        t = min(i * DT, length)
+        t = t0 + min(i * DT, length)
         e = efn(t) if efn else 0.0
         g.clear()
         call(sc, phase, g, t, e)
@@ -83,7 +84,9 @@ def preview(sid: str, out: Path, cols: int = 6, step: float = 0.25, seed: int = 
     cls = next((k[sid] for k in REGISTRY.values() if sid in k), None)
     if cls is None:
         raise SystemExit(f"没有场景 {sid}")
-    ctx = Ctx(total=4321, running=True, completed=3, ritual_name=cls.name)
+    import random
+    from ..engine.symbols import cast_coins
+    ctx = Ctx(total=4321, running=True, completed=3, ritual_name=cls.name, lines=cast_coins(random.Random(seed)))
     sc = cls(seed, ctx)
     out.mkdir(parents=True, exist_ok=True)
     pages: list[tuple[str, list]] = []
@@ -100,8 +103,8 @@ def preview(sid: str, out: Path, cols: int = 6, step: float = 0.25, seed: int = 
         pages.append(("5-complete", run_phase(sc, "complete", sc.T["complete"], step, lambda t: cyc * 1.1)))
     elif isinstance(sc, Rest):
         pages.append(("1-enter", run_phase(sc, "enter", sc.T["enter"], step)))
-        pages.append(("2-hold", run_phase(sc, "hold", 6.0, step * 2) + run_phase(sc, "hold", 3.0, step * 2,
-                                                                                  label="hold(很久以后)")))
+        pages.append(("2-hold", run_phase(sc, "hold", 6.0, step * 2)
+                      + run_phase(sc, "hold", 4.0, step * 2, label="hold(1小时后)", t0=3600.0)))
         pages.append(("3-exit", run_phase(sc, "exit", sc.T["exit"], step)))
     else:
         pages.append(("play", run_phase(sc, "play", sc.T["play"], step)))

@@ -96,6 +96,9 @@ class Runner:
         self.resume = False            # 网页关闭时停掉的程序，网页回来后重新运行
         self.stamp: dict = {}
         self.lines: collections.deque = collections.deque(maxlen=300)
+        # 启动 / 停止串行执行：否则两次启动交错（点“运行”的同时文件改动触发重启）会漏停旧程序，
+        # 两个程序同时画同一块屏，画面来回闪
+        self.lock = asyncio.Lock()
 
     def find(self, app_id: str) -> dict | None:
         return next((a for a in self.apps if a["id"] == app_id), None)
@@ -112,7 +115,11 @@ class Runner:
         await self.bridge.send({"type": "out", "line": line, "kind": kind})
 
     async def start(self, app: dict, reason: str = ""):
-        await self.stop(quiet=True)
+        async with self.lock:
+            await self._start(app, reason)
+
+    async def _start(self, app: dict, reason: str):
+        await self._stop(quiet=True)
         self.app = app
         self.stamp = snapshot([app["dir"], LIB])
         cmd = [sys.executable, "-u", "-m", app["id"], "--port", f"sim:127.0.0.1:{self.tcp_port}", *app["args"]]
@@ -135,6 +142,10 @@ class Runner:
             await self.bridge.send(self.state())
 
     async def stop(self, quiet: bool = False):
+        async with self.lock:
+            await self._stop(quiet)
+
+    async def _stop(self, quiet: bool):
         proc, self.proc = self.proc, None
         if not proc or proc.returncode is not None:
             return

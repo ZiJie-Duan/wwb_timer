@@ -12,7 +12,7 @@
     complete(g, t, e)    圆满（满 10 分钟后停下）：收尾
 
 歇（暂停时播放，一个实例只用一次）：
-    enter(g, t) → hold(g, t)（t 无上限，循环播放）→ exit(g, t)
+    enter(g, t) → hold(g, t)（t 无上限，循环播放）→ exit(g, t)（self.hold_t = 持续阶段最后的 t）
 
 起卦（新法事开始前，三分之一的概率）：
     setup() 里算出 self.lines（6 爻，见 symbols），play(g, t) 演出起卦过程
@@ -32,6 +32,7 @@ REGISTRY: dict[str, dict[str, type]] = {"ritual": {}, "rest": {}, "omen": {}, "s
 def register(cls):
     """类装饰器：登记场景。id 全局唯一"""
     assert cls.id, f"{cls.__name__} 缺少 id"
+    assert cls.kind in REGISTRY, f"{cls.__name__}.kind 应为 ritual/rest/omen/special 之一（不要覆盖 kind 属性）"
     for kind in REGISTRY.values():
         assert cls.id not in kind, f"场景 id 重复：{cls.id}"
     REGISTRY[cls.kind][cls.id] = cls
@@ -72,6 +73,8 @@ class Scene:
     name = ""          # 中文名，如 "燃香"
     desc = ""          # 一句话说明画面（目录与画廊用）
     T: dict[str, float] = {}
+
+    hold_t = 0.0  # 引擎维护：持续阶段最后一帧的 t（歇的 exit 用来无缝收场）
 
     def __init__(self, seed: int = 0, ctx: Ctx | None = None):
         self.seed = seed
