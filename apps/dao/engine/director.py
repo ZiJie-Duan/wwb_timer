@@ -52,6 +52,7 @@ def call(scene: Scene, phase: str, g: Gfx, t: float, e: float):
         fn(g, t, e)
     else:
         fn(g, t)
+    g.finish()
 
 
 class Player:

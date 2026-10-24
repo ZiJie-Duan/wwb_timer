@@ -1,5 +1,11 @@
 """画布：OLED 128×64 单色 + 点阵 8×8。场景每帧在清空的画布上重画（立即模式）。
 
+三层，最后合成为黑白（g.finish()，引擎在每个阶段方法之后调用）：
+    g.lum   灰度层 numpy float32 [64,128]，0 黑 … 1 白：光影、渐变、材质、烟雾都画在这里，
+            合成时用蓝噪声抖动成点（engine/art.py 有大量工具）
+    g.k     黑墨层 ImageDraw：画上的地方强制为黑（灰度之上的暗线、描边、剪影）
+    g.d     白墨层 ImageDraw：画上的地方强制为亮（最上层：细线、文字、高光点）
+
     g.d                 PIL ImageDraw（fontmode="1"），直线、圆、多边形等直接用它
     g.text(x, y, s)     中文像素字（12px 或 8px），y 为字形顶端；返回宽度
     g.vtext(x, y, s)    竖排
@@ -23,10 +29,14 @@ FONT_DIR = Path(__file__).resolve().parent.parent / "assets" / "fonts"
 _FONT_FILES = {12: ("fusion-pixel-12px-zh_hans-gbk.ttf", 3, 11), 8: ("fusion-pixel-8px-zh_hans-gbk.ttf", 3, 7)}
 _fonts: dict[int, ImageFont.FreeTypeFont] = {}
 
+_BN = np.load(Path(__file__).resolve().parent.parent / "assets" / "bluenoise64.npy")
+BLUE = (np.tile(_BN, (1, 2)).astype(np.float32) + 0.5) / 256.0  # 蓝噪声阈值 [64,128]，0..1
+
 # 4×4 Bayer 有序抖动阈值（0..15）
 BAYER4 = np.array([[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]], dtype=np.uint8)
 BAYER = np.tile(BAYER4, (H // 4, W // 4))
 BAYER8 = np.tile(BAYER4, (2, 2))
+BAYER_F = (BAYER.astype(np.float32) + 0.5) / 16  # Bayer 阈值 0..1
 
 
 def font(size: int = 12) -> ImageFont.FreeTypeFont:
@@ -147,12 +157,53 @@ class Gfx:
         self.mx = np.zeros((8, 8), dtype=bool)
         self.mx_level = 1
         self.texts: list[tuple[str, int]] = []  # 本帧画过的文字（检查缺字用）
+        self.lum = np.zeros((H, W), np.float32)
+        self.lum_used = False
+        self.cut = Image.new("1", (W, H))
+        self.k = SafeDraw(self.cut)
+        self.threshold = BAYER_F  # 抖动阈值图：默认 Bayer（规则网点，在这个分辨率下最清楚）；BLUE 为蓝噪声
+        self.tone = (0.06, 0.9)  # 色调：lum 在 lo 以下全黑、hi 以上全白，中间线性
+        self.sharpen = 1.2       # 抖动前锐化（unsharp mask），小尺寸下保住边缘与形体；0 关闭
 
     def clear(self):
         self.d.rectangle((0, 0, W - 1, H - 1), fill=0)
+        self.k.rectangle((0, 0, W - 1, H - 1), fill=0)
         self.mx[:] = False
         self.mx_level = 1
         self.texts.clear()
+        if self.lum_used:
+            self.lum.fill(0)
+            self.lum_used = False
+        self.tone = (0.06, 0.9)
+        self.sharpen = 1.2
+        self.threshold = BAYER_F
+
+    def L(self) -> np.ndarray:
+        """取灰度层来画（标记本帧用到了灰度）"""
+        self.lum_used = True
+        return self.lum
+
+    def finish(self):
+        """合成：灰度抖动 → 黑墨 → 白墨。引擎在场景画完一帧后调用"""
+        if not self.lum_used and not self.cut.getbbox():
+            return
+        ink = np.array(self.img, dtype=bool)
+        if self.lum_used:
+            lum = self.lum
+            if self.sharpen:
+                p = np.pad(lum, 1, mode="edge")
+                blur = (p[:-2, 1:-1] + p[2:, 1:-1] + p[1:-1, :-2] + p[1:-1, 2:]) * 0.125 + lum * 0.5
+                lum = lum + self.sharpen * (lum - blur)
+            if self.tone:
+                lo, hi = self.tone
+                lum = (lum - lo) / (hi - lo)
+            out = lum > self.threshold
+        else:
+            out = np.zeros((H, W), bool)
+        if self.cut.getbbox():
+            out &= ~np.array(self.cut, dtype=bool)
+        out |= ink
+        self.img.paste(Image.fromarray(out))
 
     # ------------------------------------------------------------ 文字
 
