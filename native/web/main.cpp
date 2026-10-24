@@ -22,6 +22,8 @@ EM_JS(int, js_load, (uint8_t *buf, int cap), {
 
 EM_JS(void, js_save, (const uint8_t *buf, int n), { Module.wwbSave(HEAPU8.slice(buf, buf + n)); });
 
+EM_JS(void, js_changed, (), { Module.wwbChanged(); });
+
 namespace {
 
 class WebHost : public wwb::Host {
@@ -31,6 +33,7 @@ class WebHost : public wwb::Host {
   }
   size_t load(void *buf, size_t cap) override { return js_load((uint8_t *)buf, cap); }
   void save(const void *buf, size_t n) override { js_save((const uint8_t *)buf, n); }
+  void changed() override { js_changed(); }
 };
 
 WebHost host;
@@ -49,8 +52,10 @@ EMSCRIPTEN_KEEPALIVE int wwb_controlled() { return runtime.controlled(); }
 EMSCRIPTEN_KEEPALIVE int wwb_accepts(int op) { return runtime.accepts(op); }
 // CONNECT 的回复（5 字节）写进 out
 EMSCRIPTEN_KEEPALIVE int wwb_status(double now, uint8_t *out) { return runtime.status((uint64_t)now, out); }
+// APP_STATE 的回复写进 out（≤64 字节）
+EMSCRIPTEN_KEEPALIVE int wwb_report(double now, uint8_t *out) { return runtime.report((uint64_t)now, out, 64); }
 EMSCRIPTEN_KEEPALIVE uint8_t *wwb_buffer() {
-  static uint8_t buf[16];
+  static uint8_t buf[64];
   return buf;
 }
 }

@@ -3,6 +3,7 @@
 // 没有控制器时由脱机程序（native/，见 offline.cpp）驱动外设；控制器一发命令就接管
 
 #include <Arduino.h>
+#include <Preferences.h>
 #include <esp_chip_info.h>
 #include <esp_flash.h>
 #include <esp_log.h>
@@ -26,6 +27,7 @@ using namespace proto;
 
 static SemaphoreHandle_t execMutex;  // 可重入：控制器命令里会再执行脱机程序让出设备时的复位命令
 static uint8_t reply[MAX_PAYLOAD];
+constexpr size_t APP_DATA_MAX = 256;  // 控制器存储上限
 static uint32_t opsExecuted = 0, opsFailed = 0, sinkBytes = 0;
 static uint64_t execUs[4];  // 命令执行耗时：OLED / 数码管 / 点阵 / 其他
 
@@ -232,6 +234,26 @@ static int execute(Transport &t, uint8_t op, uint8_t flags, uint16_t seq, const 
     case OP_CONNECT:
       return offline::status(reply);
 
+    case OP_APP_STATE:
+      return offline::report(reply, sizeof reply);
+
+    case OP_APP_DATA: {  // 控制器存储：放在 NVS，与脱机程序的数据分开
+      if (n < 1) return -E_BAD_LEN;
+      Preferences prefs;
+      if (p[0] == 0) {
+        if (!prefs.begin("wwb", true)) return 0;
+        size_t k = prefs.getBytesLength("ctl") ? prefs.getBytes("ctl", reply, APP_DATA_MAX) : 0;
+        prefs.end();
+        return k;
+      }
+      if (p[0] != 1 || n - 1 > APP_DATA_MAX) return -E_BAD_ARG;
+      prefs.begin("wwb", false);
+      if (n > 1) prefs.putBytes("ctl", p + 1, n - 1);
+      else prefs.remove("ctl");
+      prefs.end();
+      return 0;
+    }
+
     case OP_BENCH: {
       if (n < 3) return -E_BAD_LEN;
       int count = rd16(p + 1);
@@ -436,7 +458,7 @@ void execUnlock() { xSemaphoreGiveRecursive(execMutex); }
 int deviceExec(uint8_t op, uint8_t flags, const uint8_t *p, size_t n, uint8_t *out, size_t cap) {
   switch (op) {  // 这些命令针对通道或耗时很长，程序不能用
     case OP_SOURCE: case OP_REBOOT: case OP_UART_BAUD: case OP_SUBSCRIBE: case OP_BENCH: case OP_RELEASE:
-    case OP_CONNECT:
+    case OP_CONNECT: case OP_APP_STATE: case OP_APP_DATA:
       return -E_BAD_ARG;
   }
   execLock();

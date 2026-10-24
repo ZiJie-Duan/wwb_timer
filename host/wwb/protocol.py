@@ -36,6 +36,8 @@ class Op(IntEnum):
     TIME = 0x0B
     RELEASE = 0x0C
     CONNECT = 0x0D
+    APP_STATE = 0x0E
+    APP_DATA = 0x0F
 
     IO_READ = 0x10
     IO_CONFIG = 0x11

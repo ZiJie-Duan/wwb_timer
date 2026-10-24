@@ -558,6 +558,14 @@
         case Op.BENCH: return this.bench(p);
         case Op.RELEASE: return new Uint8Array(0);
         case Op.CONNECT: return this.offline ? this.offline.status() : new Uint8Array([2, 0, 0, 0, 0]);
+        case Op.APP_STATE: return this.offline ? this.offline.report() : new Uint8Array(0);
+        case Op.APP_DATA: {  // 控制器存储，存在 localStorage
+          if (n < 1) return -Err.BAD_LEN;
+          if (p[0] === 0) return WWB.ctlStore ? WWB.ctlStore.load() || new Uint8Array(0) : new Uint8Array(0);
+          if (p[0] !== 1 || n - 1 > 256) return -Err.BAD_ARG;
+          if (WWB.ctlStore) WWB.ctlStore.save(p.slice(1));
+          return new Uint8Array(0);
+        }
 
         case Op.IO_READ: {
           const r = new Uint8Array(26);

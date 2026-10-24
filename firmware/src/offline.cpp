@@ -6,11 +6,14 @@
 #include <freertos/queue.h>
 #include <freertos/task.h>
 
+#include "transport.h"
 #include "wwb/wwb.h"
 
 namespace offline {
 
 namespace {
+
+wwb::Runtime *runtime;
 
 class FirmwareHost : public wwb::Host {
  public:
@@ -30,6 +33,11 @@ class FirmwareHost : public wwb::Host {
     prefs.putBytes("app", buf, n);
     prefs.end();
   }
+  void changed() override {  // 在命令锁内调用（程序的 input / frame）
+    uint8_t buf[64];
+    size_t n = runtime->report(esp_timer_get_time(), buf, sizeof buf);
+    if (n) broadcastEvent(0x02, proto::OP_APP_STATE, buf, n);
+  }
 };
 
 struct Event {
@@ -39,7 +47,6 @@ struct Event {
 };
 
 FirmwareHost host;
-wwb::Runtime *runtime;
 QueueHandle_t events;
 
 void task(void *) {
@@ -81,6 +88,8 @@ void release() {
 bool controlled() { return runtime && runtime->controlled(); }
 
 bool accepts(uint8_t op) { return !runtime || runtime->accepts(op); }
+
+size_t report(uint8_t *out, size_t cap) { return runtime ? runtime->report(esp_timer_get_time(), out, cap) : 0; }
 
 size_t status(uint8_t *out) {
   if (!runtime) return out[0] = wwb::STATE_CONTROLLED, proto::wr32(out + 1, 0), 5;

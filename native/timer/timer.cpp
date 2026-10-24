@@ -39,7 +39,10 @@ struct Saved {
   uint32_t magic;
   uint32_t cycles;
   uint64_t totalMs;
+  uint32_t epoch;  // 清零次数（旧版没有这一项，读出 16 字节时为 0）
+  uint32_t reserved;
 };
+constexpr size_t SAVED_V1 = 16;
 
 const uint8_t *const SECONDS = u8g2_font_logisoso28_tn;
 const uint8_t *const SMALL = u8g2_font_logisoso16_tr;
@@ -140,6 +143,7 @@ class Timer : public App {
   void input(Device &d, Input in, bool active, uint64_t t) override;
   void link(Device &d, Link ev, uint64_t now) override;
   void frame(Device &d, uint64_t now) override;
+  size_t report(uint64_t now, uint8_t *out, size_t cap) override;
 
  private:
   enum Scene { NONE, BOOT, RESET, HINT, CONNECTING, CONNECTED, ABORTED, DETACH, TITLE };
@@ -170,6 +174,7 @@ class Timer : public App {
   uint64_t baseMs_ = 0;     // 不含进行中这一段的累计时间
   uint64_t runStart_ = 0;
   uint32_t cycles_ = 0;     // 完成的“开 → 关”次数
+  uint32_t epoch_ = 0;      // 清零次数：控制器据此知道时间被清零过
   uint64_t stopAt_ = 0;     // 停止时刻（闪烁相位从这里算起）
   uint64_t lastSave_ = 0;
   Scene scene_ = BOOT;
@@ -188,25 +193,46 @@ void Timer::setup(Device &d, uint64_t now) {
   Saved s{};
   size_t got = 0;
   d.load(&s, sizeof s, got);
-  if (got == sizeof s && s.magic == MAGIC) cycles_ = s.cycles, baseMs_ = s.totalMs;
+  if ((got == sizeof s || got == SAVED_V1) && s.magic == MAGIC) {
+    cycles_ = s.cycles, baseMs_ = s.totalMs;
+    epoch_ = got == sizeof s ? s.epoch : 0;
+  }
   setScene(BOOT, now);
   stopAt_ = now + 1800 * MS;  // 开机动画里数码管从这时起显示时间
   lastSave_ = now;
   if (d.input(SWITCH)) {
     resetBoot_ = true;
     baseMs_ = 0, cycles_ = 0;
+    epoch_++;
     running_ = true;
     runStart_ = now + BOOT_US + RESET_US;  // 清零提示播完才开始走
     save(d, now);
+    d.changed();
   } else {
     hinting_ = true;
   }
 }
 
 void Timer::save(Device &d, uint64_t now) {
-  Saved s{MAGIC, cycles_, totalMs(now)};
+  Saved s{MAGIC, cycles_, totalMs(now), epoch_, 0};
   d.save(&s, sizeof s);
   lastSave_ = now;
+}
+
+// APP_STATE（24 字节）：u8 种类(1=计时器) u8 标志(bit0=计时中) u16 0, u32 清零次数, u32 次数,
+// u64 累计 ms（含进行中这一段）, u32 本次已计 ms（停止时为 0）
+size_t Timer::report(uint64_t now, uint8_t *out, size_t cap) {
+  if (cap < 24) return 0;
+  uint64_t total = totalMs(now);
+  uint32_t session = running_ && now > runStart_ ? (uint32_t)((now - runStart_) / MS) : 0;
+  out[0] = 1;
+  out[1] = running_ ? 1 : 0;
+  out[2] = out[3] = 0;
+  proto::wr32(out + 4, epoch_);
+  proto::wr32(out + 8, cycles_);
+  proto::wr64(out + 12, total);
+  proto::wr32(out + 20, session);
+  return 24;
 }
 
 void Timer::input(Device &d, Input in, bool active, uint64_t t) {
@@ -218,6 +244,7 @@ void Timer::input(Device &d, Input in, bool active, uint64_t t) {
     runStart_ = t;
     fx_ = FX_START, fxAt_ = t;
     save(d, t);
+    d.changed();
   } else if (!active && running_) {
     baseMs_ = totalMs(t);
     running_ = false;
@@ -225,6 +252,7 @@ void Timer::input(Device &d, Input in, bool active, uint64_t t) {
     stopAt_ = t;
     fx_ = FX_STOP, fxAt_ = t;
     save(d, t);
+    d.changed();
   }
 }
 

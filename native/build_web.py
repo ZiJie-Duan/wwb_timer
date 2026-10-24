@@ -20,7 +20,7 @@ OUT = ROOT / "web/js/native.js"
 SKIP = {"u8g2_fonts.c", "u8g2_d_setup.c", "u8g2_d_memory.c"}  # 字体另取；setup 表引用全部显示驱动
 CFLAGS = ["-O2", "-ffunction-sections", "-fdata-sections"]
 EXPORTS = ["_wwb_begin", "_wwb_input", "_wwb_host_frame", "_wwb_release", "_wwb_tick", "_wwb_controlled",
-           "_wwb_accepts", "_wwb_status", "_wwb_buffer"]
+           "_wwb_accepts", "_wwb_status", "_wwb_report", "_wwb_buffer"]
 
 
 def run(cmd):

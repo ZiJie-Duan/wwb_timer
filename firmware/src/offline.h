@@ -15,6 +15,7 @@ void release();    // 控制器发来 RELEASE
 bool controlled();
 bool accepts(uint8_t op);   // 控制器的这条命令现在能否执行（连接确认前不能碰外设）
 size_t status(uint8_t *out);  // CONNECT 的回复
+size_t report(uint8_t *out, size_t cap);  // APP_STATE 的回复：脱机程序的状态
 
 }  // namespace offline
 

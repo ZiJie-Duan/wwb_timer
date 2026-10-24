@@ -6,21 +6,28 @@
   const WWB = window.WWB;
   const { Op, Err } = WWB.proto;
   const NVS_KEY = "wwb.sim.nvs";
+  const CTL_KEY = "wwb.sim.ctl";  // 控制器存储（APP_DATA）
   const TICK_US = 16000;  // 与固件相同：约 60 帧/秒
   // 芯片上程序不能用的命令（会影响通道或耗时很长）
-  const BLOCKED = new Set([Op.SOURCE, Op.REBOOT, Op.UART_BAUD, Op.SUBSCRIBE, Op.BENCH, Op.RELEASE, Op.CONNECT]);
+  const BLOCKED = new Set([Op.SOURCE, Op.REBOOT, Op.UART_BAUD, Op.SUBSCRIBE, Op.BENCH, Op.RELEASE, Op.CONNECT,
+    Op.APP_STATE, Op.APP_DATA]);
 
-  const nvs = {
+  const store = (key) => ({
     load() {
       try {
-        const s = localStorage.getItem(NVS_KEY);
+        const s = localStorage.getItem(key);
         return s ? Uint8Array.from(atob(s), (c) => c.charCodeAt(0)) : null;
       } catch { return null; }
     },
     save(bytes) {
-      try { localStorage.setItem(NVS_KEY, btoa(String.fromCharCode(...bytes))); } catch { /* 隐私模式等 */ }
+      try {
+        if (bytes && bytes.length) localStorage.setItem(key, btoa(String.fromCharCode(...bytes)));
+        else localStorage.removeItem(key);
+      } catch { /* 隐私模式等 */ }
     },
-  };
+  });
+  const nvs = store(NVS_KEY);
+  WWB.ctlStore = store(CTL_KEY);
 
   class Offline {
     static async load(emu) {
@@ -30,6 +37,7 @@
         wwbExec: (op, flags, payload) => off.exec(op, flags, payload),
         wwbLoad: () => nvs.load(),
         wwbSave: (bytes) => nvs.save(bytes),
+        wwbChanged: () => emu.broadcastEvent(2, Op.APP_STATE, off.report()),
       });
       return off;
     }
@@ -62,6 +70,11 @@
       const p = this.mod._wwb_buffer(), n = this.mod._wwb_status(this.emu.nowUs(), p);
       return this.mod.HEAPU8.slice(p, p + n);
     }
+    // APP_STATE 的回复：程序上报的状态
+    report() {
+      const p = this.mod._wwb_buffer(), n = this.mod._wwb_report(this.emu.nowUs(), p);
+      return this.mod.HEAPU8.slice(p, p + n);
+    }
     // 状态文字（页面顶栏用）
     get state() { return ["脱机程序运行中", "控制器连接中", "控制器接管中"][this.status()[0]]; }
 
@@ -74,5 +87,5 @@
   }
 
   WWB.Offline = Offline;
-  WWB.clearNvs = () => { try { localStorage.removeItem(NVS_KEY); } catch { /* */ } };
+  WWB.clearNvs = () => { try { localStorage.removeItem(NVS_KEY); localStorage.removeItem(CTL_KEY); } catch { /* */ } };
 })();

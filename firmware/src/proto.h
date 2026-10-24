@@ -34,11 +34,13 @@ enum Op : uint8_t {
   OP_STATS_RESET = 0x06,
   OP_REBOOT      = 0x07,
   OP_UART_BAUD   = 0x08,  // u32 baud；先按旧波特率回复再切换
-  OP_SUBSCRIBE   = 0x09,  // u8 掩码 bit0=输入事件；作用于发出该请求的通道
+  OP_SUBSCRIBE   = 0x09,  // u8 掩码 bit0=输入事件 bit1=脱机程序状态；作用于发出该请求的通道
   OP_BENCH       = 0x0A,  // u8 目标, ... → JSON（设备端自测外设极限）
   OP_TIME        = 0x0B,  // → u64 设备时间 µs
   OP_RELEASE     = 0x0C,  // 控制器释放设备，脱机程序立即恢复显示（否则 1.5s 没有命令才算断开）
   OP_CONNECT     = 0x0D,  // → u8 状态(0=脱机 1=连接中 2=已接管), u32 距离接管还有 ms；见 docs/offline.md
+  OP_APP_STATE   = 0x0E,  // → 脱机程序的状态（计时器格式见 docs/protocol.md）；订阅 bit1 后变化时主动上报
+  OP_APP_DATA    = 0x0F,  // 控制器存储（断电保留，≤256B）：u8 0 → 读出；u8 1, 数据 → 写入
 
   // 输入 / 板载灯
   OP_IO_READ     = 0x10,  // → 每个输入 13B：u8 状态 u32 次数 u64 最近变化µs；顺序 开关(1=开启)、BOOT(1=按下)

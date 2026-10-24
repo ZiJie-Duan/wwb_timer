@@ -27,6 +27,8 @@ class Host {
   // 断电保留的数据（芯片：NVS；网页：localStorage）
   virtual size_t load(void *buf, size_t cap) = 0;
   virtual void save(const void *buf, size_t n) = 0;
+  // 程序的状态变了（Device::changed）：平台把 Runtime::report 的内容作为 APP_STATE 事件发给控制器
+  virtual void changed() {}
 };
 
 enum Input : uint8_t { SWITCH = 0, BOOT = 1 };
@@ -75,6 +77,8 @@ class Device {
 
   void load(void *buf, size_t cap, size_t &got) { got = host_.load(buf, cap); }
   void save(const void *buf, size_t n) { host_.save(buf, n); }
+  // 程序的状态（App::report）变了，通知订阅了的控制器
+  void changed() { host_.changed(); }
 
  private:
   friend class Runtime;
@@ -107,6 +111,8 @@ class App {
   virtual void link(Device &d, Link ev, uint64_t now) {}
   // 约 60 次/秒；控制器接管时也会调用（d.visible() 为 false）
   virtual void frame(Device &d, uint64_t now) = 0;
+  // 上报给控制器的状态（协议 APP_STATE），格式由程序定义；返回长度
+  virtual size_t report(uint64_t now, uint8_t *out, size_t cap) { return 0; }
 };
 
 // 由程序实现，返回新的实例
@@ -132,6 +138,8 @@ class Runtime {
   bool accepts(uint8_t op) const;  // 控制器的这条命令现在能否执行
   // CONNECT 的回复：u8 LinkState, u32 距离接管还有多少 ms
   size_t status(uint64_t now, uint8_t *out) const;
+  // APP_STATE 的回复：程序的 report()
+  size_t report(uint64_t now, uint8_t *out, size_t cap) const { return app_ ? app_->report(now, out, cap) : 0; }
 
  private:
   enum State { OFFLINE, CONNECTING, CONFIRMING, CONTROLLED };

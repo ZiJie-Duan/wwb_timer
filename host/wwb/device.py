@@ -46,6 +46,28 @@ class InputEvent:
 
 
 @dataclass
+class TimerState:
+    """脱机计时器上报的状态（APP_STATE）。计时只以芯片为准，上位机据此表演"""
+    running: bool
+    epoch: int        # 清零次数：变了说明时间被清零过
+    cycles: int       # 完成的“开 → 关”次数
+    total_ms: int     # 累计时间（含进行中这一段），收到时的值
+    session_ms: int   # 本次已计时间（停止时为 0）
+    at: float         # 收到时的 time.monotonic()
+
+    @classmethod
+    def parse(cls, payload: bytes) -> "TimerState | None":
+        if len(payload) < 24 or payload[0] != 1:
+            return None  # 不是计时器
+        epoch, cycles, total, session = struct.unpack_from("<IIQI", payload, 4)
+        return cls(bool(payload[1] & 1), epoch, cycles, total, session, time.monotonic())
+
+    def total_now(self) -> float:
+        """按本机时钟外推的当前累计秒数"""
+        return (self.total_ms + ((time.monotonic() - self.at) * 1000 if self.running else 0)) / 1000
+
+
+@dataclass
 class InputState:
     active: bool
     count: int
@@ -126,6 +148,7 @@ class Device:
         self._pending: dict[int, _Pending] = {}
         self._pending_lock = threading.Lock()
         self._input_callbacks: list[Callable[[InputEvent], None]] = []
+        self._state_callbacks: list[Callable[[TimerState], None]] = []
         self.events: queue.Queue[InputEvent] = queue.Queue()
         self._source_q: queue.Queue[Frame] = queue.Queue()
         self.rx_errors = 0
@@ -213,6 +236,11 @@ class Device:
                 self.events.put(ev)
                 for cb in list(self._input_callbacks):
                     cb(ev)
+            elif f.op == Op.APP_STATE:
+                st = TimerState.parse(f.payload)
+                if st:
+                    for cb in list(self._state_callbacks):
+                        cb(st)
             elif f.op == Op.SOURCE:
                 self._source_q.put(f)
             return
@@ -277,6 +305,10 @@ class Device:
         """注册输入事件回调（在接收线程中调用，勿阻塞）"""
         self._input_callbacks.append(callback)
 
+    def on_timer(self, callback: Callable[[TimerState], None]):
+        """注册计时状态回调（开始 / 停止 / 清零时芯片主动上报；需 subscribe(timer=True)；在接收线程中调用）"""
+        self._state_callbacks.append(callback)
+
     # ------------------------------------------------------------ 系统
 
     def connect(self, timeout: float = 15.0):
@@ -320,8 +352,25 @@ class Device:
         """修改设备 UART 波特率（若当前就走 UART，之后需用新波特率重新打开）"""
         self.request(Op.UART_BAUD, struct.pack("<I", baud))
 
-    def subscribe(self, inputs: bool = True):
-        self.request(Op.SUBSCRIBE, bytes([1 if inputs else 0]))
+    def subscribe(self, inputs: bool = True, timer: bool = False):
+        """inputs：开关 / BOOT 事件；timer：脱机计时器状态变化（见 on_timer）"""
+        self.request(Op.SUBSCRIBE, bytes([(1 if inputs else 0) | (2 if timer else 0)]))
+
+    # ------------------------------------------------------------ 脱机计时器与控制器存储
+
+    def timer(self) -> TimerState | None:
+        """读芯片里脱机计时器的状态；脱机程序不是计时器时返回 None"""
+        return TimerState.parse(self.request(Op.APP_STATE))
+
+    def app_data(self) -> bytes:
+        """读控制器存储（芯片上断电保留，≤256 字节，与脱机程序的数据分开）"""
+        return self.request(Op.APP_DATA, b"\x00")
+
+    def set_app_data(self, data: bytes):
+        """写控制器存储（空 = 清除）。存在 flash 里，不要频繁写"""
+        if len(data) > 256:
+            raise ValueError("app data > 256 bytes")
+        self.request(Op.APP_DATA, b"\x01" + bytes(data))
 
     def sink(self, payload: bytes, reply: bool = False) -> int | None:
         if reply:

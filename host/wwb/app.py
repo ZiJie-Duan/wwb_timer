@@ -27,14 +27,18 @@ def _interrupt(*_):
     raise KeyboardInterrupt
 
 
-def run(main: Callable[[Device], None], description: str | None = None):
+def run(main: Callable, description: str | None = None, add_args: Callable | None = None, **defaults):
+    """add_args(ap)：程序自己的命令行参数，这时 main(d, args)；defaults 覆盖参数默认值"""
     ap = argparse.ArgumentParser(description=description)
     ap.add_argument("--port", default=DEFAULT_PORT, help='串口；"sim" = 网页模拟器')
+    if add_args:
+        add_args(ap)
+    ap.set_defaults(**defaults)
     args = ap.parse_args()
     signal.signal(signal.SIGTERM, _interrupt)
     signal.signal(signal.SIGHUP, _interrupt)  # 远程运行时 ssh 断开
     try:
         with Device(args.port) as d:
-            main(d)
+            main(d, args) if add_args else main(d)
     except KeyboardInterrupt:
         pass
