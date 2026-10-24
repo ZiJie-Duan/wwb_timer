@@ -20,7 +20,7 @@ import argparse
 import signal
 from typing import Callable
 
-from .device import Device
+from .device import DEFAULT_PORT, Device
 
 
 def _interrupt(*_):
@@ -29,7 +29,7 @@ def _interrupt(*_):
 
 def run(main: Callable[[Device], None], description: str | None = None):
     ap = argparse.ArgumentParser(description=description)
-    ap.add_argument("--port", default="/dev/ttyACM0", help='串口；"sim" = 网页模拟器')
+    ap.add_argument("--port", default=DEFAULT_PORT, help='串口；"sim" = 网页模拟器')
     args = ap.parse_args()
     signal.signal(signal.SIGTERM, _interrupt)
     try:

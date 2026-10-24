@@ -5,7 +5,7 @@
 | 通道 | 设备端 | 上位机端 | 参数 |
 |---|---|---|---|
 | USB | ESP32-C3 内置 USB-Serial/JTAG | `/dev/ttyACM0` 一类 | 波特率无意义 |
-| UART | UART1，GPIO20 = RX，GPIO21 = TX | USB 转 TTL（3.3V 电平） | 默认 921600 8N1，可用 `UART_BAUD` 改，最高 5M |
+| UART | UART1，GPIO20 = RX，GPIO21 = TX | USB 转 TTL（3.3V 电平）或树莓派 `/dev/serial0`（[raspberrypi.md](raspberrypi.md)） | 默认 921600 8N1，可用 `UART_BAUD` 改，最高 5M |
 
 两条通道可同时使用：回复回到发出请求的通道；事件按各通道的订阅设置发送。
 

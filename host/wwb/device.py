@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import os
 import queue
 import struct
 import sys
@@ -82,6 +83,8 @@ def image_to_frame(img) -> bytes:
 
 
 SIM_ADDR = "127.0.0.1:8766"  # python -m wwb.sim 给程序连接的 TCP 端口
+# 默认串口：环境变量 WWB_PORT（树莓派等用 UART 的上位机设成 /dev/serial0），否则 USB
+DEFAULT_PORT = os.environ.get("WWB_PORT") or "/dev/ttyACM0"
 KEEPALIVE_S = 0.5  # 这么久没发命令就发一个 PING：设备 1.5s 收不到命令会认为控制器已拔出，交还给脱机程序
 
 
@@ -89,7 +92,7 @@ class Device:
     """打开即“插入控制器”：设备确认连接（命令持续 3s）并播完连接动画后交给本程序，外设恢复默认；
     close() 时释放，设备播放断开动画后回到脱机程序。一个程序就是一次连接"""
 
-    def __init__(self, port: str = "/dev/ttyACM0", baud: int = 921600, timeout: float = 2.0, keepalive: bool = True,
+    def __init__(self, port: str = DEFAULT_PORT, baud: int = 921600, timeout: float = 2.0, keepalive: bool = True,
                  connect: bool = True):
         """port 为 "sim" 或 "sim:主机:端口" 时连接网页模拟器，协议与真机完全相同。
         keepalive：空闲时定时发 PING，保持对设备的控制。

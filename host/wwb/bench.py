@@ -14,7 +14,7 @@ import struct
 import time
 from pathlib import Path
 
-from .device import Device, DeviceError
+from .device import DEFAULT_PORT, Device, DeviceError
 from .protocol import BenchTarget, Flag, Op
 
 RESULTS_DIR = Path(__file__).resolve().parents[2] / "results"
@@ -204,7 +204,7 @@ SECTIONS = {
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("sections", nargs="*", choices=[*SECTIONS, []], help="默认全部")
-    ap.add_argument("--port", default="/dev/ttyACM0")
+    ap.add_argument("--port", default=DEFAULT_PORT)
     ap.add_argument("--baud", type=int, default=921600)
     args = ap.parse_args()
 

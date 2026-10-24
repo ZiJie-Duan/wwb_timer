@@ -42,6 +42,7 @@ docs/
   benchmarks.md      性能极限实测
   simulator.md       网页模拟器
   offline.md         脱机程序与 wwb timer
+  raspberrypi.md     树莓派作上位机（GPIO 串口接 UART）
 results/             跑分原始数据（JSON）
 ```
 
@@ -72,6 +73,10 @@ python -m wwb.sim                    # 打开 http://127.0.0.1:8765，在右侧�
 模拟器按固件逐条执行协议命令，并模拟真机的刷新时序（OLED 约 95fps、数码管只写变化的位、20ms 消抖），实测刷新数与真机误差在 1% 左右。
 程序放在 `apps/<名字>/`（Python 包，入口用 `wwb.app.run(main)`），会自动出现在网页列表里，改了文件自动重启。
 同一个程序加 `--port sim` 跑在模拟器上，去掉就跑在真机上。详见 [docs/simulator.md](docs/simulator.md)。
+
+## 树莓派作上位机
+
+树莓派的 GPIO14/15 接 ESP32 的 GPIO20/21（UART1，921600），设 `WWB_PORT=/dev/serial0` 后所有程序照常运行。见 [docs/raspberrypi.md](docs/raspberrypi.md)。
 
 ## 关键数字
 

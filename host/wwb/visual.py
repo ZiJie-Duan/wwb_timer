@@ -12,7 +12,7 @@ import time
 
 from PIL import Image, ImageDraw
 
-from .device import Device, image_to_frame
+from .device import DEFAULT_PORT, Device, image_to_frame
 
 FONT3X5 = {
     "0": (7, 5, 5, 5, 7), "1": (2, 6, 2, 2, 7), "2": (7, 1, 7, 4, 7), "4": (5, 5, 7, 1, 1),
@@ -48,7 +48,7 @@ def oled_test_frame(label: str) -> bytes:
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--port", default="/dev/ttyACM0")
+    ap.add_argument("--port", default=DEFAULT_PORT)
     ap.add_argument("--minutes", type=float, default=10)
     ap.add_argument("--step", type=float, default=5, help="每档停留秒数")
     args = ap.parse_args()

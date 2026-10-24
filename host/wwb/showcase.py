@@ -698,7 +698,8 @@ def preview(args):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--port", default="/dev/ttyACM0")
+    from .device import DEFAULT_PORT
+    ap.add_argument("--port", default=DEFAULT_PORT)
     ap.add_argument("--seconds", type=float, default=0, help="0 = 一直循环")
     ap.add_argument("--scene", choices=[s.name for s in SCENES])
     ap.add_argument("--preview", metavar="DIR", help="不连设备，渲染各场景预览图到 DIR")

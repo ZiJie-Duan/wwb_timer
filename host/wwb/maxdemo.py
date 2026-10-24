@@ -24,7 +24,7 @@ import time
 from PIL import Image, ImageDraw
 
 from .bench import RESULTS_DIR
-from .device import Device, image_to_frame
+from .device import DEFAULT_PORT, Device, image_to_frame
 
 DIGITS = (0x3F, 0x06, 0x5B, 0x4F, 0x66, 0x6D, 0x7D, 0x07, 0x7F, 0x6F)
 OLED_RATE = 100        # 略高于 OLED 极限（约 95fps），保证设备每次推送都有新帧
@@ -87,7 +87,7 @@ class Pacer:
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--port", default="/dev/ttyACM0")
+    ap.add_argument("--port", default=DEFAULT_PORT)
     ap.add_argument("--seconds", type=float, default=30)
     ap.add_argument("--rate", type=int, default=0, help="数码管与点阵限速（帧/s），0 = 全速")
     ap.add_argument("--mx-batch", type=int, default=128, help="全速模式下每轮发送的点阵帧数")

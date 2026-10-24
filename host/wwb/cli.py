@@ -17,12 +17,12 @@ import argparse
 import json
 import time
 
-from .device import Device
+from .device import DEFAULT_PORT, Device
 
 
 def main():
     ap = argparse.ArgumentParser(prog="wwb", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--port", default="/dev/ttyACM0")
+    ap.add_argument("--port", default=DEFAULT_PORT)
     ap.add_argument("--baud", type=int, default=921600)
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("info")
