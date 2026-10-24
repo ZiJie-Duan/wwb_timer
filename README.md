@@ -24,6 +24,7 @@ host/wwb/            上位机 Python 库
   protocol.py        协议常量与编解码
   bench.py           性能极限测试
   maxdemo.py         三屏同时全速演示
+  showcase.py        赛博风多场景演示：开机自检、星空跃迁、四维超立方体、代码雨、等离子、频谱、故障标志
   visual.py          目测验证（时钟档位）
   cli.py             命令行
 docs/
@@ -47,6 +48,7 @@ python -m wwb events                 # 实时打印开关事件
 python -m wwb.bench                  # 跑全部性能测试
 python -m wwb.maxdemo                # 三屏同时全速演示，实时显示各屏刷新率
 python -m wwb.maxdemo --rate 320     # 数码管、点阵限速 320 帧/s（点阵指针一秒一圈）
+python -m wwb.showcase               # 赛博风多场景演示（拨开关切场景，按 BOOT 反色）
 ```
 
 ```python
