@@ -6,7 +6,7 @@
     python -m wwb.remote --sync                  # 只同步
 
 输出实时传回本机；Ctrl+C 停止树莓派上的程序（程序照常发 RELEASE 交还设备）。
-用 ssh 公钥登录，rsync 只传有改动的文件。树莓派那边只需要 conda 环境（pyserial、numpy、pillow），
+用 ssh 公钥登录，复用同一条连接，rsync 只传有改动的文件。树莓派那边只需要 conda 环境（pyserial、numpy、pillow），
 不用安装 wwb：运行时 PYTHONPATH 指向同步过去的 host/。
 
 环境变量：
@@ -29,20 +29,23 @@ DIR = os.environ.get("WWB_REMOTE_DIR", "wwb_timer")
 PYTHON = os.environ.get("WWB_REMOTE_PYTHON", "~/miniforge3/envs/wwb/bin/python")
 PORT = os.environ.get("WWB_REMOTE_PORT", "/dev/serial0")
 SYNC = ["host/wwb", "apps"]  # 运行需要的全部代码
+# 复用同一条 ssh 连接（保持 10 分钟）：树莓派上一次握手约 0.7s，同步加运行要连好几次
+SSH = ["ssh", "-o", "ControlMaster=auto", "-o", "ControlPath=~/.ssh/cm-wwb-%r@%h:%p", "-o", "ControlPersist=10m"]
 
 
 def sync():
-    subprocess.run(["ssh", TARGET, f"mkdir -p {DIR}/host"], check=True)
+    subprocess.run([*SSH, TARGET, f"mkdir -p {DIR}/host"], check=True)
     for path in SYNC:
         dest = f"{TARGET}:{DIR}/{Path(path).parent.as_posix()}/".replace("/./", "/")
-        subprocess.run(["rsync", "-az", "--delete", "--exclude", "__pycache__", str(ROOT / path), dest], check=True)
+        subprocess.run(["rsync", "-az", "--delete", "--exclude", "__pycache__", "-e", shlex.join(SSH), str(ROOT / path), dest],
+                       check=True)
 
 
 def run(module: str, args: list[str]) -> int:
     cmd = (f"cd {DIR} && WWB_PORT={shlex.quote(PORT)} PYTHONPATH=host "
            f"exec {PYTHON} -u -m {shlex.quote(module)} {shlex.join(args)}")
     # -tt：分配终端，Ctrl+C 作为 SIGINT 送到树莓派上的程序；ssh 断开时程序收到 SIGHUP
-    return subprocess.run(["ssh", "-tt", "-o", "LogLevel=QUIET", TARGET, cmd]).returncode
+    return subprocess.run([*SSH, "-tt", "-o", "LogLevel=QUIET", TARGET, cmd]).returncode
 
 
 def main():
