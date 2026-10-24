@@ -77,6 +77,32 @@ def _loop(d: Device, out: Output, tick, render_overlay=None):
             nxt = time.monotonic()
 
 
+class _Link:
+    """后台线程每秒确认一次：芯片还在接管（CONNECT = 2）并读计时状态。结果放进队列，主循环永远不被卡住。
+    断开时（拔线、断电、芯片重启）主循环停发画面，只靠 Device 的心跳维持；芯片重新确认接管后通知重连"""
+
+    def __init__(self, d: Device, events: queue.Queue):
+        import threading
+        self.d, self.events = d, events
+        self.ok = True
+        self.stop = False
+        threading.Thread(target=self._run, name="dao-link", daemon=True).start()
+
+    def _run(self):
+        while not self.stop:
+            time.sleep(1.0)
+            try:
+                ok = self.d.request(0x0D, timeout=0.8)[0] == 2
+                st = self.d.timer() if ok else None
+            except Exception:
+                ok, st = False, None
+            if ok != self.ok:
+                self.ok = ok
+                self.events.put(("link", ok))
+            if ok and st:
+                self.events.put(("timer", st))
+
+
 def live(d: Device, args):
     load_all()
     g = Gfx()
@@ -90,34 +116,58 @@ def live(d: Device, args):
         raise SystemExit("芯片里的脱机程序不是 wwb timer，dao timer 需要它来计时")
     for mod, err in LOAD_ERRORS.items():
         print(f"场景模块导入失败，已跳过：{mod}\n{err}")
-    director = Director(g, complete_after=args.complete_after, timescale=args.timescale, save=d.set_app_data)
+    pending = {"data": None}  # 断线时没写进芯片的进度，重连后补写
+
+    def save(raw: bytes):
+        try:
+            d.set_app_data(raw)
+            pending["data"] = None
+        except Exception:
+            pending["data"] = raw
+
+    director = Director(g, complete_after=args.complete_after, timescale=args.timescale, save=save)
     director.begin(st.running, st.total_ms, st.epoch, d.app_data())
     print(f"dao timer：累计 {st.total_ms / 1000 / 3600:.2f} 小时，{'计时中' if st.running else '已停止'}；"
-          f"法事 {len(REGISTRY['ritual'])} 种，歇 {len(REGISTRY['rest'])} 种，起卦 {len(REGISTRY['omen'])} 种")
-    state = {"poll": 0.0, "card": None, "lost": False}
+          f"法事 {len(REGISTRY['ritual'])} 种，歇 {len(REGISTRY['rest'])} 种，起卦 {len(REGISTRY['omen'])} 种", flush=True)
+    link = _Link(d, events)
+    state = {"card": None, "lost": False, "lost_at": 0.0}
+
+    def reconnect():
+        """芯片重新确认接管：重新订阅、补写进度、按芯片的状态重新开坛接上（芯片可能重启过、清零过）"""
+        try:
+            d.subscribe(inputs=True, timer=True)  # 芯片重启后订阅会丢
+            if pending["data"] is not None:
+                d.set_app_data(pending["data"])
+                pending["data"] = None
+            st2 = d.timer()
+            data = d.app_data()
+        except Exception as e:
+            print(f"重连后读取状态失败，稍后重试：{e}", flush=True)
+            return False
+        out.invalidate()
+        director.begin(st2.running, st2.total_ms, st2.epoch, data)
+        print(f"设备重新连接（断开 {time.monotonic() - state['lost_at']:.0f} 秒）：累计 {st2.total_ms / 1000 / 3600:.2f} 小时，"
+              f"{'计时中' if st2.running else '已停止'}", flush=True)
+        return True
 
     def tick(dt):
         while not events.empty():
             kind, v = events.get_nowait()
-            if kind == "timer":
+            if kind == "link":
+                if not v and not state["lost"]:
+                    state["lost"], state["lost_at"] = True, time.monotonic()
+                    print("设备断开（没有回应），等它回来", flush=True)
+                elif v and state["lost"]:
+                    if reconnect():
+                        state["lost"] = False
+                    else:
+                        link.ok = False  # 下一次确认时再触发重连
+            elif kind == "timer" and not state["lost"]:
                 director.timer(v.running, v.total_ms, v.epoch)
             elif kind == "input" and v.input == 1 and v.active:
                 state["card"] = 0.0
-        state["poll"] += dt
-        if state["poll"] >= 1.0:  # 每秒对一次时间，顺便确认还在接管（芯片重启后要全部重发）
-            state["poll"] = 0
-            try:
-                st = d.timer()
-                if st:
-                    director.timer(st.running, st.total_ms, st.epoch)
-                ok = d.request(0x0D, timeout=1.0)[0] == 2
-            except Exception:
-                ok = False
-            if not ok:
-                state["lost"] = True
-            elif state["lost"]:
-                state["lost"] = False
-                out.invalidate()
+        if state["lost"]:
+            return  # 断开期间不发画面（Device 的心跳会让芯片重新确认连接）
         director.frame(dt)
         if state["card"] is not None:
             state["card"] += dt
@@ -125,9 +175,15 @@ def live(d: Device, args):
             if state["card"] > 3:
                 state["card"] = None
         colon = director.running and (director.total_ms % 1000) < 500 or not director.running
-        out.send(g, seg_digits(director.total_ms / 1000, colon))
+        try:
+            out.send(g, seg_digits(director.total_ms / 1000, colon))
+        except Exception:
+            pass  # 串口写失败：交给 _Link 判断是否断开
 
-    _loop(d, out, tick)
+    try:
+        _loop(d, out, tick)
+    finally:
+        link.stop = True
 
 
 # ---------------------------------------------------------------- 画廊
