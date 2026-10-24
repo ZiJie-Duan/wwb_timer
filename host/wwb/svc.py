@@ -94,11 +94,13 @@ def cmd_status(a):
     print(f"常驻程序：{current()}")
     print(f"开机自启：{'是' if subprocess.run(['systemctl', '--user', 'is-enabled', '--quiet', UNIT]).returncode == 0 else '否'}"
           f"{'' if linger_ok() else '（未开启 linger，需登录后才运行）'}")
-    systemctl("--no-pager", "--lines=8", "status", UNIT)
+    systemctl("--no-pager", "--lines=0", "status", UNIT)
+    subprocess.run(["journalctl", "--user-unit", UNIT, "--no-pager", "-n", "8", "-o", "short-iso"])
 
 
 def cmd_logs(a):
-    args = ["journalctl", "--user", "-u", UNIT, "--no-pager", "-n", str(a.lines), "-o", "cat"]
+    # 用户日志常常没有落盘；从系统日志按用户服务取（pi 在 adm 组，可读）
+    args = ["journalctl", "--user-unit", UNIT, "--no-pager", "-n", str(a.lines), "-o", "short-iso"]
     if a.follow:
         args.append("-f")
     subprocess.run(args)

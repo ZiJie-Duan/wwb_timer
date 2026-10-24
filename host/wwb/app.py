@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import signal
+import time
 from typing import Callable
 
 from .device import DEFAULT_PORT, Device
@@ -38,7 +39,20 @@ def run(main: Callable, description: str | None = None, add_args: Callable | Non
     signal.signal(signal.SIGTERM, _interrupt)
     signal.signal(signal.SIGHUP, _interrupt)  # 远程运行时 ssh 断开
     try:
-        with Device(args.port) as d:
-            main(d, args) if add_args else main(d)
+        waiting = False
+        while True:  # 设备没接上就一直等（常驻服务开机时设备可能还没连），接上就开始
+            try:
+                d = Device(args.port)
+            except (TimeoutError, OSError) as e:
+                if not waiting:
+                    print(f"等待设备连接（{args.port}）：{e}", flush=True)
+                    waiting = True
+                time.sleep(2)
+                continue
+            if waiting:
+                print("设备已连接", flush=True)
+            with d:
+                main(d, args) if add_args else main(d)
+            break
     except KeyboardInterrupt:
         pass
