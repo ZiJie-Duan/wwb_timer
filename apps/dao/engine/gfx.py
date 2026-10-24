@@ -53,6 +53,30 @@ def text_width(s: str, size: int = 12) -> int:
 _TEXT_CACHE: dict = {}
 
 
+_HALO_CACHE: dict = {}
+
+
+def _halo_img(s: str, size: int, scale: int) -> Image.Image:
+    """字形向外扩 1 像素的遮罩（比字形大 2 像素，左上角对齐到字形 -1, -1）"""
+    key = (s, size, scale)
+    im = _HALO_CACHE.get(key)
+    if im is None:
+        a = np.pad(np.array(_text_img(s, size, scale), dtype=bool), 1)
+        g = a.copy()
+        g[1:, :] |= a[:-1, :]
+        g[:-1, :] |= a[1:, :]
+        g[:, 1:] |= a[:, :-1]
+        g[:, :-1] |= a[:, 1:]
+        g[1:, 1:] |= a[:-1, :-1]
+        g[:-1, :-1] |= a[1:, 1:]
+        g[1:, :-1] |= a[:-1, 1:]
+        g[:-1, 1:] |= a[1:, :-1]
+        if len(_HALO_CACHE) > 4000:
+            _HALO_CACHE.clear()
+        im = _HALO_CACHE[key] = Image.fromarray(g)
+    return im
+
+
 def _text_img(s: str, size: int, scale: int) -> Image.Image:
     """字串的遮罩图（缓存；字顶对齐到第 0 行）"""
     key = (s, size, scale)
@@ -157,6 +181,7 @@ class Gfx:
         self.mx = np.zeros((8, 8), dtype=bool)
         self.mx_level = 1
         self.texts: list[tuple[str, int]] = []  # 本帧画过的文字（检查缺字用）
+        self.text_boxes: list[tuple] = []        # 本帧文字的范围（检查文字堆叠用）
         self.lum = np.zeros((H, W), np.float32)
         self.lum_used = False
         self.cut = Image.new("1", (W, H))
@@ -173,6 +198,7 @@ class Gfx:
         self.mx[:] = False
         self.mx_level = 1
         self.texts.clear()
+        self.text_boxes.clear()
         if self.lum_used:
             self.lum.fill(0)
             self.lum_used = False
@@ -233,9 +259,10 @@ class Gfx:
     # ------------------------------------------------------------ 文字
 
     def text(self, x: float, y: float, s: str, size: int = 12, fill: int = 1, align: str = "left",
-             scale: int = 1) -> int:
+             scale: int = 1, outline: bool = True) -> int:
         """y 为汉字顶端（12px 字高 11，8px 字高 7）。align: left / center / right（相对 x）。
-        scale>1 时放大成粗像素。返回宽度。渲染好的字串会缓存"""
+        outline：字外描一圈黑边（默认开），压在任何画面上都清楚。scale>1 放大成粗像素。返回宽度。
+        画过的字记在 g.text_boxes（检查文字堆叠用）"""
         self.texts.append((s, size))
         img = _text_img(s, size, scale)
         w = img.width if s else 0
@@ -243,7 +270,13 @@ class Gfx:
             x -= w / 2
         elif align == "right":
             x -= w
-        self.img.paste(fill, (int(round(x)), int(round(y))), img)
+        ix, iy = int(round(x)), int(round(y))
+        if outline and fill:
+            self.img.paste(0, (ix - 1, iy - 1), _halo_img(s, size, scale))
+        self.img.paste(fill, (ix, iy), img)
+        bb = img.getbbox()
+        if bb and fill:
+            self.text_boxes.append((s, ix + bb[0], iy + bb[1], ix + bb[2], iy + bb[3], ix, iy, size, scale))
         return w
 
     def vtext(self, x: float, y: float, s: str, size: int = 12, fill: int = 1, gap: int = 1) -> int:

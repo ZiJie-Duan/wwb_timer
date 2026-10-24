@@ -67,11 +67,14 @@ def _candle():
 
 
 def _plaque():
-    """匾 26×11：边框"""
-    p = _Part(26, 11)
-    p.shape("rectangle", (0, 0, 25, 10), fill=1)
-    p.d.rectangle((1, 1, 24, 9), fill=0)
-    p.d.rectangle((2, 2, 23, 8), outline=1)
+    """匾 21×19：双线边框，四角包铜（中间留空写字）"""
+    p = _Part(21, 19)
+    p.shape("rectangle", (0, 0, 20, 18), fill=1)
+    p.d.rectangle((1, 1, 19, 17), fill=0)
+    p.d.rectangle((2, 2, 18, 16), outline=1)
+    p.d.rectangle((3, 3, 17, 15), fill=0)
+    for x, y in ((0, 0), (19, 0), (0, 17), (19, 17)):
+        p.d.rectangle((x, y, x + 1, y + 1), fill=0)
     return p.sprite()
 
 
@@ -111,8 +114,6 @@ def room(g: Gfx, t: float):
     g.d.line((0, FLOOR - 3, 127, FLOOR - 3), fill=1)
     for x in (2, 125):
         g.d.line((x, 0, x, FLOOR - 4), fill=1)
-    pix.blit(g, prop("plaque"), 77, 2)
-    g.text(90, 3, "道", size=8, align="center")
     x0, x1, ty = TABLE
     g.d.rectangle((x0, ty, x1, ty + 2), fill=1)
     g.d.line((x0 + 1, ty + 1, x1 - 1, ty + 1), fill=0)
@@ -127,6 +128,12 @@ def room(g: Gfx, t: float):
     for k, x in enumerate((TABLE[0] + 6, TABLE[1] - 8)):
         pix.blit(g, prop("candle"), x - 3, ty - 13)
         pix.blit(g, pix.anim(FLAME, t + k * 0.37, 7), x - 1, ty - 18, outline=False)
+
+
+def plaque(g: Gfx):
+    """匾（最后画：烟从匾后面飘过，字不会被压住）"""
+    pix.blit(g, prop("plaque"), 80, 0)
+    g.text(90, 4, "道", align="center")
 
 
 def stick_tips(length: float):
@@ -191,6 +198,8 @@ class IncenseRitual(Ritual):
         self.puffs.draw(g)
 
     def counter(self, g: Gfx, e: float, label: str | None = None):
+        """左上角“第几炷”牌与匾（每个阶段最后画，避免被烟、火星压住）"""
+        plaque(g)
         n = int(e // self.CYCLE) + 1
         s = label or (f"第{cn_num(n)}炷" if n < 100 else f"{n}炷")
         w = text_width(s, 8)
@@ -207,6 +216,7 @@ class IncenseRitual(Ritual):
         if walk and t < 2.2:
             daoshi(g, x, FLOOR, "walk", t)
             mx_censer(g, FULL, (0, 0, 0), t)
+            plaque(g)
             return
         k = t - 2.2
         held = None
@@ -246,11 +256,14 @@ class IncenseRitual(Ritual):
                 pix.shake(g, t, 1.0)
             self.smoke(g, FULL, lit, t, dt, rate=span(t, 5.8, 7.0))
             mx_censer(g, FULL, lit, t)
-            self.counter(g, e)
         else:
             mx_censer(g, FULL, (0, 0, 0), t)
         self.sparks.step(dt)
         self.sparks.draw(g)
+        if t >= 5.6:
+            self.counter(g, e)
+        else:
+            plaque(g)
 
     def enter(self, g: Gfx, t: float):
         self._offer(g, t, 0.0)
@@ -348,16 +361,19 @@ class IncenseRitual(Ritual):
         if t > 2.0:  # “功德圆满”弹出
             pop = ease_out_back(span(t, 2.0, 2.4))
             w = text_width("功德圆满")
-            y = 8 + (1 - pop) * 10
-            g.k.rectangle((64 - w / 2 - 3, y - 2, 64 + w / 2 + 2, y + 12), fill=1)
-            g.d.rectangle((64 - w / 2 - 3, y - 2, 64 + w / 2 + 2, y + 12), outline=1)
-            g.text(64, y, "功德圆满", align="center")
+            cx = 42
+            y = 6 + (1 - pop) * 10
+            g.k.rectangle((cx - w / 2 - 3, y - 2, cx + w / 2 + 2, y + 12), fill=1)
+            g.d.rectangle((cx - w / 2 - 3, y - 2, cx + w / 2 + 2, y + 12), outline=1)
             if int(t * 6) % 2 == 0:
-                for sx, sy in ((64 - w / 2 - 7, y + 4), (64 + w / 2 + 6, y + 4)):
+                for sx, sy in ((cx - w / 2 - 7, y + 4), (cx + w / 2 + 6, y + 4)):
                     for ddx, ddy in ((0, 0), (-1, 0), (1, 0), (0, -1), (0, 1)):
                         g.d.point((sx + ddx, sy + ddy))
         self.sparks.step(dt)
         self.sparks.draw(g)
+        plaque(g)
+        if t > 2.0:
+            g.text(42, 6 + (1 - ease_out_back(span(t, 2.0, 2.4))) * 10, "功德圆满", align="center")
         mx_censer(g, max(length, STUB), (alive,) * 3, t)
         if t > 1.6:
             r = (t - 1.6) * 4

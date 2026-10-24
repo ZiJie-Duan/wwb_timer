@@ -42,6 +42,7 @@ class Probe:
         self.times: list[float] = []
         self.missing: set[str] = set()
         self.blank_runs: dict[str, float] = {}
+        self.text_issues: dict[str, int] = {}
         self.mx_dark: dict[str, float] = {}
 
     def frame(self, sc, phase, t, e, tag) -> np.ndarray:
@@ -55,11 +56,41 @@ class Probe:
             if cm:
                 self.missing |= {c for c in s if ord(c) not in cm and c not in "\n"}
         a = g.array()
+        self._texts(g, a)
         if not a.any():
             self.blank_runs[tag] = self.blank_runs.get(tag, 0) + DT
         if not g.mx.any():
             self.mx_dark[tag] = self.mx_dark.get(tag, 0) + DT
         return a
+
+    def _texts(self, g, a):
+        """文字堆叠：字与字的范围相交；字的范围里有不属于字的亮点（被别的画面压住）；字出屏"""
+        from ..engine.gfx import _text_img
+        if g.invert_all:
+            return  # 闪白的一帧整屏反色，不查
+        ox, oy = g.offset
+        boxes = [(b[0], b[1] + ox, b[2] + oy, b[3] + ox, b[4] + oy, b[5] + ox, b[6] + oy, b[7], b[8])
+                 for b in g.text_boxes]
+        for i in range(len(boxes)):
+            s1, x0, y0, x1, y1 = boxes[i][:5]
+            for j in range(i + 1, len(boxes)):
+                s2, u0, v0, u1, v1 = boxes[j][:5]
+                if x0 < u1 and u0 < x1 and y0 < v1 and v0 < y1:
+                    k = f"文字重叠：「{s1}」与「{s2}」"
+                    self.text_issues[k] = self.text_issues.get(k, 0) + 1
+            if x0 < 0 or y0 < 0 or x1 > 128 or y1 > 64:
+                k = f"文字出屏：「{s1}」"
+                self.text_issues[k] = self.text_issues.get(k, 0) + 1
+                continue
+            ix, iy, size, scale = boxes[i][5:]
+            glyph = np.array(_text_img(s1, size, scale), dtype=bool)
+            region = a[y0:y1, x0:x1].copy()
+            gy0, gx0 = y0 - iy, x0 - ix
+            gl = glyph[gy0:gy0 + region.shape[0], gx0:gx0 + region.shape[1]]
+            stray = int((region & ~gl).sum()) if gl.shape == region.shape else 0
+            if stray > 2:
+                k = f"文字被画面压住：「{s1}」"
+                self.text_issues[k] = self.text_issues.get(k, 0) + 1
 
     def run(self, sc, phase, length, efn=None, tag=None):
         first = last = None
@@ -142,6 +173,8 @@ def check(cls) -> tuple[list[str], list[str], str]:
         errors.append(traceback.format_exc(limit=6))
     if p.missing:
         errors.append("字体缺字：" + "".join(sorted(p.missing)))
+    for k, n in sorted(p.text_issues.items()):
+        (errors if k.startswith("文字重叠") or k.startswith("文字被") else warns).append(f"{k}（{n} 帧）")
     if p.times:
         med, mx = statistics.median(p.times), max(p.times)
         if med > MEDIAN_MS:
