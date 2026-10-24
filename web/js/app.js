@@ -79,7 +79,6 @@
   boot.addEventListener("pointercancel", () => setBoot(false));
   const typing = () => ["TEXTAREA", "INPUT", "SELECT"].includes(document.activeElement?.tagName);
   window.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") { stopScript(); return; }
     if (typing() || e.ctrlKey || e.metaKey || e.altKey) return;
     if ((e.key === "s" || e.key === "S" || e.key === " ") && !e.repeat) { e.preventDefault(); setSwitch(!emu.io.inputs[0].level); }
     if ((e.key === "b" || e.key === "B") && !e.repeat) setBoot(true);
@@ -125,44 +124,90 @@
     traffic.clear();
   }, 1000);
 
-  // ---------------------------------------------------------------- Python 桥
+  // ---------------------------------------------------------------- Python 桥与程序
 
   // 由 python -m wwb.sim 提供页面时自动连接；也可用 ?bridge=ws://host:port/ws 指定
   const bridgeUrl = new URLSearchParams(location.search).get("bridge") ||
     (location.protocol.startsWith("http") ? `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws` : null);
-  const pill = $("bridge");
-  let bridgeClients = 0;
-  function connectBridge() {
-    if (!bridgeUrl) {
-      pill.textContent = "Python 桥：未启用（直接打开的文件）";
+  const pill = $("bridge"), appsEl = $("apps"), autoEl = $("auto");
+  let ws = null, apps = [], state = { running: null, selected: null, auto: true };
+
+  const control = (msg) => ws && ws.readyState === 1 && ws.send(JSON.stringify(msg));
+  autoEl.onchange = () => control({ cmd: "auto", on: autoEl.checked });
+
+  function renderApps() {
+    appsEl.textContent = "";
+    if (!apps.length) {
+      appsEl.innerHTML = '<div class="empty muted">apps/ 里还没有程序</div>';
       return;
     }
-    let ws;
+    for (const a of apps) {
+      const running = state.running === a.id;
+      const row = document.createElement("div");
+      row.className = "app" + (running ? " running" : state.selected === a.id ? " selected" : "");
+      row.innerHTML = '<div class="app-main"><div class="app-title"></div><div class="app-id"></div><div class="app-desc"></div></div><div class="app-btns"></div>';
+      row.querySelector(".app-title").textContent = a.title;
+      row.querySelector(".app-id").textContent = a.id + (running ? "  · 运行中" : "");
+      row.querySelector(".app-desc").textContent = a.desc;
+      const btns = row.querySelector(".app-btns");
+      const btn = (label, cls, msg) => {
+        const b = document.createElement("button");
+        b.textContent = label;
+        if (cls) b.className = cls;
+        b.onclick = (e) => { e.stopPropagation(); control(msg); };
+        btns.appendChild(b);
+      };
+      if (running) {
+        btn("↻ 重启", "", { cmd: "restart" });
+        btn("■ 停止", "", { cmd: "stop" });
+      } else {
+        btn("▶ 运行", "primary", { cmd: "run", id: a.id });
+      }
+      row.onclick = () => !running && control({ cmd: "run", id: a.id });
+      appsEl.appendChild(row);
+    }
+  }
+
+  function setPill(text, ok) {
+    pill.textContent = text;
+    pill.classList.toggle("ok", ok);
+  }
+
+  function connectBridge() {
+    if (!bridgeUrl) {
+      setPill("Python 桥：未连接（直接打开的文件）", false);
+      appsEl.innerHTML = '<div class="empty muted">运行 <code>python -m wwb.sim</code>，再打开它给出的网址，才能选择程序</div>';
+      return;
+    }
+    let link = null, fresh = false;
     try { ws = new WebSocket(bridgeUrl); } catch { return; }
     ws.binaryType = "arraybuffer";
-    let link = null;
     ws.onopen = () => {
       link = emu.addLink("usb", (data) => ws.readyState === 1 && ws.send(data));
-      pill.textContent = "Python 桥：已连接";
-      pill.classList.add("ok");
-      log("info", "已连接 Python 桥", bridgeUrl);
+      setPill("Python 桥：已连接", true);
+      fresh = true;
     };
     ws.onmessage = (e) => {
-      if (typeof e.data === "string") {
-        const m = JSON.parse(e.data);
-        if (m.clients !== undefined) {
-          // 两边同时画会互相覆盖：Python 程序连上时停掉网页脚本
-          if (m.clients > bridgeClients && current) {
-            stopScript();
-            log("info", "Python 程序已连接，网页脚本已停止");
-          }
-          bridgeClients = m.clients;
-          pill.textContent = m.clients ? `Python 桥：${m.clients} 个程序` : "Python 桥：已连接，等程序";
-          if (m.note) log("info", m.note);
-        }
+      if (typeof e.data !== "string") {
+        link && link.receive(new Uint8Array(e.data));
         return;
       }
-      link && link.receive(new Uint8Array(e.data));
+      const m = JSON.parse(e.data);
+      if (m.type === "apps") {
+        apps = m.apps;
+        $("apps-hint").textContent = `${apps.length} 个`;
+        renderApps();
+      } else if (m.type === "state") {
+        state = m;
+        autoEl.checked = m.auto;
+        renderApps();
+      } else if (m.type === "out") {
+        if (m.replay && fresh) logEl.textContent = "";  // 重连后桥会重发最近的输出
+        fresh = false;
+        log(m.kind === "out" ? "user" : m.kind === "err" ? "error" : "info", m.line);
+      } else if (m.type === "clients") {
+        setPill(m.n ? `Python 桥：${m.n} 个程序连接中` : "Python 桥：已连接", true);
+      }
     };
     ws.onclose = (e) => {
       if (link) {
@@ -170,127 +215,11 @@
         log("info", "Python 桥断开" + (e.reason ? `：${e.reason}` : ""));
       }
       link = null;
-      pill.textContent = "Python 桥：未连接";
-      pill.classList.remove("ok");
+      setPill("Python 桥：未连接", false);
       if (e.code !== 4000) setTimeout(connectBridge, 2000);  // 4000 = 被新打开的页面顶替
     };
   }
   connectBridge();
 
-  // ---------------------------------------------------------------- 脚本
-
-  const code = $("code"), select = $("examples");
-  WWB.EXAMPLES.forEach((ex, i) => select.add(new Option(ex.name, i)));
-  select.add(new Option("（我的脚本）", "mine"));
-  const saved = store.get("wwb.sim.code");
-  code.value = saved ?? WWB.EXAMPLES[0].code;
-  const idx = WWB.EXAMPLES.findIndex((e) => e.code === code.value);
-  select.value = idx >= 0 ? String(idx) : "mine";
-  select.onchange = () => {
-    if (select.value === "mine") return;
-    const isExample = WWB.EXAMPLES.some((e) => e.code === code.value);
-    if (!isExample && code.value.trim() && !confirm("用示例替换编辑器里的内容？")) {
-      select.value = "mine";
-      return;
-    }
-    code.value = WWB.EXAMPLES[+select.value].code;
-    store.set("wwb.sim.code", code.value);
-    runScript();
-  };
-  code.addEventListener("input", () => {
-    store.set("wwb.sim.code", code.value);
-    if (!WWB.EXAMPLES.some((e) => e.code === code.value)) select.value = "mine";
-  });
-  code.addEventListener("keydown", (e) => {
-    if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
-      e.preventDefault();
-      runScript();
-    } else if (e.key === "Tab" && !e.shiftKey) {
-      e.preventDefault();
-      document.execCommand("insertText", false, "  ");
-    }
-  });
-  $("run").onclick = runScript;
-  $("stop").onclick = stopScript;
-
-  const STOP = Symbol("stop");
-  const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
-  const PARAMS = ["dev", "sleep", "frame", "pacer", "now", "canvas", "toFrame", "mx", "segText", "Font", "Op", "Flag", "log"];
-  let current = null;
-
-  function stopScript() {
-    if (!current) return;
-    current.stop();
-  }
-
-  // 脚本里第几行（Function 构造的函数体前面多了 2 行）
-  function scriptLine(err) {
-    const m = /<anonymous>:(\d+):(\d+)/.exec(err.stack || "") || /Function:(\d+):(\d+)/.exec(err.stack || "");
-    return m ? ` （第 ${m[1] - 2} 行）` : "";
-  }
-
-  function runScript() {
-    if (current) current.stop(true);
-    let fn;
-    try {
-      fn = new AsyncFunction(...PARAMS, code.value);
-    } catch (e) {
-      log("error", "语法错误：" + e.message);
-      return;
-    }
-    let abort;
-    const cancelled = new Promise((_, rej) => (abort = () => rej(STOP)));
-    cancelled.catch(() => {});
-    const run = { stopped: false };
-    const dev = new WWB.Device(emu, { onError: (e) => !run.stopped && log("error", e.message) });
-    const guard = (p) => Promise.race([p, cancelled]);
-    const t0 = performance.now();
-    run.stop = (restarting) => {
-      if (run.stopped) return;
-      run.stopped = true;
-      abort();
-      dev.close();
-      if (current === run) current = null;
-      $("run-state").textContent = restarting ? "" : "已停止";
-      $("stop").disabled = true;
-    };
-    current = run;
-    $("stop").disabled = false;
-    $("run-state").textContent = "运行中";
-
-    const api = {
-      dev,
-      sleep: (ms) => guard(new Promise((r) => setTimeout(r, ms))),
-      frame: () => guard(new Promise((r) => requestAnimationFrame(r))),
-      // 返回一个按固定频率等待的函数；落后时不补帧
-      pacer: (hz) => {
-        const period = 1000 / hz;
-        let next = performance.now();
-        return () => {
-          next = Math.max(next + period, performance.now());
-          return guard(new Promise((r) => setTimeout(r, Math.max(0, next - performance.now()))));
-        };
-      },
-      now: () => (performance.now() - t0) / 1000,
-      canvas: WWB.makeCanvas,
-      toFrame: WWB.toFrame,
-      mx: (...rows) => WWB.mxRows(rows.length === 1 && Array.isArray(rows[0]) ? rows[0] : rows),
-      segText: WWB.segText,
-      Font: P.Font, Op: P.Op, Flag: P.Flag,
-      log: (...a) => log("user", ...a),
-    };
-    const ex = WWB.EXAMPLES.find((e) => e.code === code.value);
-    log("info", `运行：${ex ? ex.name : "我的脚本"}`);
-    fn(...PARAMS.map((k) => api[k])).then(
-      () => { if (!run.stopped) { log("info", "脚本结束"); run.stop(); } },
-      (e) => {
-        if (e === STOP || run.stopped) return;
-        log("error", (e && e.message ? e.message : String(e)) + scriptLine(e));
-        run.stop();
-      },
-    );
-  }
-
-  log("info", "模拟器已启动。Ctrl+Enter 运行脚本；S / 空格 拨开关，按住 B = BOOT");
-  runScript();
+  log("info", "模拟器已启动。S / 空格 拨开关，按住 B = BOOT");
 })();

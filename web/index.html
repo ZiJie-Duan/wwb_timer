@@ -58,33 +58,30 @@
 
     <div class="panel">
       <div class="panel-head">
-        <b>协议流量</b><span class="muted">每秒收到的命令（usb = Python 桥，uart = 网页脚本）</span>
+        <b>协议流量</b><span class="muted">每秒收到的命令</span>
       </div>
       <table class="traffic" id="traffic"><tbody><tr><td class="muted">还没有命令</td></tr></tbody></table>
     </div>
   </section>
 
-  <section class="editor-col">
-    <div class="panel editor-panel">
-      <div class="panel-head toolbar">
-        <select id="examples"></select>
-        <button id="run" class="primary" title="Ctrl+Enter">▶ 运行</button>
-        <button id="stop" title="Esc" disabled>■ 停止</button>
-        <span class="muted" id="run-state"></span>
+  <section class="side-col">
+    <div class="panel">
+      <div class="panel-head">
+        <b>程序</b><span class="muted" id="apps-hint"></span><span class="spacer"></span>
+        <label class="ctl" title="程序目录或 host/wwb 里的文件改动后自动重启"><input type="checkbox" id="auto" checked> 改动后自动重启</label>
       </div>
-      <textarea id="code" spellcheck="false" autocomplete="off" autocapitalize="off"></textarea>
+      <div id="apps" class="apps"><div class="empty muted">连接 Python 桥后显示程序列表</div></div>
     </div>
     <div class="panel console-panel">
-      <div class="panel-head"><b>控制台</b><span class="spacer"></span><button id="clear-log" class="small">清空</button></div>
+      <div class="panel-head"><b>输出</b><span class="spacer"></span><button id="clear-log" class="small">清空</button></div>
       <div id="log" class="log"></div>
     </div>
     <details class="panel help">
-      <summary><b>用法</b></summary>
-      <p><b>网页脚本</b>：编辑器里是一个 async 函数体，<code>dev</code> 的方法与 Python <code>wwb.Device</code> 同名同参（关键字参数写成最后的 <code>{flush: true}</code>）。
-        另有 <code>sleep(ms)</code>、<code>frame()</code>、<code>pacer(hz)</code>、<code>now()</code>、<code>canvas()</code>、<code>mx(...)</code>、<code>segText(s)</code>、<code>log(...)</code>。</p>
-      <p><b>Python 程序</b>：运行 <code>python -m wwb.sim</code>，用它打开的网址访问本页，然后程序里用 <code>Device("sim")</code>，
-        或命令行加 <code>--port sim</code>，例如 <code>python -m wwb.showcase --port sim</code>。</p>
-      <p>两种方式发出的都是协议帧，模拟器按固件的命令处理逐条执行，并模拟真机的刷新时序（OLED 约 95fps、数码管只写变化的位、输入 20ms 消抖）。</p>
+      <summary><b>说明</b></summary>
+      <p>这个页面是设备的模拟器：程序发出的协议帧由网页按固件逐条执行，并模拟真机的刷新时序（OLED 约 95fps、数码管只写变化的位、输入 20ms 消抖）。</p>
+      <p>启动：<code>python -m wwb.sim</code>，然后打开它给出的网址。程序列表来自 <code>apps/</code> 目录（每个程序一个带 <code>__main__.py</code> 的包）和 wwb 自带演示。
+        也可以在终端运行任何程序并加 <code>--port sim</code>。</p>
+      <p>开关：点击或按 S / 空格；BOOT：按住或按住 B。</p>
     </details>
   </section>
 </main>
@@ -93,9 +90,7 @@
 <script src="js/proto.js"></script>
 <script src="js/u8g2.js"></script>
 <script src="js/emulator.js"></script>
-<script src="js/client.js"></script>
 <script src="js/view.js"></script>
-<script src="js/examples.js"></script>
 <script src="js/app.js"></script>
 </body>
 </html>

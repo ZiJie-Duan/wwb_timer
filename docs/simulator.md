@@ -1,43 +1,50 @@
 # 网页模拟器
 
-`web/` 是一个在浏览器里模拟整台设备的网页：OLED、数码管、点阵、开关、BOOT 键、板载灯。用来设计动画和交互细节，不用接真机。
+`web/` 是一个在浏览器里模拟整台设备的网页：OLED、数码管、点阵、开关、BOOT 键、板载灯。用途是**看程序效果、试交互**，不用接真机。程序都是 Python 写的，网页只负责显示、拨开关，以及选择要运行的程序。
 
-模拟器在网页里**按固件逐条执行协议命令**（`web/js/emulator.js` 对照 `firmware/src/main.cpp` 的 `execute()` 写成），所以发给它的帧和发给真机的帧完全相同，报错也相同（比如宽度为 0 的 `OLED_RECT` 一样会回 `BAD_ARG`）。
+模拟器在网页里**按固件逐条执行协议命令**（`web/js/emulator.js` 对照 `firmware/src/main.cpp` 的 `execute()` 写成），所以程序发给它的帧和发给真机的完全相同，报错也相同（比如宽度为 0 的 `OLED_RECT` 一样会回 `BAD_ARG`）。同一个程序把 `--port sim` 换成 `/dev/ttyACM0` 就能在真机上跑。
 
-## 两种用法
-
-### 1. 网页脚本（不需要 Python）
-
-打开页面，在右侧编辑器写脚本，Ctrl+Enter 运行，Esc 停止。脚本是一个 async 函数体，`dev` 的方法与 Python `wwb.Device` 同名同参，关键字参数写成最后的 `{…}`：
-
-```js
-dev.oled_clear();
-dev.oled_text(0, 40, "12:34", Font.LOGISOSO24_NUM, 1, { flush: true });
-dev.seg_text("12:34");
-dev.mx_frame(mx("...##...", "..####..", ".######.", "##.##.##", "...##...", "...##...", "...##...", "...##..."));
-dev.on_input(ev => log(ev.name, ev.active, ev.t_us));
-
-const tick = pacer(100);          // 按 100 帧/s 等待
-const g = canvas();               // 128×64 Canvas 2D，画完 dev.oled_frame(g)
-while (true) { /* … */ await tick(); }
-```
-
-其他可用的：`sleep(ms)`、`frame()`（等下一个显示帧）、`now()`（秒）、`segText(s)`、`toFrame(画布)`、`Font`、`Op`、`Flag`、`log(...)`。编辑器里有几个示例（秒表、弹球、字体、点阵动画），内容自动保存在浏览器里。
-
-页面可以直接双击 `web/index.html` 打开，也可以由下面的桥提供。
-
-### 2. Python 程序
+## 用法
 
 ```bash
-python -m wwb.sim                          # 终端 1：启动桥，浏览器打开 http://127.0.0.1:8765
-python -m wwb.showcase --port sim          # 终端 2：任何 wwb 程序加 --port sim
+python -m wwb.sim          # 浏览器打开 http://127.0.0.1:8765
+```
+
+网页右侧是程序列表，点 ▶ 运行，桥就以 `python -m <程序> --port sim:…` 启动它，程序的输出显示在“输出”面板。开关：点击或按 S / 空格；BOOT：按住或按住 B。
+
+- **改动后自动重启**（默认开）：程序目录或 `host/wwb/` 里的文件一改，正在看的程序就重新运行。
+- **刷新网页 = 设备重新开机**：网页关闭时程序暂停，网页回来后程序从头运行。
+- 也可以在终端自己运行程序，加 `--port sim` 即可（例如 `python -m wwb.showcase --port sim`）。
+
+## 程序怎么写
+
+每个程序是 `apps/` 下一个带 `__main__.py` 的包，可以有多个模块和任意数据文件（图片、JSON…），按普通 Python 项目组织：
+
+```
+apps/stopwatch/
+  __init__.py      文档字符串：第一行是标题，其余是说明（显示在网页的程序列表里）
+  __main__.py      入口
+  ...              其他模块、素材
 ```
 
 ```python
-from wwb import Device
-with Device("sim") as d:                   # 与 Device("/dev/ttyACM0") 用法完全相同
-    d.seg_text("12:34")
+# apps/stopwatch/__main__.py
+from wwb import Font
+from wwb.app import run
+
+def main(d):                       # d 是 wwb.Device
+    d.on_input(lambda ev: print(ev.name, ev.active, ev.t_us))
+    while True:
+        d.oled_clear(wait=False)
+        d.oled_text(0, 40, "12:34", Font.LOGISOSO24_NUM, flush=True, wait=False)
+        ...
+
+run(main)                          # 解析 --port，打开设备；Ctrl+C / 停止时正常退出
 ```
+
+新建的程序目录会自动出现在网页的列表里。wwb 自带的 `showcase`、`maxdemo` 也在列表中。
+
+## 连接方式
 
 ```
 Python 程序 ──TCP 8766──▶ wwb.sim ──WebSocket /ws──▶ 网页里的模拟设备
@@ -45,10 +52,9 @@ Python 程序 ──TCP 8766──▶ wwb.sim ──WebSocket /ws──▶ 网�
 ```
 
 - 桥只转发字节，不解析命令；程序到网页方向按 USB 实测上行速度（460 KiB/s）限速，`--no-limit` 关闭。
-- 网页没打开时，桥暂停读取，程序的写入会阻塞、请求会超时；打开网页后自动继续。
-- Python 程序连上时，网页脚本会自动停止，免得两边同时画。
 - 新打开的页面会接管设备，旧页面断开。
 - `--host 0.0.0.0` 可让局域网里的手机、平板打开网页（同时也开放了 TCP 端口）。
+- 直接双击 `web/index.html` 也能打开模拟器，但没有桥就不能运行程序。
 
 ## 模拟了什么
 
@@ -66,7 +72,6 @@ Python 程序 ──TCP 8766──▶ wwb.sim ──WebSocket /ws──▶ 网�
 
 - 浏览器只能按显示器刷新率（通常 60Hz）显示画面，OLED 内部按约 95fps 推送，但你看到的是每 1/60 秒的最新画面。
 - 不模拟真机的硬件故障：时序设得太快导致的数码管乱码、I²C 花屏、模块掉电等。
-- 页面在后台标签时浏览器会降低定时器频率，网页脚本会变慢；Python 程序驱动时不受影响（命令到达时就推进模拟）。
 
 ## 文件
 
@@ -76,10 +81,10 @@ web/js/proto.js       协议：COBS、CRC、帧编解码
 web/js/u8g2.js        u8g2 字体解码与绘图
 web/js/fonts.js       字体数据（生成文件）
 web/js/emulator.js    设备模拟：命令处理 + 各外设时序
-web/js/client.js      网页脚本用的 Device API
 web/js/view.js        三块屏的画面
-web/js/examples.js    示例脚本
-web/js/app.js         页面逻辑、Python 桥连接、脚本运行
+web/js/app.js         页面逻辑、程序列表、Python 桥连接
 web/tools/gen_fonts.py  重新生成 fonts.js（固件换字体时）
-host/wwb/sim.py       Python 桥
+host/wwb/sim.py       Python 桥：网页服务、协议转发、程序启停与自动重启
+host/wwb/app.py       程序入口 run(main)
+apps/                 程序（每个一个包）
 ```

@@ -27,8 +27,10 @@ host/wwb/            上位机 Python 库
   showcase.py        赛博风多场景演示：开机自检、星空跃迁、四维超立方体、代码雨、等离子、频谱、故障标志
   visual.py          目测验证（时钟档位）
   cli.py             命令行
-  sim.py             网页模拟器的 Python 桥（Device("sim")）
-web/                 网页模拟器：三块屏 + 开关，在浏览器里设计动画与交互
+  sim.py             网页模拟器的 Python 桥：程序启停、自动重启、协议转发
+  app.py             程序入口 run(main)
+apps/                程序，每个一个包（stopwatch：秒表）
+web/                 网页模拟器：三块屏 + 开关 + 程序列表
 docs/
   hardware.md        器件、接线、供电、实测结论
   protocol.md        协议规范
@@ -57,22 +59,12 @@ python -m wwb.showcase               # 赛博风多场景演示（拨开关切�
 ## 网页模拟器（不接设备）
 
 ```bash
-python -m wwb.sim                    # 打开 http://127.0.0.1:8765：三块屏 + 开关 + 脚本编辑器
-python -m wwb.showcase --port sim    # 任何程序加 --port sim / Device("sim") 就画到网页上
+python -m wwb.sim                    # 打开 http://127.0.0.1:8765，在右侧选程序运行，拨开关试交互
 ```
 
-模拟器按固件逐条执行协议命令，并模拟真机的刷新时序（OLED 约 95fps、数码管只写变化的位、20ms 消抖），实测刷新数与真机误差在 1% 左右。网页右侧可以直接写 JS 脚本（API 与 Python 同名），也可以直接双击 `web/index.html` 打开。详见 [docs/simulator.md](docs/simulator.md)。
-
-```python
-from wwb import Device, Font
-
-with Device("/dev/ttyACM0") as d:                 # UART：Device("/dev/ttyUSB0", baud=921600)
-    d.oled_clear()
-    d.oled_text(0, 40, "12:34.56", Font.LOGISOSO24_NUM, flush=True)
-    d.seg_text("12:34")
-    d.mx_frame(bytes([0x18, 0x3C, 0x7E, 0xDB, 0x18, 0x18, 0x18, 0x18]))
-    d.on_input(lambda ev: print(ev.name, ev.active, ev.t_us))
-```
+模拟器按固件逐条执行协议命令，并模拟真机的刷新时序（OLED 约 95fps、数码管只写变化的位、20ms 消抖），实测刷新数与真机误差在 1% 左右。
+程序放在 `apps/<名字>/`（Python 包，入口用 `wwb.app.run(main)`），会自动出现在网页列表里，改了文件自动重启。
+同一个程序加 `--port sim` 跑在模拟器上，去掉就跑在真机上。详见 [docs/simulator.md](docs/simulator.md)。
 
 ## 关键数字
 
