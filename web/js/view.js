@@ -19,14 +19,30 @@
       this.prev = new Uint8Array(128 * 64).fill(2);
       this.grid = true;
       this.setScale(4);
+      this.watchDpr();
     }
+    // 按屏幕的物理像素作画：每个 OLED 像素占整数个物理像素、缝宽一致。
+    // 否则在 125%/150% 缩放的屏幕上浏览器会把画布拉伸，点的大小和缝宽忽大忽小，看起来像重影
     setScale(s) {
+      const dpr = window.devicePixelRatio || 1;
       this.scale = s;
-      this.canvas.width = 128 * s;
-      this.canvas.height = 64 * s;
-      this.img = this.ctx.createImageData(128 * s, 64 * s);
+      this.cell = Math.max(1, Math.round(s * dpr));
+      this.gap = this.cell >= 3 ? Math.max(1, Math.round(this.cell * 0.15)) : 0;
+      this.canvas.width = 128 * this.cell;
+      this.canvas.height = 64 * this.cell;
+      this.canvas.style.width = `${(128 * this.cell) / dpr}px`;
+      this.canvas.style.height = `${(64 * this.cell) / dpr}px`;
+      this.img = this.ctx.createImageData(this.canvas.width, this.canvas.height);
       this.buf = new Uint32Array(this.img.data.buffer);
       this.prev.fill(2);
+    }
+    // 窗口拖到另一块缩放不同的屏幕时重新适配
+    watchDpr() {
+      const mq = matchMedia(`(resolution: ${window.devicePixelRatio || 1}dppx)`);
+      mq.addEventListener("change", () => {
+        this.setScale(this.scale);
+        this.watchDpr();
+      }, { once: true });
     }
     // 屏上每个像素画成一个小方点，点之间留缝，像真实面板
     render(emu) {
@@ -36,11 +52,11 @@
       if (key === this.prevKey && px.every((v, i) => v === this.prev[i])) return;
       this.prev.set(px);
       this.prevKey = key;
-      const s = this.scale, gap = s >= 3 ? 1 : 0, w = 128 * s;
+      const s = this.cell, gap = this.gap, w = 128 * s;
       // 对比度只稍微影响亮度（真实 SSD1306 也是这样）
       const k = 0.55 + 0.45 * (pn.contrast / 255);
       const lit = (255 << 24) | (Math.round(255 * k) << 16) | (Math.round(246 * k) << 8) | Math.round(232 * k);  // ABGR
-      const off = this.grid ? (20 << 24) | 0xffffff : 0;
+      const off = this.grid ? (12 << 24) | 0xffffff : 0;
       const buf = this.buf;
       buf.fill(0);
       for (let y = 0; y < 64; y++) {
