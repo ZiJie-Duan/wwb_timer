@@ -12,7 +12,7 @@
     python -m apps.hello                  # 真机（默认 /dev/ttyACM0）
     python -m apps.hello --port sim       # 网页模拟器（一般在网页上点“运行”即可）
 
-收到 Ctrl+C 或 SIGTERM 时退出 main 并正常关闭设备。
+收到 Ctrl+C、SIGTERM 或 SIGHUP 时退出 main 并正常关闭设备。
 """
 from __future__ import annotations
 
@@ -32,6 +32,7 @@ def run(main: Callable[[Device], None], description: str | None = None):
     ap.add_argument("--port", default=DEFAULT_PORT, help='串口；"sim" = 网页模拟器')
     args = ap.parse_args()
     signal.signal(signal.SIGTERM, _interrupt)
+    signal.signal(signal.SIGHUP, _interrupt)  # 远程运行时 ssh 断开
     try:
         with Device(args.port) as d:
             main(d)

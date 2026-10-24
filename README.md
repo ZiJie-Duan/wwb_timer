@@ -32,6 +32,7 @@ host/wwb/            上位机 Python 库
   showcase.py        赛博风多场景演示：开机自检、星空跃迁、四维超立方体、代码雨、等离子、频谱、故障标志
   visual.py          目测验证（时钟档位）
   cli.py             命令行
+  remote.py          把程序同步到树莓派并在那里运行（UART 驱动设备）
   sim.py             网页模拟器的 Python 桥：程序启停、自动重启、协议转发
   app.py             程序入口 run(main)
 apps/                程序，每个一个包（stopwatch：秒表）
@@ -76,7 +77,7 @@ python -m wwb.sim                    # 打开 http://127.0.0.1:8765，在右侧�
 
 ## 树莓派作上位机
 
-树莓派的 GPIO14/15 接 ESP32 的 GPIO20/21（UART1，921600），设 `WWB_PORT=/dev/serial0` 后所有程序照常运行。见 [docs/raspberrypi.md](docs/raspberrypi.md)。
+树莓派的 GPIO14/15 接 ESP32 的 GPIO20/21（UART1，921600），程序在电脑上开发，用 `python -m wwb.remote apps.stopwatch` 通过 WiFi 同步到树莓派上运行。见 [docs/raspberrypi.md](docs/raspberrypi.md)。
 
 ## 关键数字
 
