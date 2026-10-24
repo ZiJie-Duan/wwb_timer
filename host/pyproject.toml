@@ -3,6 +3,7 @@ name = "wwb"
 version = "0.1.0"
 description = "Host API for the wwb_timer ESP32-C3 device"
 requires-python = ">=3.10"
+license = { text = "MIT" }
 dependencies = ["pyserial>=3.5"]
 
 [project.optional-dependencies]

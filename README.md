@@ -78,3 +78,7 @@ with Device("/dev/ttyACM0") as d:                 # UART：Device("/dev/ttyUSB0"
 
 - 开发板只用 USB 供电；外部 5V 只给模块，**不要接开发板 5V 引脚**，所有 GND 相连。见 [docs/hardware.md](docs/hardware.md)。
 - 打开 `/dev/ttyACM0` 时要保持 DTR、RTS 同为有效，并关闭 HUPCL，否则会复位芯片。`wwb.Device` 已处理。
+
+## 许可证
+
+[MIT](LICENSE)
