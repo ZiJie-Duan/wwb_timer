@@ -1,332 +1,330 @@
-"""抱瓮灌园：《庄子·天地》汉阴丈人“凿隧而入井，抱瓮而出灌”，子贡劝他用桔槔，他说“有机械者必有机事……
-吾非不知，羞而不为也”。左边一口井，井边立着桔槔（吊杆）——小道士偏不用，每趟都抱着瓦瓮下井舀水，
-走到菜畦里一棵棵浇。菜慢慢长大；浇过的菜叶一挺。彩蛋：风吹得桔槔吱呀晃荡，他看一眼，摇摇头——“羞而不为”；
-一只蝴蝶飞来停在菜上。
+"""抱瓮灌园（像素风）：井边立着一架桔槔（吊杆、坠石、吊桶），小道士偏不用它——蹲在井口把瓦瓮沉下去舀满，
+抱着走到菜畦，一棵棵倾瓮浇水：水成一道弧落下，溅起水花，浇过的菜叶一挺。菜随趟数从两片叶的小苗长成大白菜。
+一趟走完擦把汗。约四成的趟数刮一阵风，桔槔吱呀吱呀晃起来，他看它一眼、摇摇头、眯眼一笑——“羞而不为”。
+彩蛋：约每 53 秒一只蝴蝶飞来停在菜叶上，扇两下翅膀又飞走。
+右侧竖写“抱瓮灌园”（《庄子·天地》汉阴丈人：凿隧而入井，抱瓮而出灌……吾非不知，羞而不为也）。
 """
 from __future__ import annotations
 
 import math
 
-from ..engine.anim import clamp, ease_in, ease_in_out, ease_out, lerp, noise, rand, span
+from ..engine import pix
+from ..engine.anim import ease_in_out, ease_out, lerp, rand, span
 from ..engine.gfx import Gfx, Sprite
 from ..engine.scene import Rest, register
-from .x5_common import daoshi, dpoly, event, fade_box, phase, sweat
+from .x5_common import SWEAT, Clock, blit_rot, cyc, event, fade_out, keys, scroll, worker
 
-GY = 58
-WELL = (16, 32)      # 井栏左右
-WELL_TOP = 47
-XW = 40              # 在井边站的位置
-PLANTS = (66, 82, 98)
+FLOOR = 56
+TEXT_X = 114
+WELL = 17                # 井口中心
+WELL_TOP = FLOOR - 11
+AT_WELL = 36
+PLANTS = (68, 85, 102)
 TRIP = 16.0
-BUTTERFLY = [Sprite("##.##\n.###.\n##.##"), Sprite(".#.#.\n.###.\n.#.#.")]
+
+JAR = Sprite("""
+  #####
+  #...#
+   ###
+ #######
+##.###.##
+#########
+#.#######
+#.#######
+##.######
+ #######
+  #####
+""")
+JAR_PIV = (4, 6)
+
+PLANT = [
+    Sprite("""
+#   #
+##.##
+ ###
+  #
+"""),
+    Sprite("""
+ #   #
+###.###
+ ##.##
+#.###.#
+  ###
+"""),
+    Sprite("""
+  #  #
+ ##.###
+###.####
+#.#.#.##
+ ##.###
+#.#####.#
+  #####
+"""),
+    Sprite("""
+   ####
+  #.##.#
+ ##.##.##
+ #.####.#
+##.####.##
+#.######.#
+##.####.##
+ #.####.#
+#.##..##.#
+ ########
+"""),
+]
+
+BUTTERFLY = pix.frames("""
+##.##
+#.#.#
+ .#.
+---
+ #.#
+ .#.
+""")
 
 
-def jar(g: Gfx, cx: float, cy: float, ang: float = 0.0, water: bool = False):
-    """瓦瓮：鼓腹小口。中心 (cx, cy)，ang 倾斜（正 = 口朝右倒）"""
+def well(g: Gfx):
+    """石砌井台：井口（暗）、井沿一圈条石、侧面砖缝"""
+    x0, x1 = WELL - 10, WELL + 10
+    g.d.rectangle((x0, WELL_TOP, x1, FLOOR), fill=1)
+    g.d.ellipse((x0, WELL_TOP - 3, x1, WELL_TOP + 3), fill=1)
+    g.d.ellipse((x0 + 2, WELL_TOP - 2, x1 - 2, WELL_TOP + 1), fill=0)
+    g.d.line((x0, WELL_TOP + 3, x1, WELL_TOP + 3), fill=0)
+    for r, y in enumerate(range(WELL_TOP + 6, FLOOR, 3)):
+        g.d.line((x0, y, x1, y), fill=0)
+        for x in range(x0 + 2 + (r % 2) * 3, x1, 6):
+            g.d.line((x, y - 2, x, y - 1), fill=0)
+    pix.checker(g, (x1 - 3, WELL_TOP + 4, x1 + 1, FLOOR), 0.5, fill=0)
+
+
+def shadoof(g: Gfx, ang: float):
+    """桔槔：立柱 + 横杆（左端坠石，右端吊桶悬在井口上方）"""
+    px, py = 4, 18
+    g.d.rectangle((px - 1, py, px, FLOOR), fill=1)
+    g.d.line((px - 3, py - 3, px - 1, py), fill=1)
+    g.d.line((px + 2, py - 3, px, py), fill=1)
     c, s = math.cos(ang), math.sin(ang)
-    pts = []
-    prof = [(-2, -6), (-3, -5), (-5, -3), (-5.5, 0), (-5, 3), (-3.5, 5), (3.5, 5), (5, 3), (5.5, 0), (5, -3), (3, -5),
-            (2, -6)]
-    for x, y in prof:
-        pts.append((cx + x * c - y * s, cy + x * s + y * c))
-    g.d.polygon(pts, fill=0, outline=1)
-    # 肩上一圈纹
-    a, b = (-4.5, -3.5), (4.5, -3.5)
-    g.d.line((cx + a[0] * c - a[1] * s, cy + a[0] * s + a[1] * c, cx + b[0] * c - b[1] * s, cy + b[0] * s + b[1] * c),
-             fill=1)
-    mouth = (cx + 6.5 * s, cy - 6.5 * c)  # 口（局部 (0,-6.5)）
-    if water:
-        g.px(*mouth)
-    return mouth
+    lx, ly = px - 6 * c, py - 6 * s
+    rx, ry = px + 15 * c, py + 15 * s
+    g.d.line((lx, ly, rx, ry), fill=1, width=2)
+    g.d.ellipse((lx - 3, ly - 1, lx + 2, ly + 4), fill=1)         # 坠石
+    g.px(lx - 1, ly + 1, 0)
+    bx, by = rx, ry + 11
+    g.d.line((rx, ry, bx, by - 3), fill=1)
+    g.d.rectangle((bx - 2, by - 3, bx + 2, by + 1), fill=1)       # 吊桶
+    g.d.line((bx - 2, by - 1, bx + 2, by - 1), fill=0)
 
 
-CABBAGE = [Sprite("""
-#...#
-.#.#.
-..#..
-..#..
-"""), Sprite("""
-##...##
-#.#.#.#
-.##.##.
-...#...
-...#...
-"""), Sprite("""
-....###....
-..##...##..
-.#..#.#..#.
-#...#.#...#
-#....#....#
-.#.......#.
-..#######..
-"""), Sprite("""
-......###......
-...###...###...
-..#...#.#...#..
-.#...#...#...#.
-#....#...#....#
-#.....#.#.....#
-.#.....#.....#.
-..##.......##..
-....#######....
-""")]
-
-
-def cabbage(g: Gfx, x: float, k: float, perk: float = 0.0, seed: int = 0):
-    """一棵菜：k 0..1 由苗到大棵（四个样子）；perk 浇水后叶子一挺。返回顶端 y"""
-    spr = CABBAGE[min(3, int(k * 4))]
-    top = GY - spr.h - round(perk)
-    g.blit(spr, x - spr.w // 2, top)
-    return top
+def stream(g: Gfx, x0, y0, x1, y1, t):
+    """倒出来的水：一道弧，水点往下走"""
+    for j in range(10):  # 出口水平、越落越快
+        k = ((t * 3 + j / 10) % 1)
+        x, y = lerp(x0, x1, k), y0 + (y1 - y0) * k * k
+        g.px(x, y)
+        if j % 2 == 0:
+            g.px(x, y + 1)
 
 
 @register
 class Garden(Rest):
     id = "x5.garden"
     name = "抱瓮灌园"
-    desc = "井边桔槔不用，抱着瓦瓮下井舀水，一棵棵浇菜——有机械者必有机事"
-    T = {"enter": 3.0, "exit": 1.3}
+    desc = "井边桔槔不用，小道士蹲下沉瓮舀水、抱瓮浇菜，菜一趟趟长大；风吹桔槔吱呀，他摇摇头——羞而不为"
+    T = {"enter": 3.0, "exit": 1.2}
 
     def setup(self):
-        self.s = self.rng.randrange(1000)
-        self.k0 = 0.12 + self.rng.random() * 0.1    # 菜一开始多大
-        self._ht = 0.0
+        self.clock = Clock()
+        self.sparks = pix.Sparks(self.seed)
+        self.s = self.seed * 23 + 7
 
-    # ------------------------------------------------------------ 场景零件
+    def scene_bg(self, g: Gfx, t: float, creak: float | None):
+        g.d.line((0, FLOOR, 110, FLOOR), fill=1)
+        pix.checker(g, (0, FLOOR + 2, 111, 64), 0.125)
+        # 菜畦：一道垄，土上网点、垄沟
+        g.d.polygon([(60, FLOOR), (63, FLOOR - 3), (106, FLOOR - 3), (109, FLOOR)], fill=1)
+        pix.checker(g, (62, FLOOR - 2, 108, FLOOR), 0.5, fill=0)
+        # 远处篱笆
+        for x in range(58, 111, 9):
+            g.d.line((x, FLOOR - 24, x, FLOOR - 14), fill=1)
+            g.px(x, FLOOR - 25)
+        g.d.line((56, FLOOR - 21, 110, FLOOR - 21), fill=1)
+        g.d.line((56, FLOOR - 17, 110, FLOOR - 17), fill=1)
+        # 桔槔：平时吊桶端翘起；风来了吱呀晃
+        ang = -0.35
+        if creak is not None:
+            ang += math.sin(creak * 5) * 0.25 * (1 - span(creak, 2.5, 4.0))
+        shadoof(g, ang)
+        well(g)
+        # 太阳
+        g.d.ellipse((40, 4, 48, 12), outline=1)
+        for a in range(0, 360, 45):
+            r = math.radians(a + t * 8)
+            g.px(44 + math.cos(r) * 7, 8 + math.sin(r) * 7)
 
-    def well(self, g: Gfx):
-        d = g.d
-        x0, x1 = WELL
-        d.rectangle((x0, WELL_TOP, x1, GY), fill=0, outline=1)
-        d.rectangle((x0 - 1, WELL_TOP - 2, x1 + 1, WELL_TOP), fill=1)
-        for r, y in enumerate(range(WELL_TOP + 3, GY, 3)):  # 砌石
-            d.line((x0, y, x1, y), fill=1)
-            for x in range(x0 + 2 + (r % 2) * 3, x1, 6):
-                d.line((x, y - 2, x, y), fill=1)
-        d.rectangle((x0 + 2, WELL_TOP - 1, x1 - 2, WELL_TOP), fill=0)  # 井口
-
-    def shadoof(self, g: Gfx, t: float, swing: float = 0.0):
-        """桔槔：立柱 + 横杆（左端坠石，右端吊绳桶垂在井口上）"""
-        px, py = 6, 20
-        g.d.line((px, GY, px, py), fill=1)
-        g.d.line((px + 1, GY, px + 1, py + 2), fill=1)
-        g.d.line((px - 3, GY, px + 4, GY), fill=1)
-        a = 0.28 + math.sin(t * 0.7) * 0.02 + swing
-        ux, uy = math.cos(a), math.sin(a)
-        rx, ry = px + ux * 22, py + uy * 22         # 右端
-        lx, ly = px - ux * 9, py - uy * 9           # 左端
-        g.d.line((lx, ly, rx, ry), fill=1)
-        g.d.ellipse((lx - 3, ly - 1, lx + 2, ly + 4), fill=1)   # 坠石
-        g.d.rectangle((px - 1, py - 1, px + 1, py + 1), fill=1)
-        # 吊绳和小桶
-        bob = math.sin(t * 1.3) * swing * 20
-        bx, by = rx + bob, ry + 13
-        g.d.line((rx, ry, bx, by), fill=1)
-        g.d.rectangle((bx - 2, by, bx + 2, by + 4), fill=0, outline=1)
-
-    def beds(self, g: Gfx):
-        g.d.line((0, GY, 127, GY), fill=1)
-        for x in PLANTS:
-            g.d.arc((x - 10, GY - 2, x + 10, GY + 3), 180, 360, fill=1)
-        for i in range(6):
-            x = 50 + rand(i, 61) * 60
-            g.px(x, GY + 2 + (i % 3))
-
-    # ------------------------------------------------------------ 状态
-
-    def growth(self, t: float, i: int) -> float:
-        """第 i 棵菜长到多大：随浇水次数长，十几趟后长成"""
-        trips = t / TRIP
-        return clamp(self.k0 + trips * (0.07 + 0.01 * i))
-
-    def trip(self, t: float):
-        """→ (X, f, crouch, lean, step, jar 状态, 浇第几棵/None, 浇的进度)"""
-        n, c = phase(t, TRIP)
-        X, f, crouch, lean, step = XW, -1, 0.0, 0.0, None
-        jar_state = "chest"
-        pour = None
-        pu = 0.0
-        if c < 2.0:  # 井边：蹲下把瓮伸进井里，舀满提上来
-            q = math.sin(span(c, 0, 2.0) * math.pi)
-            crouch, lean = 0.7 * q, 4 * q
-            jar_state = ("dip", q)
-        elif c < 2.6:  # 转身
-            f = 1
-        elif c < 9.6:
-            f = 1
-            # 三段：走 → 浇
-            stops = [(2.6, 5.0, XW, PLANTS[0] - 15), (6.0, 6.8, PLANTS[0] - 15, PLANTS[1] - 15),
-                     (7.8, 8.6, PLANTS[1] - 15, PLANTS[2] - 15)]
-            pours = [(5.0, 6.0), (6.8, 7.8), (8.6, 9.6)]
-            for (a, b, x0, x1) in stops:
-                if c >= a:
-                    X = lerp(x0, x1, ease_in_out(span(c, a, b)))
-                    if c < b:
-                        step = c * 11
-            for i, (a, b) in enumerate(pours):
-                if a <= c < b:
-                    pour, pu = i, span(c, a, b)
-        elif c < 13.6:  # 回井边
-            f = -1
-            X = lerp(PLANTS[2] - 15, XW, ease_in_out(span(c, 10.0, 13.6)))
-            if 10.0 <= c < 13.6:
-                step = c * 11
-            jar_state = "empty"
-        else:
-            jar_state = "empty"
-        return n, c, X, f, crouch, lean, step, jar_state, pour, pu
-
-    # ------------------------------------------------------------ 画
-
-    def draw(self, g: Gfx, t: float, final: float = 0.0):
-        n, c, X, f, crouch, lean, step, js, pour, pu = self.trip(t)
-        ev_sh = None
-        if c >= 13.6 and rand(n, self.s + 5) < 0.45 and n > 0:
-            ev_sh = c - 13.6     # 这一趟回来：风吹桔槔，他看一眼，摇头
-        swing = 0.0
-        if ev_sh is not None:
-            swing = math.sin(ev_sh * 4.0) * 0.22 * (1 - span(ev_sh, 1.6, 2.4))
-        self.beds(g)
-        self.well(g)
-        self.shadoof(g, t, swing)
-        # 菜
-        tops = []
+    def plants(self, g: Gfx, stage: int, perk: dict, t: float):
         for i, x in enumerate(PLANTS):
-            k = self.growth(t, i)
-            perk = 0.0
-            # 浇过之后 1.5 秒内叶子一挺
-            pe = [(6.0, 0), (7.8, 1), (9.6, 2)][i]
-            dt = c - pe[0]
-            if 0 <= dt < 2.0:
-                perk = math.sin(span(dt, 0, 2.0) * math.pi) * 1.4
-            tops.append(cabbage(g, x, k, perk, i))
-            if 0 <= dt < 0.8:  # 闪一下
-                g.px(x - 6, tops[-1] - 3 - dt * 4)
-                g.px(x + 6, tops[-1] - 2 - dt * 4)
-        # 人
-        eye = "closed" if (t % 4.1) < 0.14 else "open"
-        look, shake = 0.0, 0.0
-        if ev_sh is not None:
-            look = -1.5 if 0.3 < ev_sh < 1.4 else 0.0
-            if 1.4 < ev_sh < 2.1:
-                shake = math.sin(ev_sh * 28) * 1.2
-            eye = "closed" if ev_sh > 2.1 else eye
-        hands = [None, None]
-        jx, jy, ja = X + f * 6, GY - 15, 0.0
-        water = js != "empty"
-        if isinstance(js, tuple):  # 下井舀水
-            q = js[1]
-            jx, jy = lerp(X - 6, WELL[0] + 9, q), lerp(GY - 15, WELL_TOP + 8, q)
-            hands = [(jx + 3, jy - 3), (jx + 5, jy - 2)]
-        elif pour is not None:  # 倾瓮
-            tilt = math.sin(pu * math.pi)
-            ja = tilt * 1.3
-            jx, jy = X + 7 + tilt * 2, GY - 16 + tilt * 2
-            lean = 2 * tilt
-            hands = [(jx - 2, jy + 3), (jx - 4, jy - 3)]
-        else:
-            hands = [(jx + f * 1, jy + 2), (jx - f * 1, jy + 3)]
-        if final > 0:  # 收场：放下瓮
-            jy = lerp(jy, GY - 6, final)
-            hands = [(jx, lerp(jy + 2, GY - 9, final)), None]
-        pz = daoshi(g, X + shake, GY, f, hands=hands, crouch=crouch, lean=lean, step=step, eye=eye, look=look,
-                    draw_far=True)
-        # 瓮在怀里（抱瓮：画在人前面，近手压在瓮上）
-        if isinstance(js, tuple) and js[1] > 0.55:
-            # 瓮在井口以下，看不见，只露出手和一截绳
-            g.d.rectangle((WELL[0] + 2, WELL_TOP - 1, WELL[1] - 2, WELL_TOP), fill=0)
-        else:
-            mouth = jar(g, jx, jy, ja * f, water)
-            g.d.rectangle((hands[0][0] - 1, hands[0][1] - 1, hands[0][0] + 1, hands[0][1] + 1), fill=1)
-            if pour is not None and 0.2 < pu < 0.85:  # 水流成弧落到菜根
-                tx = PLANTS[pour] - 2
-                prev = None
-                for j in range(13):
-                    u = j / 12
-                    x = lerp(mouth[0] + 1, tx, u)
-                    y = mouth[1] + u * u * (GY - 3 - mouth[1]) - math.sin(u * math.pi) * 2
-                    if prev and (j + int(t * 15)) % 5:
-                        g.d.line((*prev, x, y), fill=1)
-                    prev = (x, y)
-                for j in range(3):  # 溅起
-                    a = rand(j + int(t * 10), 3) * math.pi
-                    g.px(tx + math.cos(a) * 4, GY - 2 - math.sin(a) * 2)
-            if isinstance(js, tuple) and js[1] < 0.55 and c > 1.0:  # 刚提上来：滴水
-                g.px(jx + 2, jy + 6 + (c * 20) % 6)
-        if c >= 13.6 and ev_sh is None and 14.2 < c < 15.4:
-            sweat(g, pz.head[0] - 3, pz.head[1] - 2, span(c, 14.2, 15.0))
-        # 蝴蝶
-        ev_b = event(t, 53.0, 11.0, self.s + 3)
-        if ev_b:
-            self.butterfly(g, ev_b, tops)
-        # 字
-        if ev_sh is not None and ev_sh > 1.2:
-            self.text(g, "羞而不为", span(ev_sh, 1.2, 1.9))
-        else:
-            self.text(g, "抱瓮灌园")
-        self.mx(g, t, pour, pu, c)
+            spr = PLANT[stage]
+            dy = -1 if perk.get(i, 0) > 0 else 0
+            sway = int(round(math.sin(t * 1.3 + i) * 0.6))
+            pix.blit(g, spr, x - spr.w // 2 + sway, FLOOR - 3 - spr.h + dy)
 
-    def butterfly(self, g: Gfx, ev, tops):
-        n, k = ev
-        i = int(rand(n, self.s + 9) * 3)
-        tx, ty = PLANTS[i], tops[i] - 3
-        if k < 3.0:  # 飞来
-            u = ease_out(k / 3.0)
-            x = lerp(130, tx, u) + math.sin(k * 5) * 4 * (1 - u)
-            y = lerp(14, ty, u) + math.sin(k * 7) * 3 * (1 - u)
-            g.blit(BUTTERFLY[int(k * 10) % 2], x - 2, y - 1)
-        elif k < 8.0:  # 停在菜上，翅膀偶尔合一下
-            g.blit(BUTTERFLY[1 if (k % 1.6) < 0.25 else 0], tx - 2, ty - 1)
-        else:  # 飞走
-            u = ease_in(span(k, 8.0, 11.0))
-            g.blit(BUTTERFLY[int(k * 10) % 2], tx - 2 + u * 50, ty - 1 - u * 40 + math.sin(k * 6) * 3)
+    def trip(self, k: float, n: int):
+        """一趟里的状态"""
+        st = dict(x=AT_WELL, legs="stand", flip=True, hand=None, jar=None, tilt=0, face="normal", head="up",
+                  pour=None, full=False, perk={}, wipe=False)
+        if k < 2.0:  # 蹲下沉瓮、提上来
+            st["legs"] = "kneel" if 0.2 < k < 1.8 else "stand"
+            dip = math.sin(span(k, 0.4, 1.6) * math.pi)
+            st["hand"] = (WELL + 4, WELL_TOP - 3 + dip * 6)
+            st["jar"] = "hand" if dip < 0.5 else None
+            st["full"] = k > 1.0
+            return st
+        st["full"] = True
+        if k < 4.4:  # 抱瓮走到菜畦
+            q = span(k, 2.0, 4.4)
+            st.update(x=lerp(AT_WELL, PLANTS[0] - 19, ease_in_out(q)), legs="walk" if q < 1 else "stand", flip=False)
+            st["hand"] = (st["x"] + 9, FLOOR - 12)
+            st["jar"] = "hug"
+            return st
+        if k < 10.0:  # 浇三棵
+            j = min(int((k - 4.4) / 1.9), 2)
+            q = (k - 4.4) - j * 1.9
+            px = PLANTS[j] - 19
+            prev = PLANTS[j - 1] - 19 if j else px
+            x = lerp(prev, px, ease_in_out(span(q, 0, 0.4))) if j else px
+            st.update(x=x, legs="walk" if j and q < 0.4 else "stand", flip=False)
+            tilt = span(q, 0.45, 0.75) - span(q, 1.45, 1.75)
+            st["tilt"] = tilt
+            st["hand"] = (x + 9, FLOOR - 12 - tilt * 2)
+            st["jar"] = "hug"
+            if tilt > 0.9:
+                st["pour"] = (j, q - 0.75)
+            for i in range(3):
+                done = 4.4 + i * 1.9 + 1.2
+                if k > done:
+                    st["perk"][i] = max(0.0, 1 - (k - done) / 0.4)
+            st["full"] = k < 9.6
+            return st
+        st["perk"] = {}
+        if k < 13.0:  # 走回井边
+            q = span(k, 10.0, 13.0)
+            st.update(x=lerp(PLANTS[2] - 19, AT_WELL, ease_in_out(q)), legs="walk" if q < 1 else "stand", flip=True,
+                      full=False)
+            st["hand"] = (st["x"] - 9, FLOOR - 12)
+            st["jar"] = "hug"
+            return st
+        st.update(flip=True, full=False)  # 歇口气：瓮放在脚边，擦汗
+        st["jar"] = "ground"
+        q = k - 13.0
+        st["hand"] = keys(q, [(0, (AT_WELL - 9, FLOOR - 12)), (0.5, (AT_WELL - 13, FLOOR - 28)),
+                              (0.9, (AT_WELL - 11, FLOOR - 32)), (1.3, (AT_WELL - 13, FLOOR - 28)),
+                              (1.8, (AT_WELL - 9, FLOOR - 14))])
+        st["face"] = "sleep" if q < 1.8 else "normal"
+        st["wipe"] = q < 1.8
+        return st
 
-    def text(self, g: Gfx, s: str, a: float = 1.0):
-        g.vtext(115, 2, s[:int(round(len(s) * clamp(a)))])
+    def frame(self, g: Gfx, t: float, text_k: float = 1.0):
+        dt = self.clock.tick(t)
+        n, k = cyc(t, TRIP)
+        st = self.trip(k, n)
+        creak = None
+        if rand(n, self.s) < 0.4 and k >= 13.0:
+            creak = k - 13.0
+        self.scene_bg(g, t, creak)
+        stage = min((n // 2) % 5, 3)
+        self.plants(g, stage, st["perk"], t)
+        if creak is not None:  # 看桔槔一眼、摇摇头、眯眼笑
+            st["hand"] = None
+            st["face"] = "wow" if creak < 1.0 else "happy"
+            st["wipe"] = False
+            if 1.2 < creak < 2.2:
+                st["flip"] = int(creak * 8) % 2 == 0
+        if st["jar"] == "ground":
+            pix.blit(g, JAR, AT_WELL - 15, FLOOR - 11)
 
-    def mx(self, g: Gfx, t: float, pour, pu: float, c: float):
-        # 一棵苗：浇水时上面落水滴、苗一挺
-        k = clamp(0.3 + t / TRIP * 0.1)
-        h = 2 + int(k * 3)
-        g.mx[7, 1:7] = True
-        for y in range(7 - h, 7):
-            g.mx_set(3, y)
-        top = 7 - h
-        perk = pour is not None and pu > 0.4
-        g.mx_set(2, top + (0 if perk else 1))
-        g.mx_set(1, top + (0 if perk else 1) - (1 if k > 0.6 else 0))
-        g.mx_set(4, top)
-        g.mx_set(5, top - (1 if k > 0.6 else 0))
-        if pour is not None and 0.2 < pu < 0.9:
+        def tool(gg, h1, h2):
+            if st["jar"] == "hand" and h1:
+                pix.blit(gg, JAR, h1[0] - 4, h1[1])
+            elif st["jar"] == "hug" and h1:
+                deg = st["tilt"] * 75 * (-1 if st["flip"] else 1)
+                cx, cy = h1[0] + (-3 if st["flip"] else 3), h1[1] - 3
+                blit_rot(gg, JAR, cx, cy, deg, *JAR_PIV)
+                st["mouth"] = (cx + math.sin(math.radians(deg)) * 7, cy - math.cos(math.radians(deg)) * 6)
+
+        worker(g, st["x"], FLOOR, t, hand=st["hand"], legs=st["legs"], flip=st["flip"], face=st["face"],
+               head=st["head"], tool=tool)
+        if st["jar"] == "hand" and k < 2.0 and st["hand"][1] > WELL_TOP:
+            well(g)  # 瓮沉进井口：井沿压在瓮上
+        if st["pour"] is not None and "mouth" in st:
+            j, q = st["pour"]
+            mx, my = st["mouth"]
+            stream(g, mx + 1, my, PLANTS[j], FLOOR - 4 - PLANT[min((n // 2) % 5, 3)].h, t)
+            if int(t * 10) % 3 == 0:
+                self.sparks.burst(PLANTS[j] - 2, FLOOR - 5, 2, 14, up=12, life=0.35, gravity=80)
+        if k < 2.0 and 1.2 < k:  # 提上来的瓮滴水
             for j in range(2):
-                y = int((t * 8 + j * 2) % max(top - 1, 1))
-                g.mx_set(4 + j * 2 - 1, y)
+                q = ((k - 1.2) * 2 + j * 0.5) % 1
+                g.px(WELL + 1 + j * 4, WELL_TOP + 2 + q * 8)
+        if st["wipe"]:
+            q = (k - 13.0) % 1
+            pix.blit(g, SWEAT, st["x"] - 14 - q * 6, FLOOR - 34 + q * q * 14)
+        self.sparks.step(dt)
+        self.sparks.draw(g, trail=False)
+        bf = event(t, 53.0, 9.0, self.s + 1)
+        if bf:
+            self.butterfly(g, bf[1], t)
+        self.matrix(g, t, stage, st)
+        shy = creak is not None and creak > 1.0
+        scroll(g, TEXT_X, "羞而不为" if shy else "抱瓮灌园", k=text_k, side="right")
 
-    # ------------------------------------------------------------ 阶段
+    def butterfly(self, g: Gfx, q: float, t: float):
+        lx, ly = PLANTS[1] + 1, FLOOR - 16
+        if q < 3.0:
+            k = q / 3.0
+            x = lerp(-6, lx, ease_out(k)) + math.sin(q * 3) * 4
+            y = lerp(12, ly, ease_out(k)) + math.sin(q * 7) * 3
+            pix.blit(g, pix.anim(BUTTERFLY, q, 8), x - 2, y)
+        elif q < 6.5:
+            pix.blit(g, BUTTERFLY[0] if (q * 2) % 1 < 0.15 else BUTTERFLY[1], lx - 2, ly)
+        else:
+            k = q - 6.5
+            pix.blit(g, pix.anim(BUTTERFLY, q, 8), lx - 2 + k * 14, ly - k * 12 + math.sin(q * 7) * 3)
+
+    def matrix(self, g: Gfx, t: float, stage: int, st):
+        """点阵：一株菜苗（随长势变大）；浇水时上面落水滴、叶子一挺"""
+        h = 3 + stage
+        perk = 1 if any(v > 0 for v in st["perk"].values()) else 0
+        for y in range(8 - h, 8):
+            g.mx_set(3, y), g.mx_set(4, y)
+        for j in range(stage + 1):
+            y = 7 - j * 2 - perk
+            w = 1 + (j + 1) // 2 + (1 if stage == 3 else 0)
+            for x in range(3 - w, 3):
+                g.mx_set(x, y)
+            for x in range(5, 5 + w):
+                g.mx_set(x, y)
+        if st["pour"] is not None:
+            for x in (2, 5):
+                g.mx_set(x, int(t * 10 + x) % (8 - h))
+            g.mx_level = 2
 
     def enter(self, g: Gfx, t: float):
-        """抱着空瓮从右边走过菜畦，来到井边（落在 hold(0)：在井边面朝井）"""
-        T = self.T["enter"]
-        self.beds(g)
-        self.well(g)
-        self.shadoof(g, t)
-        tops = [cabbage(g, x, self.growth(0, i)) for i, x in enumerate(PLANTS)]
-        X = lerp(140, XW, ease_out(span(t, 0, T)))
-        jx, jy = X - 6, GY - 15
-        hands = [(jx - 1, jy + 2), (jx + 1, jy + 3)]
-        daoshi(g, X, GY, -1, hands=hands, step=t * 11 if t < T - 0.25 else None)
-        jar(g, jx, jy)
-        g.d.rectangle((hands[0][0] - 1, hands[0][1] - 1, hands[0][0] + 1, hands[0][1] + 1), fill=1)
-        self.text(g, "抱瓮灌园", span(t, 1.0, T - 0.3))
-        self.mx(g, t, None, 0, 0)
+        """抱着空瓮从右边走过菜畦，来到井边"""
+        self.clock.tick(t)
+        self.scene_bg(g, t, None)
+        self.plants(g, 0, {}, t)
+        x = lerp(104, AT_WELL, ease_out(span(t, 0, 2.6)))
+
+        def tool(gg, h1, h2):
+            blit_rot(gg, JAR, h1[0] - 3, h1[1] - 4, 0, *JAR_PIV)
+        worker(g, x, FLOOR, t, hand=(x - 9, FLOOR - 12), legs="walk" if t < 2.6 else "stand", flip=True, tool=tool)
+        self.matrix(g, t, 0, dict(perk={}, pour=None))
+        scroll(g, TEXT_X, "抱瓮灌园", k=span(t, 0.4, 2.4), side="right")
 
     def hold(self, g: Gfx, t: float):
-        self._ht = t
-        self.draw(g, t)
+        self.frame(g, t)
 
     def exit(self, g: Gfx, t: float):
-        self.draw(g, self._ht, final=ease_in_out(span(t, 0, 0.5)))
-        fade_box(g, 1 - ease_in(span(t, 0.35, self.T["exit"])))
-        if t > 0.7:
-            g.mx[:] = False
-            g.mx[7, 1:7] = True
+        self.frame(g, self.hold_t + t)
+        fade_out(g, span(t, 0.1, self.T["exit"]))

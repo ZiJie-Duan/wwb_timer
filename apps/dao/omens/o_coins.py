@@ -1,120 +1,248 @@
-"""铜钱六爻（三钱法 / 火珠林法）。
+"""金钱课（三钱法 / 火珠林法）。
 
-三枚方孔钱一齐抛起、翻转、落地弹跳，看“背”“字”：
-一背为单（少阳 7）、两背为拆（少阴 8）、三背为重（老阳 9）、三字为交（老阴 6）。
-六次自下而上成卦，卦象在左边逐爻长出。
+小道士双手合拢摇响三枚方孔钱，一扬手抛起；铜钱在空中翻转（正面→侧棱→背面），落地弹跳、火星迸溅、震屏。
+看“背”“字”：一背为单（少阳 7）、两背为拆（少阴 8）、三背为重（老阳 9）、三字为交（老阴 6）。
+六掷自下而上成卦，记在左上角卦牌；最后一掷抛得最高。揭晓时卦象砸下。
 """
 from __future__ import annotations
 
 import math
 
-from ..engine.anim import clamp, ease_in, ease_out, span
+from ..engine import pix
+from ..engine.anim import ease_in_out, lerp, span
+from ..engine.chars import Part, daoshi, figure
 from ..engine.gfx import Gfx
-from ..engine.scene import Omen, register
-from .o_common import REVEAL, YAO_NAME, hexa, label, reveal
+from ..engine.scene import register
+from ..engine.symbols import mx_hexagram
+from .o_common import FLOOR, REVEAL, YAO_NAME, Base, arm, floor, speed_lines, tally
 
-COIN_X = (60, 84, 108)
-GROUND = 55          # 落地时钱心
-R = 7
-T0, D = 0.25, 0.85   # 第一次抛的时刻、每爻间隔
-AIR = 0.55           # 空中时长
+COIN_X = (65, 84, 103)          # 落点（钱心）
 CALL = {6: "交", 7: "单", 8: "拆", 9: "重"}
+T0 = 0.45
+DUR = (1.05, 0.74, 0.74, 0.74, 0.74, 1.15)
+STARTS = [T0 + sum(DUR[:i]) for i in range(6)]
+END = STARTS[-1] + DUR[-1]
+DAO_X = 20
 
 
-def coin(g: Gfx, cx: float, cy: float, phi: float, r: float = R):
-    """方孔钱：phi 为翻转角，cos>0 见“字”面（四字为四点），cos<0 见“背”面（实心）"""
+def REL(i):   # 出手（相对本掷开始）
+    return DUR[i] * (0.4 if i == 5 else 0.36)
+
+
+def AIR(i):
+    return DUR[i] * (0.45 if i == 5 else 0.42)
+
+
+def LAND(i):  # 三枚都落地
+    return REL(i) + AIR(i) + 0.06
+
+
+R0 = END + 0.15
+LABELS = [(STARTS[j] + LAND(j) + 0.08, STARTS[j + 1] + REL(j + 1) if j < 5 else R0) for j in range(6)]
+
+
+# ---------------------------------------------------------------- 方孔钱（13×13，逐像素）
+
+def _coin(back: bool):
+    p = Part(13, 13)
+    p.shape("ellipse", (0, 0, 12, 12), fill=1)
+    p.d.ellipse((1, 1, 11, 11), outline=0)          # 外郭内侧的阴线
+    p.d.rectangle((5, 5, 7, 7), fill=0)             # 方孔
+    if back:  # 背：钱肉网点（暗），方孔四周内郭亮，左右两个满文似的勾
+        p.dither((2, 2, 10, 10), 0.5, 0)
+        p.d.rectangle((4, 4, 8, 8), outline=1)
+        p.d.rectangle((5, 5, 7, 7), fill=0)
+        for x in (2, 9):
+            p.px(x, 5), p.px(x + 1, 6), p.px(x, 7)
+    else:     # 字：钱肉亮，上下左右四个字（暗笔画）
+        p.d.line((5, 2, 7, 2), fill=0), p.px(6, 3, 0)            # 上
+        p.d.line((5, 10, 7, 10), fill=0), p.px(6, 9, 0)          # 下
+        p.d.line((2, 5, 2, 7), fill=0), p.px(3, 6, 0)            # 左
+        p.d.line((10, 5, 10, 7), fill=0), p.px(9, 5, 0), p.px(9, 7, 0)  # 右
+        p.px(3, 3, 0), p.px(9, 9, 0)                             # 高光边的暗点
+    p.px(3, 2, 1), p.px(2, 3, 1)                                 # 左上高光
+    return p.sprite()
+
+
+def _edge():
+    p = Part(3, 13)
+    p.shape("rectangle", (0, 1, 2, 11), fill=1)
+    p.px(1, 0), p.px(1, 12)
+    p.d.line((1, 2, 1, 10), fill=0)
+    p.px(1, 6, 1)
+    return p.sprite()
+
+
+def _mini():
+    """手里的三枚小钱 7×5"""
+    p = Part(9, 6)
+    for x in (0, 2, 4):
+        p.shape("ellipse", (x, x // 2, x + 4, x // 2 + 4), fill=1)
+        p.px(x + 2, x // 2 + 2, 0)
+    return p.sprite()
+
+
+SPR = {}
+
+
+def spr(name):
+    if name not in SPR:
+        SPR.update(zi=_coin(False), bei=_coin(True), edge=_edge(), mini=_mini())
+    return SPR[name]
+
+
+def coin(g: Gfx, cx: float, cy: float, phi: float, sq: float = 1.0):
+    """phi = 翻转角：cos>0 字面、cos<0 背面；|cos| 小时侧棱。sq < 1 落地压扁"""
     c = math.cos(phi)
-    rw = abs(c) * r
-    if rw < 1.2:
-        g.d.line((cx, cy - r, cx, cy + r), fill=1)
-        return
-    box = (cx - rw, cy - r, cx + rw, cy + r)
-    hole = max(1, rw * 0.28)
-    if c < 0:  # 背：实心，挖方孔，内郭一圈暗线
-        g.d.ellipse(box, fill=1)
-        if rw > 3:
-            g.d.ellipse((cx - rw + 2, cy - r + 2, cx + rw - 2, cy + r - 2), outline=0)
-        g.d.rectangle((cx - hole, cy - 2, cx + hole, cy + 2), fill=0)
-    else:      # 字：空心，方孔外框，上下左右四个字
-        g.d.ellipse(box, outline=1, fill=0)
-        g.d.rectangle((cx - hole - 1, cy - 3, cx + hole + 1, cy + 3), outline=1)
-        if rw > 3.5:
-            k = rw / r
-            for dx, dy in ((0, -4.5), (0, 4.5), (-4.5, 0), (4.5, 0)):
-                x, y = cx + dx * k, cy + dy
-                g.d.rectangle((x - 0.5, y - 0.5, x + 0.5, y + 0.5), fill=1)
+    a = abs(c)
+    if a < 0.22:
+        s = spr("edge")
+    else:
+        face = spr("zi" if c > 0 else "bei")
+        s = pix.stretch(face, 1.0 if a > 0.8 else 0.6 if a > 0.5 else 0.3, 1.0)
+    if sq != 1:
+        s = pix.stretch(s, 2 - sq, sq)
+    pix.blit(g, s, cx - s.w / 2, cy - s.h / 2 + (13 - s.h) / 2)
+
+
+def mountains(g: Gfx):
+    """远山与一棵松（背景，很淡）"""
+    pts = [(0, 44), (14, 38), (26, 42), (44, 33), (60, 40), (74, 36), (92, 42), (110, 34), (128, 41)]
+    for (x0, y0), (x1, y1) in zip(pts, pts[1:]):
+        pix.dotted(g, x0, y0, x1, y1, 2)
+    # 松
+    x = 120
+    g.d.line((x, 30, x, FLOOR - 1), fill=1)
+    for k, (y, w) in enumerate(((22, 3), (27, 5), (32, 6))):
+        g.d.polygon([(x - w, y + 3), (x + w, y + 3), (x, y - 2)], fill=1)
+        g.d.line((x - w + 1, y + 3, x + w - 1, y + 3), fill=0)
+        pix.checker(g, (x + 1, y, x + w + 1, y + 3), 0.5, 0)
 
 
 @register
-class CoinsOmen(Omen):
+class CoinsOmen(Base):
     id = "o.coins"
     name = "金钱课"
-    desc = "三枚方孔钱抛起翻转落地，六掷成卦：单拆重交，卦象自下而上长出"
-    T = {"play": T0 + 6 * D + 0.2 + REVEAL}
+    desc = "小道士摇响三枚方孔钱一扬手抛起，铜钱翻转落地弹跳迸火星；看背字定单拆重交，六掷成卦"
+    T = {"play": END + 0.15 + REVEAL}
 
-    def setup(self):
-        # 每掷三枚：True = 背（记 3），False = 字（记 2）
-        self.toss = [[self.rng.random() < 0.5 for _ in range(3)] for _ in range(6)]
-        self.lines = [sum(3 if b else 2 for b in tr) for tr in self.toss]
+    def init(self):
+        # 每掷哪几枚是背（背数 = 爻 - 6）
+        self.backs = []
+        for v in self.lines:
+            idx = [0, 1, 2]
+            self.rng.shuffle(idx)
+            nb = v - 6
+            self.backs.append([i in idx[:nb] for i in range(3)])
+        self.spin = [[3 + self.rng.randrange(3) for _ in range(3)] for _ in range(6)]
 
-    def _coins(self, g: Gfx, t: float, sink: float = 0.0):
-        i = min(5, max(0, int((t - T0) // D)))
-        u = t - T0 - i * D
-        if t < T0:
-            i, u = -1, 9.0  # 开场：钱静静躺着（字面朝上）
-        for j, x in enumerate(COIN_X):
-            back = self.toss[i][j] if i >= 0 else False
-            end = math.pi if back else 0.0
-            uj = u - j * 0.05
-            if 0 <= uj < AIR:
-                s = uj / AIR
-                y = GROUND - 36 * 4 * s * (1 - s)
-                spin = (2 * math.pi) * (3 + j * 0.5)
-                phi = end + (1 - s) * spin
-                xx = x + math.sin(s * math.pi) * (j - 1) * 4
-                coin(g, xx, y, phi)
-            else:
-                b = span(uj, AIR, AIR + 0.18)
-                hop = math.sin(b * math.pi) * 3 if 0 < b < 1 else 0
-                wob = 0.35 * math.sin(b * 18) * (1 - b) if 0 < b < 1 else 0
-                coin(g, x, GROUND - hop + sink, end + wob)
-                if 0 < b < 0.4:  # 落地一点尘
-                    g.px(x - R - 2, GROUND + R - 1 + sink)
-                    g.px(x + R + 2, GROUND + R - 1 + sink)
-        return i, u
+    def throw_at(self, t):
+        for i in range(5, -1, -1):
+            if t >= STARTS[i]:
+                return i, t - STARTS[i]
+        return -1, t
 
     def play(self, g: Gfx, t: float):
-        T = self.T["play"]
-        R0 = T - REVEAL
+        self.tick(t)
+        if t < R0:
+            mountains(g)
+        floor(g, "stone")
+        i, u = self.throw_at(t)
+        D = DUR[i] if i >= 0 else 1
+        big = i == 5
+        rel, air = (REL(i), AIR(i)) if i >= 0 else (0, 0)
+        done = min(i, 6) if t < R0 else 6              # 已成之爻（本掷落地后 +1）
+        hand = None
+        # ---------------- 小道士
         if t >= R0:
             k = t - R0
-            self._coins(g, T0 + 5 * D + 0.8, sink=ease_in(span(k, 0, 0.35)) * 20)
-            reveal(g, self.lines, k)
-            return
-        g.d.line((44, 63, 127, 63), fill=1)
-        for x in range(46, 127, 6):  # 桌布纹
-            g.px(x, 62)
-        i, u = self._coins(g, t)
-        # 左边卦象：落地后 0.1 秒长出
-        done = 0.0
-        for n in range(6):
-            land = T0 + n * D + AIR + 0.12
-            if t >= land:
-                done = n + clamp((t - land) / 0.25)
-        hexa(g, self.lines, done)
-        if i >= 0 and u >= AIR + 0.1:
-            v = self.lines[i]
-            label(g, 84, 22, f"{CALL[v]}·{YAO_NAME[v]}", u - AIR - 0.1)
-        elif t < T0 + 0.2:
-            g.text(84, 22, "金钱课", align="center")
-        # 点阵：已成之爻 + 底行三钱（背亮）+ 空中时顶行闪
-        from ..engine.symbols import mx_hexagram
-        mx_hexagram(g, self.lines, int(done))
+            pose = "raise" if 0.25 < k < 0.9 else "gongshou" if k < 0.25 else "idle"
+            daoshi(g, DAO_X, FLOOR - (2 if 0.25 < k < 0.4 else 0), pose, t, face="happy" if k > 0.25 else "wow")
+        elif i < 0:   # 开场：拱手一礼
+            daoshi(g, DAO_X, FLOOR, "gongshou" if u < 0.3 else "bow", t)
+        elif u < rel:  # 合掌摇钱（手上下抖）
+            bob = -1 if int(u * 18) % 2 else 0
+            hand = figure(g, DAO_X, FLOOR, t, arm="offer", dy=0, bob=False)["hand"]
+            hand = (hand[0], hand[1] + bob)
+        elif u < rel + 0.18:  # 出手
+            a, at = arm("toss")
+            figure(g, DAO_X, FLOOR, t, arm=a, arm_at=at, face="wow" if big else "normal", bob=False)
+        else:
+            land_all = u > rel + air + 0.1
+            daoshi(g, DAO_X, FLOOR, "idle", t, face="happy" if land_all and big else "wow" if not land_all else "normal")
+        # ---------------- 铜钱
         if i >= 0:
-            if u < AIR:
-                g.mx[0, int(u * 20) % 8] = True
+            backs = self.backs[i]
+            hx, hy = DAO_X + 13, FLOOR - 21
+            if u < rel:
+                zip_back = span(u, 0, 0.14)
+                if i > 0 and zip_back < 1:  # 上一掷的钱飞回手里
+                    for j in range(3):
+                        q = ease_in_out(zip_back)
+                        x = lerp(COIN_X[j], hx, q)
+                        y = lerp(FLOOR - 7, hy, q) - math.sin(q * math.pi) * 6
+                        pix.dotted(g, x, y, lerp(COIN_X[j], hx, max(q - 0.25, 0)), y + 2, 2)
+                        coin(g, x, y, math.pi * (q * 4 + j))
+                else:
+                    pix.blit(g, spr("mini"), hand[0] - 3, hand[1] - 4)
+                    speed_lines(g, hand[0] + 4, hand[1] - 1, 1, u)
+                    speed_lines(g, hand[0] - 7, hand[1] - 1, -1, u + 0.1)
             else:
+                k = u - rel
                 for j in range(3):
-                    if self.toss[i][j]:
-                        g.mx[7, 1 + j * 2:3 + j * 2] = True
-        g.mx_level = 3 if i >= 0 and AIR <= u < AIR + 0.08 else 1
+                    st = j * 0.03
+                    q = span(k, st, st + air)
+                    fin = 0.0 if not backs[j] else math.pi
+                    peak = (42 if not big else 52) + j * 3
+                    if q < 1:
+                        x = lerp(hx, COIN_X[j], q)
+                        y = lerp(hy, FLOOR - 7, q) - math.sin(q * math.pi) ** 0.8 * peak * 0.8
+                        phi = fin + (1 - q) * self.spin[i][j] * math.pi * 2 + 0.6
+                        coin(g, x, y, phi)
+                        if q > 0.05 and int(t * 30) % 2 == 0:
+                            g.px(x - (COIN_X[j] - hx) * 0.04, y + 6)
+                    else:
+                        b = k - st - air
+                        h = 0
+                        if b < 0.16:
+                            h = math.sin(b / 0.16 * math.pi) * (4 if not big else 7)
+                        elif b < 0.26:
+                            h = math.sin((b - 0.16) / 0.1 * math.pi) * 1.5
+                        sq = 0.7 if b < 0.05 or 0.16 <= b < 0.2 else 1.0
+                        coin(g, COIN_X[j], FLOOR - 7 - h, fin, sq)
+                    if self.hit(t, STARTS[i] + rel + st + air):
+                        self.impact(g, COIN_X[j], FLOOR - 1, 1.6 if big else 0.8)
+                        if j == 2:
+                            pix.shake(g, t, 1.0)
+                land = rel + air + 0.06
+                if land <= u < land + 0.12:
+                    pix.shake(g, t, 2.0 if big else 1.0)
+                if u > land + 0.08:
+                    done = i + 1
+                if big and self.hit(t, STARTS[i] + land):
+                    pix.flash(g)
+        for j, (on, off) in enumerate(LABELS):  # “单·少阳”标签：落地后弹出，到下一掷出手时收起
+            if on <= t < off:
+                v = self.lines[j]
+                self.pop(84, 19, f"{CALL[v]}·{YAO_NAME[v]}", t - on)
+        self.particles(g)
+        # ---------------- 卦牌 / 揭晓
+        if t < R0:
+            gl = -1.0
+            if i >= 0:
+                land = rel + air + 0.14
+                gl = (u - land) / 0.3
+            tally(g, self.lines, done, glint=gl)
+            # 点阵：已成之爻；钱在空中时顶行一个跑点，摇钱时底行三点跳动
+            mx_hexagram(g, self.lines, done)
+            if i >= 0 and rel <= u < rel + air:
+                g.mx[0, int((u - rel) / air * 8) % 8] = True
+            elif i >= 0 and u < rel:
+                for j in range(3):
+                    g.mx[7, 1 + j * 3] = True
+                    g.mx[7, 2 + j * 3 - 1] = int(u * 18 + j) % 2 == 0
+            if i >= 0 and u > rel + air:
+                g.mx_level = 4 if u < rel + air + 0.15 else 1
+        else:
+            self.reveal(g, t, R0)
+        self.flush(g)

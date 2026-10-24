@@ -1,274 +1,359 @@
-"""写经换鹅：王羲之写《黄庭经》换山阴道士的白鹅。
+"""写经换鹅：《晋书·王羲之传》山阴道士以鹅换字（传中为《道德经》，后世多传为《黄庭经》）；
+李白《王右军》“扫素写道经，笔精妙入神。书罢笼鹅去，何曾别主人”。经文：《黄庭外景经》首四句
+“上有黄庭下关元，后有幽阙前命门，呼吸庐间入丹田，玉池清水灌灵根”（据维基文库本）。
 
-《晋书·王羲之传》：山阴道士养好鹅，羲之往观，求市之；道士云“为写道德经，当举群相赠耳”，羲之欣然写毕，笼鹅而归。
-后世多传为写《黄庭经》——李白《王右军》：“扫素写道经，笔精妙入神。书罢笼鹅去，何曾别主人。”
-
-入场：宣纸从上往下展开（镇纸压住），白鹅从右边游进池塘，毛笔落到砚台上。
-持续：一字一张：毛笔蘸墨，在纸上写出一个斗大的字（从上往下一笔笔显出来，笔尖跟着走），写完回砚台；
-      大字淡去，缩成左边小字一列（本句已写的字，8px 竖排）。经文为《黄庭外景经》首四句，七字一句。
-      池里两三只白鹅游来游去，偶尔伸颈一叫，水下鹅掌拨水。
-      每写完一句盖一方“右军”朱印；每写完两句：“书罢笼鹅去”——一只竹笼从天而降罩住一只鹅提走，过一会儿又游来一只。
-退场：画面收拢成一个圆。
+左边一架挂起的宣纸（上有轴杆、挂绳，下有压轴），小道士站在纸前，握一支提斗大笔；脚边小几上一方砚台。
+右边池塘，柳条垂下，三只白鹅（额上肉瘤、长颈）游来游去，身后拖着水纹。
+入场：宣纸从上往下展开，白鹅一只只游进池塘，小道士走到纸前。
+持续：一字 6 秒：笔回砚台蘸墨 → 在纸上写出一个斗大的黑字（从上往下一行行显出，笔尖跟着走）→ 端详一下。
+      写完的字攒到顶上一行（本句）。一句七字写完，在纸角盖一方“右军”小印（啪地一震）。
+      池中白鹅游弋，偶尔伸颈张嘴一叫。每写完两句：“书罢笼鹅去”——竹笼从天而降罩住一只鹅提走，
+      下一句开头又游来一只。
+退场：收圆。
+点阵：写字时是这个字的 8×8 缩影，跟着笔一行行显出；其余时间是浮水的鹅。
 """
 from __future__ import annotations
 
 import math
 
-from ..engine.anim import blink, clamp, ease_in, ease_in_out, ease_out, ease_out_back, ease_out_bounce, lerp, noise, rand, span
-from ..engine.fx import brush_reveal, typewriter
-from ..engine.gfx import Gfx, Sprite, text_width
+import numpy as np
+
+from ..engine import pix
+from ..engine.anim import ease_in, ease_in_out, ease_out, ease_out_back, lerp, rand, span
+from ..engine.chars import Part, figure
+from ..engine.gfx import Gfx, Sprite, _text_img
 from ..engine.scene import Rest, register
-from .x2_common import iris
+from .x2_common import Clock, arm, iris, label, shoulder_xy
 
 LINES = ["上有黄庭下关元", "后有幽阙前命门", "呼吸庐间入丹田", "玉池清水灌灵根"]
-PER = 6.0                     # 一个字的秒数
-PAPER = (14, 3, 66, 61)
-CHAR_XY = (17, 8)
-INK = (80, 9)                 # 砚台中心
-POND_Y = 40                   # 水面
-
-MX_GOOSE = Sprite("""
-....##..
-...###..
-...#....
-...#....
-.######.
-########
-.######.
-........
-""")
-BRUSH = Sprite("""
-  .##.
-  .##.
-  .##.
-  .##.
-  .##.
-  .##.
-  .##.
-  .##.
-  .##.
- .####.
- ######
- #.##.#
- .####.
-  .##.
-  .#.
-""")
+FLOOR = 58
+DX = 17                       # 小道士（站，朝右）
+PAPER = (24, 17, 56, 52)      # 宣纸（含边）
+CH = (28, 22)                 # 大字左上
+INK = (14, 53)                # 砚台
+PER = 6.0
+SENT = 48.0                   # 一句：7 字 42 秒 + 盖印、笼鹅 6 秒
+POND = 47                     # 水面
+BRUSH = 13
 
 
-def paper(g: Gfx, h: float = 1.0, dx: float = 0.0):
-    x0, y0, x1, y1 = PAPER
-    yb = y0 + (y1 - y0) * h
-    g.d.rectangle((x0 + dx, y0, x1 + dx, yb), fill=0, outline=1)
-    g.d.rectangle((x0 - 2 + dx, y0 - 2, x1 + 2 + dx, y0 + 1), fill=1)   # 镇纸
-    g.d.line((x0 + 2 + dx, y0 + 4, x0 + 2 + dx, yb - 2), fill=1)          # 界格（朱丝栏）
-    g.d.line((x1 - 2 + dx, y0 + 4, x1 - 2 + dx, yb - 2), fill=1)
-    if h < 1:  # 纸卷
-        g.d.rectangle((x0 - 1 + dx, yb - 1, x1 + 1 + dx, yb + 2), fill=1)
+# ---------------------------------------------------------------- 造型
+
+_GLY: dict = {}
 
 
-def inkstone(g: Gfx):
-    x, y = INK
-    g.d.rounded_rectangle((x - 11, y - 5, x + 11, y + 5), 3, fill=0, outline=1)
-    g.d.ellipse((x - 7, y - 3, x + 4, y + 3), fill=1)  # 墨池
-    g.d.line((x + 7, y - 3, x + 7, y + 3), fill=1)
+def glyph(ch: str, rows: int | None = None) -> Sprite:
+    """把 12px 字放大两倍做成精灵（笔墨），rows：只要上面几行（逐行写出）"""
+    key = (ch, rows)
+    s = _GLY.get(key)
+    if s is None:
+        a = np.array(_text_img(ch, 12, 2), dtype=bool)
+        if rows is not None:
+            a = a.copy()
+            a[rows:] = False
+        s = _GLY[key] = Sprite(on=a, mask=a)
+    return s
 
 
-def water(g: Gfx, t: float, gaps=()):
-    for j, y in enumerate((POND_Y, POND_Y + 8, POND_Y + 16)):
-        for x in range(70, 128, 6):
-            xx = x + (t * (3 + j) + j * 3) % 6
-            if any(a - 2 <= xx <= b + 2 for a, b in gaps) and j == 0:
-                continue
-            if rand(int(x / 6) + j * 31, 5) < 0.7:
-                g.d.line((xx, y + math.sin(xx * 0.3 + t) * 0.6, xx + 3, y + math.sin(xx * 0.3 + t) * 0.6), fill=1)
+def _goose(f: int):
+    """白鹅（朝左）14×12：额上肉瘤、扁嘴、S 形长颈、圆身、上翘的尾、翅上一道羽纹；
+    f=0 游 / 1 伸颈张嘴叫"""
+    p = Part(15, 12)
+    p.shape("ellipse", (3, 6, 14, 11), fill=1)                       # 身
+    p.shape("polygon", [(12, 6), (14, 4), (14, 7)], fill=1)          # 尾
+    p.d.line((6, 8, 11, 8), fill=0), p.d.line((7, 9, 11, 9), fill=0)  # 翅
+    p.dither((9, 9, 14, 11), 0.5, 0)
+    if f == 0:
+        p.shape("line", ((5, 7), (4, 5), (5, 3), (4, 1)), fill=1, width=2)   # 颈
+        p.shape("ellipse", (1, 0, 5, 3), fill=1)                     # 头
+        p.shape("rectangle", (0, 2, 1, 2), fill=1)                   # 嘴
+        p.px(2, 0)                                                   # 肉瘤
+        p.px(3, 1, 0)
+    else:
+        p.shape("line", ((5, 7), (3, 4), (2, 2)), fill=1, width=2)
+        p.shape("ellipse", (0, 0, 4, 3), fill=1)
+        p.px(1, 1, 0)
+        p.shape("line", (0, 0, 0, 0), fill=1)
+        p.d.line((0, 2, 1, 2), fill=0)                              # 张嘴
+    return p.sprite()
 
 
-def cage(g: Gfx, x: float, y: float):
-    """竹编鹅笼：圆顶 + 竖篾 + 提手"""
-    g.d.rectangle((x - 9, y - 10, x + 9, y + 4), fill=0)
-    g.d.arc((x - 9, y - 16, x + 9, y - 4), 180, 360, fill=1)
-    for i in range(-8, 9, 3):
-        g.d.line((x + i, y - 10 + (abs(i) > 6) * 2, x + i, y + 4), fill=1)
-    g.d.line((x - 9, y + 4, x + 9, y + 4), fill=1)
-    g.d.line((x - 9, y - 4, x + 9, y - 4), fill=1)
-    g.d.arc((x - 4, y - 21, x + 4, y - 13), 180, 360, fill=1)
+def _cage():
+    """竹笼 15×13：提环、竹篾编的格子"""
+    p = Part(15, 14)
+    p.shape("ellipse", (5, 0, 9, 4), fill=1)
+    p.d.ellipse((6, 1, 8, 3), fill=0)
+    p.shape("polygon", [(2, 4), (12, 4), (14, 13), (0, 13)], fill=1)
+    p.d.polygon([(3, 5), (11, 5), (13, 12), (1, 12)], fill=0)
+    for x in range(3, 13, 3):
+        p.d.line((x, 5, x - (1 if x < 7 else -1), 12), fill=1)
+    p.d.line((1, 9, 13, 9), fill=1)
+    return p.sprite()
+
+
+def _inkstone():
+    p = Part(11, 6)
+    p.shape("rectangle", (0, 2, 10, 4), fill=1)
+    p.d.rectangle((2, 2, 8, 2), fill=0)
+    p.px(3, 3, 0), p.px(4, 3, 0)
+    p.shape("rectangle", (1, 5, 1, 5), fill=1)
+    p.shape("rectangle", (9, 5, 9, 5), fill=1)
+    p.shape("rectangle", (7, 0, 8, 1), fill=1)       # 墨锭
+    return p.sprite()
+
+
+def _seal():
+    p = Part(9, 9)
+    p.shape("rectangle", (0, 0, 8, 8), fill=1)
+    p.d.rectangle((1, 1, 7, 7), outline=0)
+    p.d.line((4, 2, 4, 6), fill=0), p.d.line((2, 4, 6, 4), fill=0)
+    return p.sprite()
+
+
+_P: dict = {}
+
+
+def prop(name, *a):
+    key = (name,) + a
+    if key not in _P:
+        _P[key] = {"goose": _goose, "cage": _cage, "ink": _inkstone, "seal": _seal}[name](*a)
+    return _P[key]
 
 
 @register
 class Goose(Rest):
     id = "x2.goose"
     name = "写经换鹅"
-    desc = "毛笔一张一个斗大的字写《黄庭经》，左边攒成一列小字；池中白鹅游弋，写完两句就笼鹅而去"
+    desc = "小道士执提斗大笔在挂起的宣纸上一字一字写《黄庭经》，池中白鹅游弋；写完两句书罢笼鹅去"
     T = {"enter": 3.0, "exit": 1.2}
 
     def setup(self):
         self.ht = 0.0
         self.l0 = self.rng.randrange(len(LINES))
+        self.clock = Clock()
+        self.sparks = pix.Sparks(self.seed)
 
-    # ------------------------------------------------------------ 字
+    def line(self, n: int) -> str:
+        return LINES[(n + self.l0) % len(LINES)]
 
-    def where(self, t: float):
-        """→ (句号, 句中第几字, 本字已过秒数)"""
-        n = int(t // PER)
-        return n // 7, n % 7, t % PER
+    # ------------------------------------------------------------ 写字
 
-    def line(self, li: int) -> str:
-        return LINES[(li + self.l0) % len(LINES)]
-
-    # ------------------------------------------------------------ 鹅
-
-    def geese(self, t: float):
-        """→ [(x, 朝向, 是否叫)]；第 k 次笼鹅后少一只、过一会儿再游来一只"""
-        out = []
-        cyc = PER * 14
-        k = t % cyc
-        caged = k > PER * 13 + 2.6  # 被笼走了
-        back = span(k, 0, 6)       # 新来的那只从右边游进来（下一轮开头）
-        for i in range(3):
-            if i == 2 and caged:
-                continue
-            ph = t * 0.05 * (1 + i * 0.3) + i * 1.7 + self.seed
-            x = (84, 102, 117)[i] + math.sin(ph) * (7 - i)
-            d = 1 if math.cos(ph) > 0 else -1
-            if i == 2 and t > cyc and k < 6:
-                x = lerp(140, x, ease_out(back))
-                d = -1
-            honk = (t + i * 13) % 23 < 0.8
-            out.append((x, d, honk))
-        return out, (k - (PER * 13 + 0.8) if PER * 13 + 0.8 < k < PER * 13 + 6.5 else None)
-
-    def goose(self, g: Gfx, x: float, y: float, d: int, honk: bool, t: float, i: int):
-        """白鹅（侧面浮水）：x 为身子中点，y 为水线"""
-        D = g.d
-        D.ellipse((x - 8, y - 6, x + 6, y + 2), fill=1)                          # 身
-        D.polygon([(x - d * 7, y - 3), (x - d * 11, y - 8), (x - d * 5, y - 5)], fill=1)  # 翘尾
-        D.arc((x - 6, y - 5, x + 3, y + 1), 200 if d > 0 else 280, 260 if d > 0 else 340, fill=0)  # 翅
-        if d < 0:
-            D.ellipse((x - 6, y - 6, x + 8, y + 2), fill=1)
-        lean = 3 if honk else 0
-        nx0, ny0 = x + d * 4, y - 4
-        nx1, ny1 = x + d * (6 + lean), y - 12 + lean
-        D.line([(nx0, ny0), (x + d * (7 + lean * 0.5), y - 8 + lean * 0.5), (nx1, ny1)], fill=1, width=3)  # 颈
-        D.ellipse((nx1 - 2, ny1 - 3, nx1 + 3, ny1 + 1), fill=1)                  # 头
-        g.px(nx1 + d * 1, ny1 - 3)                                                 # 额上的肉瘤
-        g.px(nx1 + d * 1, ny1 - 2, 0)                                              # 眼
-        if honk:  # 张嘴一叫
-            D.line((nx1 + d * 3, ny1 - 1, nx1 + d * 6, ny1 - 3), fill=1)
-            D.line((nx1 + d * 3, ny1, nx1 + d * 6, ny1 + 1), fill=1)
-            for j in range(2):
-                g.px(nx1 + d * (8 + j * 2), ny1 - 4 - j)
+    def stroke(self, ch: str, q: float):
+        """写到 q（0..1）：→ (显出的行数, 笔尖位置)"""
+        g = glyph(ch)
+        rows = [y for y in range(g.h) if g.on[y].any()]
+        if not rows:
+            return 0, (CH[0] + 12, CH[1] + 12)
+        y0, y1 = rows[0], rows[-1]
+        yr = int(lerp(y0, y1 + 1, q))
+        yy = min(max(yr, y0), y1)
+        xs = np.nonzero(g.on[yy])[0]
+        if len(xs) == 0:
+            x = 12
         else:
-            D.line((nx1 + d * 3, ny1 - 1, nx1 + d * 5, ny1), fill=1, width=2)
-        D.rectangle((x - 12, y + 1, x + 10, y + 3), fill=0)                       # 水线以下
-        ph = (t * 1.5 + i) % 1  # 身后的尾波
-        for k in range(2):
-            r = 4 + ((ph + k * 0.5) % 1) * 10
-            g.px(x - d * (8 + r), y + 1 + r * 0.2)
-            g.px(x - d * (8 + r), y + 1 - r * 0.15)
+            ph = (q * 40) % 2
+            ph = ph if ph < 1 else 2 - ph
+            x = lerp(xs.min(), xs.max(), ph)
+        return yr, (CH[0] + x, CH[1] + yy)
 
-    def draw_geese(self, g: Gfx, t: float, dx: float = 0.0):
-        gs, cage_k = self.geese(t)
-        water(g, t)
-        for i, (x, d, honk) in enumerate(gs):
-            x += dx
-            bob = round(math.sin(t * 2 + i) * 0.6)
-            y = POND_Y + bob
-            if i == 2 and cage_k is not None and cage_k > 1.8:  # 被笼提起
-                y -= ease_in(span(cage_k, 2.6, 5.7)) * 60
-            self.goose(g, x, y, d, honk, t, i)
-        if cage_k is not None:  # 书罢笼鹅去
-            x = gs[2][0] + dx if len(gs) > 2 else 110
-            drop = ease_out_bounce(span(cage_k, 0.0, 1.8))
-            lift = ease_in(span(cage_k, 2.6, 5.7))
-            cy = lerp(-24, POND_Y + 2, drop) - lift * 60
-            cage(g, x, cy)
-            g.d.line((x, cy - 21, x, -1), fill=1)  # 吊绳
-            g.d.rectangle((68, 50, 127, 63), fill=0)
-            typewriter(g, 68, 51, "书罢笼鹅去", cage_k, cps=3)
-        return gs
-
-    # ------------------------------------------------------------ 画面
-
-    def brush_at(self, s: float, k: float):
-        """笔尖位置：砚台 → 纸 → 写（跟随笔尖）→ 回砚台"""
-        ix, iy = INK[0] - 2, INK[1] - 1
-        cw = text_width("国", 12) * 4
-        tip = (CHAR_XY[0] + cw * (0.3 + 0.4 * noise(k * 40, 0)), CHAR_XY[1] + 48 * k)
-        if s < 0.6:
-            p = ease_in_out(s / 0.6)
-            return lerp(ix, CHAR_XY[0] + cw * 0.5, p), lerp(iy, CHAR_XY[1], p) - math.sin(p * math.pi) * 6
-        if s < 4.0:
-            return tip
-        if s < 4.6:
-            p = ease_in_out((s - 4.0) / 0.6)
-            return lerp(tip[0], ix, p), lerp(tip[1], iy, p) - math.sin(p * math.pi) * 10
-        return ix, iy - (2 if 4.7 < s < 5.0 else 0)  # 蘸墨
-
-    def frame(self, g: Gfx, t: float, paper_h: float = 1.0, show_brush: bool = True, gdx: float = 0.0):
-        li, ci, s = self.where(t)
-        text = self.line(li)
-        ch = text[ci]
-        paper(g, paper_h)
-        inkstone(g)
-        k = span(s, 0.6, 4.0)
-        if paper_h >= 1:
-            fade = 1 - span(s, 5.0, 5.8)
-            if k > 0 and fade > 0:
-                brush_reveal(g, CHAR_XY[0], CHAR_XY[1], ch, k, size=12, scale=4)
-                if fade < 1:
-                    g.fade(fade, (PAPER[0] + 3, PAPER[1] + 3, PAPER[2] - 2, PAPER[3]))
-            if ci == 6 and s > 4.4:  # 一句写完：盖“右军”印
-                p = ease_out_bounce(span(s, 4.4, 4.9))
-                sx, sy = PAPER[2] - 15, lerp(-18, PAPER[3] - 19, p)
-                g.d.rectangle((sx, sy, sx + 10, sy + 16), fill=1)
-                g.text(sx + 1, sy + 1, "右", size=8, fill=0)
-                g.text(sx + 1, sy + 9, "军", size=8, fill=0)
-        # 左边小字：本句已写好的
-        done = ci + (1 if s > 5.4 else 0)
-        if done:
-            g.vtext(3, 3, text[:done], size=8)
-            if s > 5.4 and s < 5.8:  # 新落的小字闪一下
-                y = 3 + (done - 1) * 8
-                g.invert((2, y - 1, 12, y + 7))
-        gs = self.draw_geese(g, t, gdx)
-        if show_brush:
-            bx, by = self.brush_at(s, k)
-            g.blit(BRUSH, bx - 3, by - BRUSH.h + 1)
-        self.mx(g, t, s, k, gs)
-
-    def mx(self, g: Gfx, t: float, s: float, k: float, gs):
-        if 0.6 < s < 4.0:  # 写字：笔尖从上往下扫
-            r = int(k * 8)
-            for y in range(min(r, 8)):
-                for x in range(8):
-                    if rand(x + y * 8 + int(t // PER) * 64, 3) < 0.45:
-                        g.mx[y, x] = True
-            g.mx_set(int(3 + 2 * noise(k * 40, 0)), min(r, 7))
+    def writer(self, g: Gfx, t: float, tip, wet: bool, walk_x: float | None = None, face: str = "normal"):
+        """站着握提斗大笔：手在肩与笔尖之间，笔杆从手伸到笔尖"""
+        if walk_x is not None:
+            figure(g, walk_x, FLOOR, t, legs="walk", arm="down")
             return
-        x0 = int(math.sin(t * 0.3) * 1.5)  # 鹅
-        g.mx_blit(MX_GOOSE, x0, int(math.sin(t * 2) * 0.6))
-        g.mx[7, :] = [(x + int(t * 3)) % 3 != 0 for x in range(8)]
+        sx, sy = shoulder_xy(DX, FLOOR)
+        vx, vy = tip[0] - sx, tip[1] - sy
+        L = max(math.hypot(vx, vy), 1)
+        hd = max(5.0, min(L - 7, L - BRUSH))
+        hx, hy = sx + vx / L * hd, sy + vy / L * hd
+        spr = arm(hx - sx, hy - sy, "fist")
+        figure(g, DX, FLOOR, t, arm=spr, arm_at=(2 - spr.sh[0], -15 - spr.sh[1]), face=face)
+        g.d.line((hx, hy, tip[0], tip[1]), fill=0, width=3)        # 笔杆（描黑边）
+        g.d.line((hx, hy, tip[0], tip[1]), fill=1)
+        ux, uy = (tip[0] - hx) / max(L - hd, 1), (tip[1] - hy) / max(L - hd, 1)
+        g.d.line((tip[0] - ux * 3, tip[1] - uy * 3, tip[0], tip[1]), fill=0, width=2)   # 笔头（蘸了墨是黑的）
+        if not wet:
+            g.px(tip[0], tip[1], 1)
 
-    # ------------------------------------------------------------ 阶段
+    # ------------------------------------------------------------ 池与鹅
+
+    def pond(self, g: Gfx, t: float):
+        g.d.line((60, POND - 1, 127, POND - 1), fill=1)
+        for i, y in enumerate(range(POND + 2, 64, 3)):
+            ph = t * (6 + i * 2)
+            for x0 in range(0, 90, 14):
+                x = 62 + (x0 + i * 5 + ph) % 70
+                g.d.line((x, y, min(x + 2 + i % 2, 127), y), fill=1)
+        g.d.polygon([(56, 63), (58, POND), (62, POND - 1), (63, 63)], fill=1)
+        pix.checker(g, (57, POND + 1, 63, 64), 0.5, fill=0)
+        # 柳条（从右边画外伸进来的一枝，丝丝垂下）
+        g.d.line((127, 17, 112, 18), fill=1, width=2)
+        g.d.line((112, 18, 96, 17), fill=1)
+        for i, x in enumerate((98, 104, 110, 116, 122)):
+            sw = math.sin(t * 0.9 + i) * 2
+            top = 18
+            for y in range(top, top + 12 + (i * 5) % 11):
+                xx = x + sw * ((y - top) / 20) ** 2
+                g.px(xx, y)
+                if y % 4 == 2:
+                    g.px(xx - 1, y + 1)
+
+    def geese(self, g: Gfx, t: float, gone: int, caged: float = -1.0, back: int = -1, back_q: float = 1.0):
+        """三只鹅（第 gone 只被笼走了，caged ≥ 0：被提起的高度）→ 被罩的那只的位置"""
+        out = None
+        for i in range(3):
+            ph = t * 0.11 + i * 2.1
+            x = 92 + math.sin(ph) * 22 + i * 3
+            d = math.cos(ph)
+            if i == back and back_q < 1:          # 新来的一只从右边游进来
+                x += (1 - ease_out(back_q)) * 50
+                d = 1
+            y = POND - 8 + (i % 2) * 7
+            if i == gone and caged < 0:
+                continue
+            honk = (t + i * 4.7) % 11 < 0.8
+            if i == gone:
+                out = (x, y)
+                y -= caged
+            bob = 1 if (t * 2 + i) % 2 < 1 else 0
+            spr = prop("goose", int(honk))
+            pix.blit(g, spr, x - 7, y + bob, flip=d < 0)
+            if caged < 0:                                          # 尾波
+                for k in range(1, 4):
+                    wx = x + (8 + k * 3) * (1 if d >= 0 else -1)
+                    g.px(wx, y + 10 + k // 2), g.px(wx, y + 10 - k // 2 + 1)
+        return out
+
+    # ------------------------------------------------------------ 一帧
+
+    def scene(self, g: Gfx, t: float, enter: float = 1.0):
+        dt = self.clock.dt(t)
+        on = enter >= 1
+        e3 = enter * self.T["enter"]
+        n = int(t // SENT) if on else 0
+        k = t % SENT if on else 0.0
+        sent = self.line(n)
+        j = min(int(k // PER), 6)
+        kk = k - j * PER
+        # 地面、池
+        g.d.line((0, FLOOR, 56, FLOOR), fill=1)
+        pix.checker(g, (0, FLOOR + 1, 57, 64), 0.25)
+        self.pond(g, t)
+        # 宣纸（入场时从上往下展开）
+        unroll = ease_out(span(e3, 0.0, 1.0)) if not on else 1.0
+        x0, y0, x1, y1 = PAPER
+        yb = lerp(y0 + 2, y1, unroll)
+        for px_ in (x0 - 3, x1 + 3):                                # 屏架：两根立杆、横梁
+            g.d.rectangle((px_ - 1, y0 - 3, px_, FLOOR - 1), fill=1)
+            g.d.line((px_ - 3, FLOOR - 1, px_ + 2, FLOOR - 1), fill=1)
+            g.d.rectangle((px_ - 2, y0 - 4, px_ + 1, y0 - 3), fill=1)
+        g.d.line((x0 - 3, y0 - 2, x1 + 3, y0 - 2), fill=1)
+        g.d.rectangle((x0 + 1, y0 + 1, x1 - 1, yb), fill=1)          # 纸面（白）
+        g.d.rectangle((x0 - 2, y0 - 1, x1 + 2, y0), fill=1)          # 天杆
+        g.d.rectangle((x0 - 2, yb, x1 + 2, yb + 1), fill=1)          # 地轴
+        g.d.line((x0 - 1, yb + 1, x1 + 1, yb + 1), fill=0)
+        # 字
+        writing = on and 0.6 <= kk < 4.6 and k < 42
+        tip = INK
+        wet = True
+        if on and k < 42:
+            ch = sent[j]
+            if kk < 0.6:                       # 蘸墨（上一个字还在纸上，慢慢淡去）
+                q = span(kk, 0, 0.6)
+                tip = (lerp(CH[0] + 12, INK[0], q), lerp(CH[1] + 24, INK[1] - 1, q) - math.sin(q * math.pi) * 4)
+                if j > 0:
+                    prev = glyph(sent[j - 1])
+                    pix.blit(g, prev, CH[0], CH[1], invert=True, outline=False)
+            elif kk < 4.6:
+                rows, tip = self.stroke(ch, span(kk, 0.6, 4.6))
+                pix.blit(g, glyph(ch, rows), CH[0], CH[1], invert=True, outline=False)
+                wet = False
+            else:
+                pix.blit(g, glyph(ch), CH[0], CH[1], invert=True, outline=False)
+                q = span(kk, 4.6, 6.0)
+                tip = (lerp(CH[0] + 22, CH[0] + 12, q), lerp(CH[1] + 26, CH[1] + 30, q))
+        elif on:                               # 一句写完：盖印
+            pix.blit(g, glyph(sent[6]), CH[0], CH[1], invert=True, outline=False)
+            if k > 43.0:
+                pix.blit(g, prop("seal"), x1 - 11, y1 - 11)
+            if abs(k - 43.0) < dt * 1.01:
+                pix.shake(g, t, 1.2)
+                self.sparks.burst(x1 - 7, y1 - 7, 8, 18, life=0.4, gravity=20)
+            tip = (CH[0] + 14, CH[1] + 30)
+        # 砚台小几
+        g.d.rectangle((INK[0] - 6, INK[1] + 1, INK[0] + 6, INK[1] + 2), fill=1)
+        g.d.line((INK[0] - 5, INK[1] + 3, INK[0] - 5, FLOOR - 1), fill=1)
+        g.d.line((INK[0] + 5, INK[1] + 3, INK[0] + 5, FLOOR - 1), fill=1)
+        pix.blit(g, prop("ink"), INK[0] - 5, INK[1] - 5)
+        # 鹅与笼
+        gone = -1
+        caged = -1.0
+        cage_pos = None
+        if on and n % 2 == 1 and k >= 42.5:
+            gone = n % 3
+            caged = 0.0 if k < 44.2 else ease_in(span(k, 44.2, 47.0)) * 60
+        back, back_q = -1, 1.0
+        if on and n % 2 == 0 and n > 0 and k < 8.0:   # 新的一只游回来
+            back, back_q = (n - 1) % 3, span(k, 0, 8.0)
+        if not on:
+            back, back_q = 0, span(e3, 0, 3.0)
+        pos = self.geese(g, t, gone, caged, back, back_q)
+        if on and n % 2 == 1 and k >= 42.5 and pos:
+            drop = ease_out(span(k, 42.5, 44.0))
+            cx, cy = pos
+            cy = lerp(-14, cy - 4, drop) - (caged if caged > 0 else 0)
+            g.d.line((cx, -1, cx, cy), fill=1)
+            pix.blit(g, prop("cage"), cx - 7, cy)
+            if abs(k - 44.0) < dt * 1.01:
+                self.sparks.burst(cx, cy + 12, 8, 16, up=10, life=0.5, gravity=40)
+        # 小道士
+        if not on and e3 < 1.6:
+            self.writer(g, t, tip, True, walk_x=lerp(-14, DX, ease_out(span(e3, 0.2, 1.6))))
+        else:
+            face = "happy" if on and (4.6 <= kk < 5.6 or 42.6 < k < 44.0) else "normal"
+            self.writer(g, t, tip, wet, face=face)
+        self.sparks.step(dt)
+        self.sparks.draw(g)
+        # 字：顶上一行（本句已写的字）；笼鹅时换成“书罢笼鹅去”
+        if on:
+            if n % 2 == 1 and 42.5 <= k < 47.8:
+                label(g, 126, 2, "书罢笼鹅去", align="right")
+            else:
+                done = j + (1 if kk >= 4.6 else 0) if k < 42 else 7
+                if done:
+                    label(g, 126, 2, sent[:done], align="right")
+        return writing, sent[j] if k < 42 else None, span(kk, 0.6, 4.6)
+
+    def mx(self, g: Gfx, t: float, writing: bool, ch, q: float):
+        if writing and ch:
+            gl = glyph(ch)
+            a = gl.on
+            rows = int(q * 8)
+            for y in range(8):
+                for x in range(8):
+                    if y <= rows and a[y * 3:y * 3 + 3, x * 3:x * 3 + 3].any():
+                        g.mx[y, x] = True
+            return
+        g.mx_blit("""
+.##.....
+#.#.....
+.##.....
+..#.....
+..######
+..######
+...####.
+""", 0, 0)
+        g.mx[7, :] = [((x + int(t * 3)) % 3 == 0) for x in range(8)]
 
     def enter(self, g: Gfx, t: float):
-        h = ease_out(span(t, 0.0, 1.2))
-        gdx = (1 - ease_out(span(t, 0.8, 2.4))) * 70
-        self.frame(g, 0.0, paper_h=max(h, 0.02), show_brush=False, gdx=gdx)
-        if t > 2.0:  # 笔落到砚台上
-            p = ease_out_bounce(span(t, 2.0, 2.8))
-            g.blit(BRUSH, INK[0] - 5, lerp(-20, INK[1] - 1 - BRUSH.h + 1, p))  # 与 brush_at(0) 同位
-        if t < 2.0:
-            g.mx[:] = False
-            g.mx[7, :] = [x < t * 4 for x in range(8)]
+        self.scene(g, t, min(t / self.T["enter"], 0.999))
+        g.mx[7, :] = True
 
     def hold(self, g: Gfx, t: float):
         self.ht = t
-        self.frame(g, t)
+        self.mx(g, t, *self.scene(g, t))
 
     def exit(self, g: Gfx, t: float):
-        self.frame(g, self.ht + t)
-        iris(g, span(t, 0.0, self.T["exit"]), 60, 32)
-        if t > 0.8:
-            g.mx[:] = False
+        tt = self.ht + t
+        self.mx(g, tt, *self.scene(g, tt))
+        iris(g, t / self.T["exit"], 40, 34)

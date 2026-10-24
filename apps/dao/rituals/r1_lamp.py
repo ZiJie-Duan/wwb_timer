@@ -1,294 +1,615 @@
-"""长明灯：琉璃盏里一汪灯油，浮芯上一朵火，油随计时慢慢浅下去，灯焰也跟着沉。
+"""长明灯：夜里的殿堂，莲花灯台上一只琉璃盏，浮芯上一朵火；小道士守灯、挑灯花、添油。
 
-依据：宫观殿前供长明灯（五供“香花灯水果”之灯），昼夜不熄，执事随时添油。
-《庄子·养生主》：“指穷于为薪，火传也，不知其尽也。”
+依据：宫观殿前供长明灯（五供“香、花、灯、水、果”之灯），昼夜不熄，执事随时添油、挑芯；
+灯芯结出“灯花”爆开，旧俗以为吉兆。圆满句“薪尽火传”出自《庄子·养生主》“指穷于为薪，火传也，不知其尽也”。
 
-入场：一只宽袖手执引火棒从左边伸来，点着浮芯，灯晕一圈圈亮开。
-持续：灯油随 e 下降（一轮 10 分钟），火苗随油面下沉，油快尽时火变小；光晕呼吸，偶尔一只飞蛾绕灯。
-      油尽：右上方一只手提油壶倾倒，油线注入，油面回升，火苗被托上来（“添油”），右侧“第几盏”加一。
-中断：捻小灯芯，火缩成一粒豆火，光晕收拢（长明灯不灭）。
-恢复：豆火重新长高，光晕再起。
-圆满：灯焰暴涨放光，一点火星升出画面，“火传也 / 不知其尽也”。
+入场：小道士举着点着的引火棒走进来，伸棒点着浮芯，火“噗”地窜起，屏幕一震、火星迸出，光晕一圈圈亮开；拱手一拜。
+持续：灯油随计时变浅（一轮 10 分钟），火苗随油面下沉。火苗逐帧跳动，光晕呼吸旋转，偶尔爆一点灯花。
+      每 36 秒：小道士拿灯挑挑芯，灯花“啪”地爆开；作揖；月洞窗外风起，梅枝乱摇、落叶卷进来，火苗被吹歪，
+      小道士剑指一点，竹帘“唰”地落下挡风。另有飞蛾不时来绕灯。
+      续：油尽火弱，小道士转身提起地上的油壶，走到灯前举壶添油，油面回升、火苗被托起，“第几盏”加一。
+中断：灯挑把灯芯压低，火缩成一粒豆火，光晕收拢（长明灯不灭），牌子写“微明”。
+恢复：剑指一点，一颗火星飞去，豆火“噗”地长回原样。
+圆满：灯焰暴涨，放射光一圈圈转，小道士跪拜，闪白、火星四溅，“薪尽火传”弹出。
 """
 from __future__ import annotations
 
 import math
 
-from ..engine.anim import blink, clamp, ease_in, ease_in_out, ease_out, ease_out_back, lerp, noise, pulse, span
+from ..engine import pix
+from ..engine.anim import ease_in_out, ease_out, ease_out_back, lerp, pulse, rand, span
+from ..engine.chars import Part, daoshi
 from ..engine.cn import cn_num
-from ..engine.fx import flame, ring
 from ..engine.gfx import Gfx
 from ..engine.scene import Ritual, register
-from .r1_common import rays, sleeve, sparkles, vreveal
+from .r1_common import (FLOOR, Clock, badge, floor, hit, hold_at, mx_burst, pose_arm, ring_dots, rot, star,
+                        title)
 
-CX = 64
-TOP, BOT = 19, 45          # 琉璃盏口沿 / 盏底
-HW_TOP, HW_BOT = 18, 8     # 半宽
-OIL_FULL, OIL_EMPTY = 23, 41
-RENEW = 6.0
+LX = 84                 # 灯中心
+RIM = 31                # 琉璃盏口沿 y
+OIL_FULL, OIL_EMPTY = 34, 39
+DX = 50                 # 小道士站位
+JAR_X = 24              # 油缸放在身后地上
+WIN = (110, 19, 10)     # 月洞窗 cx, cy, r
+RENEW = 8.0
+
+# ---------------------------------------------------------------- 精灵
+
+FLAME = pix.frames("""
+   #
+   #
+  ##
+  ###
+ ##.##
+ #...#
+ #...#
+ ##.##
+  ###
+---
+  #
+  ##
+  ##
+  ###
+ ##.##
+ #...#
+ #...#
+ ##.##
+  ###
+---
+    #
+   ##
+   ##
+  ###
+ ##.##
+ #...#
+ #...#
+ ##.##
+  ###
+---
+   #
+  ##
+  ###
+ ##.##
+ #...#
+ #...#
+ #...#
+ ##.##
+  ###
+""")
+
+LEAN = pix.frames("""
+#
+ ##
+  ##
+ ###.#
+ #...#
+ #...#
+ ##.##
+  ###
+---
+##
+ ###
+  ##.#
+ ##..#
+ #...#
+ ##.##
+  ###
+""")
+
+BEAN = pix.sprite("""
+ #
+###
+#.#
+###
+""")
+
+SMALL = pix.frames("""
+ #
+ #
+##
+#.#
+###
+---
+ #
+ ##
+ ##
+#.#
+###
+""")
+
+MOTH = pix.frames("""
+#. .#
+##.##
+ .#.
+---
+ ...
+#####
+#.#.#
+""")
+
+LEAF = pix.frames("""
+##
+ #
+---
+ #
+##
+---
+#
+##
+""")
 
 
-def cup_hw(y: float) -> float:
-    k = clamp((y - TOP) / (BOT - TOP))
-    return lerp(HW_TOP, HW_BOT, k * k)
+def _bowl():
+    """琉璃盏 23×11：外翻口沿（联珠纹）、透明盏身（只画轮廓）、左侧高光"""
+    p = Part(23, 11)
+    p.shape("line", (0, 0, 22, 0), fill=1)
+    p.shape("line", (1, 1, 21, 1), fill=1)
+    p.d.line((3, 1, 19, 1), fill=0)
+    for x in range(3, 20, 3):
+        p.px(x, 1, 1)
+    left = [(1, 2), (2, 5), (4, 8), (8, 10)]
+    p.shape("line", left, fill=1)
+    p.shape("line", [(22 - x, y) for x, y in left], fill=1)
+    p.shape("line", (8, 10, 14, 10), fill=1)
+    p.shape("line", (4, 3, 5, 6), fill=1)       # 琉璃高光
+    p.px(18, 3), p.px(18, 4)
+    return p.sprite()
 
 
-def lamp_body(g: Gfx, oil_y: float | None):
-    """琉璃盏 + 灯柱 + 莲座；oil_y：油面（None = 不画油）"""
-    d = g.d
-    left, right = [], []
-    for i in range(14):
-        y = TOP + (BOT - TOP) * i / 13
-        hw = cup_hw(y)
-        left.append((CX - hw, y))
-        right.append((CX + hw, y))
-    if oil_y is not None:
-        poly = [(CX - cup_hw(oil_y) + 1, oil_y)] + [p for p in left if p[1] > oil_y]
-        poly = [(x + 1, y) for x, y in poly]
-        rp = [(x - 1, y) for x, y in right if y > oil_y][::-1] + [(CX + cup_hw(oil_y) - 1, oil_y)]
-        poly += rp
-        if len(poly) >= 3:
-            g.shade_poly(poly, 0.25, outline=None)
-            d.line((CX - cup_hw(oil_y) + 1, oil_y, CX + cup_hw(oil_y) - 1, oil_y), fill=1)
-    d.line(left, fill=1)
-    d.line(right, fill=1)
-    d.line((CX - HW_TOP - 2, TOP, CX - HW_TOP + 2, TOP), fill=1)   # 口沿外翻
-    d.line((CX + HW_TOP - 2, TOP, CX + HW_TOP + 2, TOP), fill=1)
-    d.line((CX - HW_BOT, BOT, CX + HW_BOT, BOT), fill=1)
-    # 琉璃高光
-    d.line((CX - HW_TOP + 4, TOP + 4, CX - HW_TOP + 6, TOP + 12), fill=1)
-    # 灯柱、节、莲座
-    d.rectangle((CX - 2, BOT + 1, CX + 2, 56), fill=0, outline=1)
-    d.ellipse((CX - 5, 49, CX + 5, 52), fill=0, outline=1)
-    d.polygon([(CX - 14, 62), (CX + 14, 62), (CX + 9, 57), (CX - 9, 57)], fill=0, outline=1)
-    for x in (-8, -3, 2, 7):  # 莲瓣
-        d.arc((CX + x - 3, 57, CX + x + 3, 63), 180, 360, fill=1)
+def _stand():
+    """莲花灯台 19×16：托盏的莲萼、两道竹节的灯柱、莲座、底足（右侧背光网点）"""
+    p = Part(19, 16)
+    p.shape("polygon", [(4, 0), (14, 0), (11, 3), (7, 3)], fill=1)
+    p.px(6, 0, 0), p.px(9, 0, 0), p.px(12, 0, 0)
+    p.px(8, 1, 0), p.px(10, 1, 0)
+    p.shape("rectangle", (8, 3, 10, 11), fill=1)
+    for y in (5, 8):                               # 竹节
+        p.shape("rectangle", (7, y, 11, y), fill=1)
+    p.px(10, 6, 0), p.px(10, 9, 0)
+    p.shape("polygon", [(4, 11), (14, 11), (16, 13), (2, 13)], fill=1)
+    for x in (4, 7, 10, 13):                       # 莲瓣
+        p.px(x, 12, 0)
+    p.shape("rectangle", (1, 14, 17, 15), fill=1)
+    p.d.line((2, 14, 16, 14), fill=0)
+    p.dither([(12, 11), (16, 11), (17, 15), (12, 15)], 0.5, 0)
+    return p.sprite()
 
 
-def float_wick(g: Gfx, y: float):
-    g.d.line((CX - 3, y, CX + 3, y), fill=1)
-    g.d.line((CX, y - 1, CX, y - 2), fill=1)
+def _jar():
+    """油缸 13×12：卷口、鼓腹、一道弦纹、右侧背光网点"""
+    p = Part(13, 12)
+    p.shape("ellipse", (0, 2, 12, 11), fill=1)
+    p.shape("rectangle", (3, 0, 9, 2), fill=1)
+    p.d.line((4, 1, 8, 1), fill=0)                  # 缸口
+    p.d.line((1, 5, 11, 5), fill=0)                 # 弦纹
+    p.px(3, 3, 0), p.px(3, 4, 0)
+    p.dither([(8, 6), (12, 6), (12, 11), (8, 11)], 0.5, 0)
+    p.shape("rectangle", (2, 11, 10, 11), fill=1)
+    return p.sprite()
 
 
-def oil_pot(g: Gfx, x: float, y: float, tilt: float):
-    """油壶：(x, y) 为壶嘴尖，tilt 0 = 平放，1 = 倾倒"""
-    a = -0.1 - tilt * 0.55  # 壶身绕嘴尖旋转
-    ca, sa = math.cos(a), math.sin(a)
-
-    def P(u, v):  # 局部坐标：嘴尖为原点，壶身在右（u>0），v 向下
-        return (x + u * ca - v * sa, y + u * sa + v * ca)
-
-    body = [P(18 + 10 * math.cos(k / 16 * 2 * math.pi), 6 + 7 * math.sin(k / 16 * 2 * math.pi)) for k in range(16)]
-    g.d.polygon(body, fill=0, outline=1)
-    g.d.line((*P(0, 0), *P(9, 5)), fill=1)        # 壶嘴
-    g.d.line((*P(1, 1), *P(10, 8)), fill=1)
-    g.d.line((*P(13, -2), *P(23, -2)), fill=1)    # 口
-    g.shade_poly(body, 0.12, outline=1)
-    g.d.line([P(26, 1), P(31, 0), P(32, 6), P(27, 10)], fill=1)  # 把手
-    return P(32, 4)  # 手握处
+def ladle(g: Gfx, hx: float, hy: float, tip, tilt: float = 0.0, oil: bool = False):
+    """竹油提：从手 (hx, hy) 到 tip 的长柄，柄头一只小提筒；tilt 度（顺时针倾倒）"""
+    tx, ty = tip
+    g.d.line((hx, hy, tx, ty), fill=1)
+    cup = [(-2, -3), (2, -3), (2, 1), (1, 2), (-1, 2), (-2, 1)]
+    pts = rot([(tx + x, ty + y) for x, y in cup], tilt, tx, ty)
+    g.d.polygon(pts, fill=1)
+    lip = rot([(tx - 1, ty - 2), (tx + 1, ty - 2)], tilt, tx, ty)
+    g.d.line(lip, fill=0)
+    if oil and tilt < 30:
+        g.px(tx, ty - 2)
+    g.d.rectangle((hx - 1, hy - 1, hx + 1, hy + 1), fill=1)
+    return rot([(tx + 2, ty - 3)], tilt, tx, ty)[0]  # 倒油的口
 
 
-def moth(g: Gfx, t: float, fy: float, seed: int):
-    """飞蛾：每 23 秒来绕灯飞 6 秒"""
-    k = (t + seed % 7) % 23
-    if k > 6:
+_P: dict = {}
+
+
+def P(name, *a):
+    k = (name,) + a
+    if k not in _P:
+        _P[k] = {"bowl": _bowl, "stand": _stand, "jar": _jar}[name](*a)
+    return _P[k]
+
+
+# ---------------------------------------------------------------- 背景
+
+def room(g: Gfx, t: float, blind: float = 0.0, gust: float = 0.0):
+    """夜殿：梁、柱、踢脚线、月洞窗（窗外月牙和梅枝，起风时乱摇）、竹帘"""
+    floor(g)
+    g.d.line((0, FLOOR - 4, 127, FLOOR - 4), fill=1)
+    g.d.line((0, 3, 127, 3), fill=1)
+    pix.checker(g, (0, 0, 128, 3), 0.25)
+    for x in (3, 124):
+        g.d.rectangle((x - 1, 4, x + 1, FLOOR - 5), outline=1, fill=0)
+    cx, cy, r = WIN
+    g.d.ellipse((cx - r - 2, cy - r - 2, cx + r + 2, cy + r + 2), outline=1)
+    g.d.ellipse((cx - r, cy - r, cx + r, cy + r), outline=1)
+    # 月牙（左上）
+    g.d.ellipse((cx - 7, cy - 8, cx - 1, cy - 2), fill=1)
+    g.d.ellipse((cx - 5, cy - 9, cx + 1, cy - 3), fill=0)
+    # 梅枝：从左下斜伸进窗，起风时摆
+    sw = math.sin(t * (2 + 10 * gust)) * (0.5 + 2.5 * gust)
+    br = [(cx - r + 1, cy + 7), (cx - 3, cy + 4 + sw * 0.4), (cx + 4, cy + 3 + sw), (cx + r - 1, cy - 1 + sw * 1.4)]
+    g.d.line(br, fill=1)
+    tw = (br[1][0] + 2, br[1][1] - 4 + sw * 0.5)
+    g.d.line((br[1][0], br[1][1], *tw), fill=1)
+    for bx, by in (tw, br[2], br[3], (cx - 6, cy + 6 + sw * 0.2)):
+        bx, by = int(round(bx)), int(round(by))
+        g.d.rectangle((bx - 1, by - 2, bx + 1, by - 1), fill=1)
+        g.d.rectangle((bx - 2, by - 1, bx + 2, by), fill=1)
+        g.px(bx, by - 1, 0)
+    if blind > 0:  # 竹帘落下
+        h = int((2 * r) * blind)
+        g.d.rectangle((cx - r - 3, cy - r - 4, cx + r + 3, cy - r - 2), fill=1)
+        for y in range(cy - r, cy - r + h, 2):
+            hw = math.sqrt(max(r * r - (y - cy) ** 2, 0))
+            g.d.line((cx - hw, y, cx + hw, y), fill=1)
+        g.d.line((cx, cy - r - 2, cx, cy - r + h), fill=0)
+
+
+def lamp(g: Gfx, oil_y: float, t: float, size: float = 1.0, lean: int = 0, glow: float = 1.0, pop: float = 0.0,
+         lit: bool = True):
+    """灯台 + 油 + 浮芯 + 火 + 光晕。size：火的大小（0 灭 / <0.45 豆火）；lean：-1 被风吹歪；pop：挑灯花的拉长"""
+    pix.blit(g, P("stand"), LX - 9, FLOOR - 16)
+    oy = int(round(oil_y))
+    for y in range(oy + 1, RIM + 10):  # 灯油：网点
+        k = (y - RIM) / 10
+        hw = int(10 - k * k * 7)
+        pix.checker(g, (LX - hw + 1, y, LX + hw, y + 1), 0.5)
+    hw = int(10 - ((oy - RIM) / 10) ** 2 * 7)
+    g.d.line((LX - hw + 1, oy, LX + hw - 1, oy), fill=1)
+    gl = int(t * 5) % (2 * hw)                                   # 油面上游走的反光
+    g.d.line((LX - hw + 1 + gl, oy, LX - hw + 2 + gl, oy), fill=0)
+    g.d.rectangle((LX - 2, oy - 1, LX + 2, oy - 1), fill=1)       # 浮芯托
+    g.px(LX, oy - 2)
+    pix.blit(g, P("bowl"), LX - 11, RIM)
+    fy = oy - 2
+    if lit and size > 0:
+        if glow > 0:
+            r = (10 + 1.5 * pulse(t, 2.4)) * glow * min(size, 1.2)
+            ring_dots(g, LX, fy - 4, r, 3, rot=t * 0.4)
+            if glow > 0.5 and r > 6:
+                ring_dots(g, LX, fy - 4, r + 3, 5, rot=-t * 0.3)
+        if size < 0.45:
+            pix.blit(g, BEAN, LX - 1, fy - 3)
+        elif lean:
+            pix.blit(g, pix.anim(LEAN, t, 10), LX - 3, fy - 8)
+        elif size < 0.8:
+            pix.blit(g, pix.anim(SMALL, t, 7), LX - 1, fy - 5)
+        else:
+            spr = pix.anim(FLAME, t + rand(int(t * 3)) * 0.2, 8)
+            sy = size * (1 + pop)
+            if abs(sy - 1) > 0.05:
+                spr = pix.stretch(spr, 1.0, sy)
+            pix.blit(g, spr, LX - 3, fy - spr.h + 1)
+    return (LX, fy)
+
+
+def moth(g: Gfx, e: float, fx: float, fy: float, seed: int):
+    """飞蛾：每 47 秒来绕灯飞两圈"""
+    k = (e + seed % 13) % 47
+    if k > 7:
         return
-    a = k * 2.4
-    r = 16 + 3 * math.sin(k * 3)
-    x, y = CX + math.cos(a) * r, fy - 2 + math.sin(a) * r * 0.55 - (6 - k) * 0.5 if k < 1 else fy - 2 + math.sin(a) * r * 0.55
-    if k < 1:
-        x += (1 - k) * 60
-    if k > 5:
-        x -= (k - 5) * 60
-        y -= (k - 5) * 20
-    up = int(t * 12) % 2
-    g.px(x, y)
-    g.px(x - 1, y - up)
-    g.px(x + 1, y - up)
-    g.px(x - 2, y - up * 2 + 1)
-    g.px(x + 2, y - up * 2 + 1)
+    a = k * 2.2
+    r = 13 + 2 * math.sin(k * 3)
+    x, y = fx + math.cos(a) * r, fy - 4 + math.sin(a) * r * 0.6
+    if k < 1.5:
+        q = 1 - k / 1.5
+        x, y = lerp(x, 128, q), lerp(y, 8, q)
+    if k > 5.5:
+        q = (k - 5.5) / 1.5
+        x, y = lerp(x, 40, q), lerp(y, -6, q)
+    pix.blit(g, pix.anim(MOTH, e, 12), x - 2, y - 1)
 
+
+def mx_lamp(g: Gfx, oil: float, size: float, t: float, lean: int = 0):
+    """点阵：灯盏 + 跳动的火；油多时盏里亮满"""
+    g.mx[4, 1:7] = True
+    g.mx[5, 2] = g.mx[5, 5] = True
+    if oil > 0.4:
+        g.mx[5, 3:5] = True
+    g.mx[6, 3:5] = True
+    g.mx[7, 2:6] = True
+    if size <= 0:
+        return
+    if size < 0.45:
+        g.mx[3, 3] = True
+        return
+    f = int(t * 8) % 3
+    g.mx[3, 3:5] = True
+    g.mx[2, 3 - lean:5 - lean] = True
+    g.mx[1, [3, 3, 4][f] - lean] = True
+    if size > 1.1 or f == 0:
+        g.mx[0, [3, 4, 4][f] - lean] = True
+
+
+# ---------------------------------------------------------------- 场景
 
 @register
 class EternalLamp(Ritual):
     id = "r1.lamp"
     name = "长明灯"
-    desc = "琉璃盏长明灯，油随计时变浅、火苗下沉；油尽提壶添油，火又被托起"
-    T = {"enter": 4.0, "interrupt": 1.6, "resume": 1.6, "complete": 5.0}
+    desc = "夜殿里小道士守着琉璃长明灯：挑灯花、剑指落帘挡风；油随计时变浅，油尽提壶添油"
+    T = {"enter": 6.0, "interrupt": 1.8, "resume": 2.0, "complete": 5.5}
     CYCLE = 600.0
 
+    def setup(self):
+        self.clock = Clock()
+        self.sparks = pix.Sparks(self.seed)
+        self.puffs = pix.Puffs(self.seed + 1)
+        self.leaves = []
+
     def oil(self, e: float) -> float:
-        p = (e % self.CYCLE) / self.CYCLE
-        return lerp(OIL_FULL, OIL_EMPTY, p)
-
-    def fsize(self, e: float) -> float:
-        """油快尽时火变小"""
-        p = (e % self.CYCLE) / self.CYCLE
-        return 1 - 0.4 * span(p, 0.85, 1.0)
-
-    # ------------------------------------------------------------ 零件
-
-    def fire(self, g: Gfx, oil_y: float, t: float, s: float = 1.0, halo: float = 1.0):
-        fy = oil_y - 2
-        if s > 0.25:
-            flame(g, CX, fy, 7 * s, 15 * s, t, self.seed)
-        elif s > 0:
-            g.d.ellipse((CX - 1, fy - 3, CX + 1, fy), fill=1)
-        if halo > 0:
-            r = (11 + 2 * pulse(t, 2.6)) * halo
-            ring(g, CX, fy - 6 * s, r, density=3, phase=t * 0.3)
-            if halo > 0.6:
-                ring(g, CX, fy - 6 * s, r + 5, density=6, phase=-t * 0.2)
-
-    def texts(self, g: Gfx, e: float, right: str | None = None, a: float = 1.0):
-        n = int(e // self.CYCLE) + 1
-        vreveal(g, 3, 4, "长明灯", a)
-        vreveal(g, 113, 4, right if right is not None else f"第{cn_num(n)}盏", a)
-
-    def mx(self, g: Gfx, oil_p: float, t: float, s: float = 1.0):
-        """点阵：小灯盏，火苗跳，油位"""
-        g.mx_rows([0, 0, 0, 0b01111110, 0b01000010, 0b00111100, 0b00011000, 0b01111110])
-        if oil_p > 0.5:
-            g.mx[4, 2:6] = True
-        if s <= 0:
-            return
-        if s < 0.3:
-            g.mx[2, 3 + int(t * 3) % 2] = True
-            return
-        lean = 1 if noise(t * 5, self.seed + 9) > 0.55 else 0
-        g.mx[2, 2:6] = True
-        g.mx[1, 3 + lean:5 + lean - (1 if s < 0.8 else 0)] = True
-        if s >= 0.8 and blink(t, 0.4, 0.6):
-            g.mx[0, 3 + lean] = True
-
-    # ------------------------------------------------------------ 阶段
-
-    def enter(self, g: Gfx, t: float):
-        lamp_body(g, OIL_FULL)
-        fy = OIL_FULL - 2
-        lit = t > 1.7
-        float_wick(g, OIL_FULL)
-        if lit:
-            grow = ease_out_back(span(t, 1.7, 2.3))
-            self.fire(g, OIL_FULL, t, grow, ease_out(span(t, 2.2, 3.4)))
-            if t < 2.0:  # 点着的一闪
-                ring(g, CX, fy - 3, (t - 1.7) * 40, density=2)
-        # 引火棒：手从左下伸来，棒尖碰灯芯，再收回
-        if t < 3.0:
-            if t < 1.7:
-                p = ease_out(span(t, 0.2, 1.5))
-            else:
-                p = 1 - ease_in(span(t, 1.9, 3.0))
-            tipx, tipy = lerp(-30, CX - 2, p), lerp(fy + 18, fy - 1, p)
-            hx, hy = tipx - 26, tipy + 12
-            g.d.line((hx + 2, hy - 2, tipx, tipy), fill=1)
-            g.d.line((hx + 2, hy - 1, tipx, tipy + 1), fill=1)
-            if t < 1.9:
-                flame(g, tipx, tipy, 4, 6, t, self.seed + 3)
-            else:
-                g.px(tipx, tipy - 1)
-            sleeve(g, hx, hy, math.pi * 0.86)
-        self.texts(g, 0, a=span(t, 2.6, 3.8))
-        self.mx(g, 1.0, t, ease_out(span(t, 1.7, 2.3)) if lit else 0)
-        if abs(t - 1.75) < 0.1:
-            g.mx_level = 5
-
-    def hold(self, g: Gfx, t: float, e: float):
         k = e % self.CYCLE
         if e >= self.CYCLE and k < RENEW:
-            self._renew(g, t, k, e)
+            return lerp(OIL_EMPTY, OIL_FULL, ease_in_out(span(k, 3.4, 4.6)))
+        return lerp(OIL_FULL, OIL_EMPTY, k / self.CYCLE)
+
+    def size(self, e: float) -> float:
+        p = (e % self.CYCLE) / self.CYCLE
+        if e >= self.CYCLE and e % self.CYCLE < RENEW:
+            return lerp(0.6, 1.0, span(e % self.CYCLE, 3.4, 4.8))
+        return 1.0 - 0.4 * span(p, 0.92, 1.0)
+
+    def counter(self, g: Gfx, e: float, label: str | None = None):
+        n = int(e // self.CYCLE) + 1
+        badge(g, 7, 6, label or (f"第{cn_num(n)}盏" if n < 100 else f"{n}盏"))
+
+    def pot_home(self, g: Gfx, ladle_in: bool = True):
+        """身后地上的油缸，竹油提插在缸里"""
+        if ladle_in:
+            g.d.line((JAR_X + 7, FLOOR - 13, JAR_X + 11, FLOOR - 27), fill=1)
+            g.d.rectangle((JAR_X + 10, FLOOR - 28, JAR_X + 12, FLOOR - 27), fill=1)
+        pix.blit(g, P("jar"), JAR_X, FLOOR - 12)
+
+    def fx(self, g: Gfx, dt: float):
+        self.puffs.step(dt)
+        self.puffs.draw(g)
+        self.sparks.step(dt)
+        self.sparks.draw(g)
+
+    def crackle(self, e: float, dt: float, fx: float, fy: float):
+        """火苗偶尔爆一点灯花"""
+        i = int(e / 3.3)
+        if hit(e, i * 3.3, dt) and rand(i, self.seed) < 0.5:
+            self.sparks.burst(fx, fy - 6, 2, 12, up=10, life=0.5, gravity=40)
+
+    # ------------------------------------------------------------ 入场：举棒点灯
+
+    def enter(self, g: Gfx, t: float):
+        dt = self.clock(t)
+        room(g, t)
+        self.pot_home(g)
+        x = lerp(-12, DX, ease_out(span(t, 0, 2.0)))
+        lit = t >= 3.0
+        size = ease_out_back(span(t, 3.0, 3.6)) if lit else 0
+        fx, fy = lamp(g, OIL_FULL, t, size=max(size, 0.01) if lit else 0, glow=span(t, 3.0, 4.2), lit=lit)
+        if t < 2.0:
+            h = pose_arm(g, x, FLOOR, t, 30, legs="walk")
+            tip = (h["hand"][0] + 6, h["hand"][1] + 6)
+        elif t < 4.3:
+            h = pose_arm(g, x, FLOOR, t, -30, face="wow" if 3.0 < t < 3.6 else "normal")
+            q = ease_in_out(span(t, 2.0, 2.9)) - ease_in_out(span(t, 3.4, 4.2)) * 0.6
+            tip = (lerp(h["hand"][0] + 7, fx - 1, q), lerp(h["hand"][1] - 4, fy, q))
+        else:
+            pose = "gongshou" if t < 5.1 else ("bow" if t < 5.8 else "idle")
+            daoshi(g, x, FLOOR, pose, t)
+            h = tip = None
+        if h:  # 引火棒：细棒 + 棒头一点火
+            g.d.line((h["hand"][0], h["hand"][1], tip[0], tip[1]), fill=1)
+            g.d.rectangle((h["hand"][0] - 1, h["hand"][1] - 1, h["hand"][0] + 1, h["hand"][1] + 1), fill=1)
+            if t < 3.5:
+                pix.blit(g, pix.anim(SMALL, t, 8), tip[0] - 1, tip[1] - 5)
+            elif t < 3.6:
+                self.puffs.emit(tip[0], tip[1] - 2, vy=-5, life=0.7, rmax=1.6, spread=0)
+        if hit(t, 3.0, dt):
+            self.sparks.burst(fx, fy - 4, 16, 34, up=16, life=0.8, gravity=60)
+        if 3.0 <= t < 3.3:
+            pix.shake(g, t, 1.0)
+        if 3.0 <= t < 4.4:  # 光晕一圈圈亮开
+            ring_dots(g, fx, fy - 4, (t - 3.0) * 22, 3)
+        self.crackle(t, dt, fx, fy)
+        self.fx(g, dt)
+        if lit:
+            self.counter(g, 0.0)
+        mx_lamp(g, 1.0, size if lit else 0, t)
+        if hit(t, 3.0, dt) or 3.0 <= t < 3.15:
+            g.mx_level = 6
+
+    # ------------------------------------------------------------ 持续
+
+    def hold(self, g: Gfx, t: float, e: float):
+        dt = self.clock(t)
+        k = e % self.CYCLE
+        if e >= self.CYCLE and k < RENEW:
+            self._renew(g, t, k, e, dt)
             return
         oil = self.oil(e)
-        s = self.fsize(e)
-        lamp_body(g, oil)
-        float_wick(g, oil)
-        self.fire(g, oil, t, s)
-        moth(g, t, oil - 8, self.seed)
-        self.texts(g, e)
-        self.mx(g, 1 - k / self.CYCLE, t, s)
-
-    def _renew(self, g: Gfx, t: float, k: float, e: float):
-        """油尽添油：提壶倾倒，油面回升"""
-        fill = ease_in_out(span(k, 1.8, 4.4))
-        oil = lerp(OIL_EMPTY, OIL_FULL, fill)
-        s = lerp(0.6, 1.0, fill)
-        lamp_body(g, oil)
-        float_wick(g, oil)
-        self.fire(g, oil, t, s, halo=0.5 + 0.5 * fill)
-        # 壶：进 0-1.2，倾 1.2-1.8，倒到 4.4，回正 4.4-4.9，走 4.9-6
-        if k < 1.2:
-            p = ease_out(span(k, 0, 1.2))
-            px, py = lerp(150, CX + 19, p), lerp(-20, 13, p)
-            tilt = 0
-        elif k < 4.9:
-            px, py = CX + 19, 13
-            tilt = ease_in_out(span(k, 1.2, 1.8)) * (1 - ease_in_out(span(k, 4.4, 4.9)))
+        size = self.size(e)
+        c = (e + 10) % 36            # 每 36 秒一套小事件
+        gust = span(c, 25.2, 25.8) * (1 - span(c, 27.6, 28.4))
+        blind = ease_out(span(c, 27.6, 28.0)) * (1 - span(c, 33.0, 35.0))
+        room(g, t, blind=blind, gust=gust)
+        self.pot_home(g)
+        pop = 0.35 * (1 - span(c, 8.0, 8.4)) if 8.0 <= c < 8.4 else 0.0
+        lean = 1 if gust > 0.3 else 0
+        fx, fy = lamp(g, oil, t, size=size * (0.85 if lean else 1), lean=lean, glow=1 - 0.5 * gust, pop=pop)
+        # 小道士
+        if 6.0 <= c < 9.6:      # 挑灯花
+            q = ease_in_out(span(c, 6.2, 7.6)) * (1 - ease_in_out(span(c, 8.8, 9.6)))
+            face = "happy" if 8.1 < c < 9.4 else "normal"
+            h = pose_arm(g, DX, FLOOR, t, -30 if q > 0.15 else 0, face=face)
+            hx, hy = h["hand"]
+            tx, ty = lerp(hx + 8, fx - 1, q), lerp(hy, fy + 1, q)
+            g.d.line((hx, hy, tx, ty), fill=1)
+            g.px(tx + 1, ty - 1)
+            if hit(c, 8.0, dt):
+                self.sparks.burst(fx, fy - 7, 12, 28, up=14, life=0.6, gravity=50)
+        elif 15.0 <= c < 17.4:
+            daoshi(g, DX, FLOOR, "gongshou" if c < 16.2 else "bow", t)
+        elif 25.0 <= c < 29.6:  # 起风：剑指落帘
+            if 26.8 <= c < 28.2:
+                h = daoshi(g, DX, FLOOR, "point", t, face="wow" if c < 27.4 else "normal")
+                q = span(c, 27.0, 27.6)
+                if 0 < q < 1:
+                    hx, hy = h["hand"]
+                    cx, cy, r = WIN
+                    px, py = lerp(hx, cx, q), lerp(hy, cy - r, q) - math.sin(q * math.pi) * 8
+                    g.d.ellipse((px - 1, py - 1, px + 1, py + 1), fill=1)
+                    self.sparks.burst(px, py, 1, 5, life=0.3, gravity=0)
+            else:
+                daoshi(g, DX, FLOOR, "idle", t, face="wow" if c < 26.8 else "happy")
         else:
-            p = ease_in(span(k, 4.9, RENEW))
-            px, py = lerp(CX + 19, 150, p), lerp(13, -20, p)
-            tilt = 0
-        hand = oil_pot(g, px, py, tilt)
-        sleeve(g, hand[0] + 3, hand[1], -0.35)
-        if tilt > 0.9:  # 油线
-            x0, y0 = px - 1, py + 1
-            for j in range(0, int(oil - y0)):
-                yy = y0 + j
-                xx = x0 - j * 0.35 * (1 - j / 40)
-                if (j + int(t * 30)) % 4:
-                    g.px(xx, yy)
-        self.texts(g, e if k > 3 else e - k - 1)
-        self.mx(g, fill, t, s)
+            daoshi(g, DX, FLOOR, "idle", t)
+        if gust > 0:            # 风纹 + 卷进来的叶子
+            cx, cy, r = WIN
+            for j in range(4):
+                ph = (t * 1.6 + j * 0.27) % 1
+                x = cx - 8 - ph * 60
+                y = cy + 4 + j * 5 + math.sin(ph * 6 + j) * 2
+                pix.dotted(g, x, y, x + 9, y, 2, j)
+            for j in range(3):
+                ph = (t * 0.9 + j * 0.33) % 1
+                pix.blit(g, pix.anim(LEAF, t + j, 8), cx - 6 - ph * 70, cy + 2 + j * 6 + math.sin(ph * 9) * 4)
+        if hit(c, 25.2, dt):
+            pix.shake(g, t, 1.0)
+        if hit(c, 27.6, dt):
+            cx, cy, r = WIN
+            self.puffs.emit(cx - r, cy + r, vx=-4, vy=-3, life=0.6, rmax=1.5)
+            self.puffs.emit(cx + r, cy + r, vx=4, vy=-3, life=0.6, rmax=1.5)
+        if 27.6 <= c < 27.8:
+            pix.shake(g, t, 1.0)
+        moth(g, e, fx, fy, self.seed)
+        self.crackle(e, dt, fx, fy)
+        self.fx(g, dt)
+        self.counter(g, e)
+        mx_lamp(g, (OIL_EMPTY - oil) / (OIL_EMPTY - OIL_FULL), size, t, lean)
+        if 8.0 <= c < 8.2:
+            g.mx_level = 5
+
+    def _renew(self, g: Gfx, t: float, k: float, e: float, dt: float):
+        """添油：转身从油缸里舀油 → 走到灯前 → 举油提倒油 → 走回 → 插回缸里"""
+        room(g, t)
+        oil = self.oil(e)
+        size = self.size(e) if k > 3.2 else 0.6
+        fx, fy = lamp(g, oil, t, size=size, glow=0.6 + 0.4 * span(k, 3.2, 4.8))
+        mouth = (JAR_X + 6, FLOOR - 12)
+        home = k < 0.8 or k >= 7.2
+        self.pot_home(g, ladle_in=home)
+        if k < 0.8:
+            daoshi(g, DX, FLOOR, "idle", t, face="wow", flip=k > 0.4)
+        elif k < 1.8:      # 转身舀油
+            h = pose_arm(g, DX, FLOOR, t, 30 if k < 1.4 else 0, flip=True)
+            up = ease_out(span(k, 1.3, 1.8)) * 8
+            ladle(g, *h["hand"], (mouth[0], mouth[1] + 2 - up), oil=True)
+            if 1.3 < k < 1.8 and int(t * 10) % 3 == 0:
+                g.px(mouth[0] + 2, mouth[1] - up + 4)
+        elif k < 5.0:
+            x = lerp(DX, 60, ease_in_out(span(k, 1.8, 2.8)))
+            if k < 2.8:
+                h = pose_arm(g, x, FLOOR, t, 0, legs="walk")
+                hx, hy = h["hand"]
+                ladle(g, hx, hy, (hx + 6, hy - 12), oil=True)
+            else:
+                h = pose_arm(g, x, FLOOR, t, -30, face="happy" if k > 4.4 else "normal")
+                hx, hy = h["hand"]
+                reach = ease_in_out(span(k, 2.8, 3.2)) * (1 - ease_in_out(span(k, 4.7, 5.0)))
+                tip = (lerp(hx + 6, LX - 4, reach), lerp(hy - 12, RIM - 5, reach))
+                tilt = 110 * ease_in_out(span(k, 3.2, 3.5)) * (1 - span(k, 4.5, 4.8))
+                lip = ladle(g, hx, hy, tip, tilt=tilt, oil=k < 3.2)
+                if 3.4 <= k < 4.6:  # 油线
+                    g.d.line((lip[0], lip[1] + 1, lip[0], oil - 1), fill=1)
+                    if int(t * 10) % 2 == 0:
+                        g.px(lip[0] + 1, oil - 1)
+                        g.px(lip[0] - 1, oil - 1)
+        elif k < 6.2:
+            x = lerp(60, DX, ease_in_out(span(k, 5.0, 6.0)))
+            h = pose_arm(g, x, FLOOR, t, 0, legs="walk", flip=True)
+            hx, hy = h["hand"]
+            ladle(g, hx, hy, (hx - 6, hy - 12))
+        elif k < 7.2:      # 插回缸里
+            h = pose_arm(g, DX, FLOOR, t, 0 if k < 6.6 else 30, flip=True)
+            down = ease_in_out(span(k, 6.4, 7.0))
+            ladle(g, *h["hand"], (mouth[0], lerp(mouth[1] - 8, mouth[1] + 2, down)))
+        else:
+            daoshi(g, DX, FLOOR, "idle", t, face="happy")
+        if hit(k, 4.8, dt):
+            self.sparks.burst(fx, fy - 6, 14, 26, up=14, life=0.7, gravity=50)
+        self.crackle(e, dt, fx, fy)
+        self.fx(g, dt)
+        self.counter(g, e if k >= 4.8 else e - k - 1)
+        mx_lamp(g, span(k, 3.4, 4.6), size, t)
+
+    # ------------------------------------------------------------ 中断 / 恢复 / 圆满
 
     def interrupt(self, g: Gfx, t: float, e: float):
+        dt = self.clock(t)
+        room(g, t)
+        self.pot_home(g)
         oil = self.oil(e)
-        p = ease_in_out(span(t, 0.1, 1.2))
-        s = lerp(self.fsize(e), 0.2, p)
-        lamp_body(g, oil)
-        float_wick(g, oil)
-        self.fire(g, oil, t, s, halo=1 - p)
-        self.texts(g, e, right="微火" if t > 0.8 else None)
-        self.mx(g, 1 - (e % self.CYCLE) / self.CYCLE, t, s)
+        s0 = self.size(e)
+        q = ease_in_out(span(t, 0.2, 0.8))
+        size = lerp(s0, 0.3, span(t, 0.8, 1.3))
+        fx, fy = lamp(g, oil, t, size=size, glow=lerp(1, 0.35, span(t, 0.8, 1.4)))
+        h = pose_arm(g, DX, FLOOR, t, -30 if q > 0.15 else 0)
+        hx, hy = h["hand"]
+        back = span(t, 1.3, 1.8)
+        tx, ty = lerp(hx + 8, fx - 1, q * (1 - back)), lerp(hy, fy - 1, q * (1 - back))
+        g.d.line((hx, hy, tx, ty), fill=1)
+        if hit(t, 1.0, dt):
+            self.puffs.emit(fx, fy - 4, vy=-5, life=0.8, rmax=2, spread=0)
+        self.fx(g, dt)
+        self.counter(g, e, "微明" if t > 1.0 else None)
+        mx_lamp(g, 0.5, size, t)
 
     def resume(self, g: Gfx, t: float, e: float):
+        dt = self.clock(t)
+        room(g, t)
+        self.pot_home(g)
         oil = self.oil(e)
-        p = ease_out_back(span(t, 0.2, 1.2))
-        s = lerp(0.2, self.fsize(e), p)
-        lamp_body(g, oil)
-        float_wick(g, oil)
-        self.fire(g, oil, t, s, halo=ease_out(span(t, 0.6, 1.6)))
-        self.texts(g, e)
-        self.mx(g, 1 - (e % self.CYCLE) / self.CYCLE, t, s)
-        if abs(t - 0.5) < 0.1:
-            g.mx_level = 3
+        s0 = self.size(e)
+        grow = ease_out_back(span(t, 0.9, 1.4))
+        size = 0.3 if t < 0.9 else lerp(0.8, s0, grow)
+        fx, fy = lamp(g, oil, t, size=size, glow=lerp(0.35, 1, span(t, 0.9, 1.6)))
+        h = daoshi(g, DX, FLOOR, "point" if t < 1.5 else "idle", t)
+        q = span(t, 0.3, 0.9)
+        if 0 < q < 1:
+            hx, hy = h["hand"]
+            px, py = lerp(hx, fx, q), lerp(hy, fy - 2, q) - math.sin(q * math.pi) * 10
+            g.d.ellipse((px - 1, py - 1, px + 1, py + 1), fill=1)
+            self.sparks.burst(px, py, 1, 6, life=0.3, gravity=0)
+        if hit(t, 0.9, dt):
+            self.sparks.burst(fx, fy - 5, 14, 30, up=12, life=0.6, gravity=50)
+            pix.flash(g)
+        if 0.9 <= t < 1.3:
+            ring_dots(g, fx, fy - 4, (t - 0.9) * 30, 3)
+        self.fx(g, dt)
+        self.counter(g, e, "微明" if t < 0.9 else None)
+        mx_lamp(g, 0.5, size, t)
 
     def complete(self, g: Gfx, t: float, e: float):
-        oil = self.oil(e)
-        s0 = self.fsize(e)
-        flare = ease_out(span(t, 0.2, 1.2)) * (1 - 0.4 * ease_in_out(span(t, 2.4, 3.4)))
-        s = s0 + flare * 0.35
-        lamp_body(g, oil)
-        float_wick(g, oil)
-        fy = oil - 2
-        self.fire(g, oil, t, s, halo=1 + flare * 0.4)
-        if t > 0.6:
-            rays(g, CX, fy - 6, 15 + flare * 3, 17 + flare * 10, n=9, rot=t * 0.5, a0=-math.pi - 0.25, a1=0.25)
-            sparkles(g, CX, fy - 8, 34, 26, t, n=10, seed=self.seed)
-        # 一点火星升出画面
-        if 1.2 < t < 3.2:
-            k = span(t, 1.2, 3.2)
-            sy = lerp(fy - 18 * s, -6, ease_in(k))
-            sx = CX + math.sin(k * 9) * 3
-            g.d.rectangle((sx - 1, sy - 1, sx, sy), fill=1)
-            g.px(sx, sy + 3)
-            g.px(sx, sy + 6)
-        if t < 1.2:
-            self.texts(g, e, a=1 - span(t, 0.2, 1.0))
-        else:
-            vreveal(g, 113, 4, "火传也", span(t, 1.6, 2.6))
-            vreveal(g, 3, 2, "不知其尽也", span(t, 2.6, 4.2))
-        self.mx(g, 1.0, t, 1.0)
-        if t > 0.2:
-            from .r1_common import mx_ring
-            if t < 2.0:
-                mx_ring(g, (t - 0.2) * 3.5, 3.5, 2)
-            g.mx_level = 1 + int(5 * (1 - span(t, 0.3, 2.0)))
+        dt = self.clock(t)
+        room(g, t)
+        self.pot_home(g)
+        grow = 1 + 0.9 * ease_out(span(t, 0.2, 1.5))
+        fx, fy = lamp(g, OIL_FULL + 1, t, size=grow, glow=1.3)
+        pose = "gongshou" if t < 1.4 else ("kneel" if t < 4.2 else "idle")
+        daoshi(g, DX, FLOOR, pose, t, face="happy" if t > 4.2 else "normal")
+        if t > 1.6:  # 放射光（点线，转动）
+            for j in range(12):
+                a = j / 12 * 2 * math.pi + t * 0.5
+                r0, r1 = 14, 17 + 3 * pulse(t + j * 0.2, 0.8)
+                pix.dotted(g, fx + math.cos(a) * r0, fy - 6 + math.sin(a) * r0 * 0.8,
+                           fx + math.cos(a) * r1, fy - 6 + math.sin(a) * r1 * 0.8, 2, int(t * 8))
+        if hit(t, 1.6, dt):
+            pix.flash(g)
+            self.sparks.burst(fx, fy - 8, 30, 46, up=20, life=1.3, gravity=40)
+        if 1.6 < t < 1.9:
+            pix.shake(g, t, 1.5)
+        self.fx(g, dt)
+        if t > 2.0:
+            title(g, 42, 8, "薪尽火传", t, 2.0)
+        mx_lamp(g, 1.0, 1.3, t)
+        mx_burst(g, t, 1.6)

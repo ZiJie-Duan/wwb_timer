@@ -1,375 +1,513 @@
-"""开光点睛：新塑神像盖着红布，揭布之后，道士左手持宝镜引日光照像，右手朱笔依次点开眼、耳、鼻、口、心，
-每点一处那里就“活”过来；五官齐明，神像放光。一尊开完，红布再盖上，换下一尊。
+"""开光点睛：小道士站在脚踏上，左手举宝镜把窗外的日光引到神像上，右手朱笔依次点开眼、耳、鼻、口、心。
 
-依据：台南道教开光仪（浅野春二《台南道教の開光儀について》，《國學院雜誌》116 卷 2 号，2015；所引大渊忍尔
-所录咒文）：道士“左手持镜向神像，右手持笔点朱”，镜先取太阳精气；咒曰“神笔灵灵，太阳真精，点开禁忌，五官齐明……
-左眼看万里，右眼看分明，左耳听远近，右耳知吉凶，鼻中七窍，孔相通”，又“开神口，食天禄……开神心，神灵通”。
+依据：台南道教开光仪：道士“左手持镜向神像，右手持笔点朱”，镜先取太阳精气；咒文“神笔灵灵，太阳真精，
+点开禁忌，五官齐明……左眼看万里，右眼看分明，左耳听远近，右耳知吉凶，鼻中七窍，孔相通”，又“开神口，
+食天禄……开神心，神灵通”；神像开光前以红布覆盖。（浅野春二《台南道教の開光儀について》引大渊忍尔所录咒文）
+
+舞台（侧视的小殿）：左上一扇棂花窗，日光（虚线）斜照进来；右边莲台上一尊正面坐像（冠、长耳、交领袍、拢手），
+两种相轮换：老君相（长须）、灵官相（眉心竖目）。小道士站在脚踏上，左手宝镜、右手朱笔。左边竖幅写当句咒文，
+右边竖牌“第几尊”。
+入场：红布盖着神像；小道士走来跳上脚踏，伸手一扯，红布滑落（震一下、扬尘），举起宝镜，日光入镜。
+持续：一轮 600 秒开一尊：先“神笔灵灵”镜光在冠顶游移；之后 7 处各 76 秒——镜光从上一处移到这一处，
+      朱笔伸过去“点”（朱点迸光、震一下、点阵顶上一闪），这里就“活”了：眼睛睁开会眨、眼珠会转，耳边闪光，
+      鼻翼，开口，胸前心光一明一暗。静候时镜面闪光、光里浮尘飘动、小道士点头、换手势。
+      7 处开完“五官齐明”，神像每隔几秒放一圈光。续：红布从上落下盖住，再揭开是下一尊，“第几尊”加一。
+中断：宝镜放下，镜光淡去，“暂歇”。恢复：宝镜举起，镜光重新照到当前部位。
+圆满：朱笔飞快点完剩下的部位，神像反白一闪、光圈层层涌出，“五官齐明”“开光”。
 """
 from __future__ import annotations
 
 import math
 
-from ..engine.anim import blink, clamp, ease_in, ease_in_out, ease_out, ease_out_back, lerp, noise, rand, span
+from ..engine import pix
+from ..engine.anim import ease_in, ease_in_out, ease_out, ease_out_back, lerp, span
+from ..engine.chars import Part, daoshi, figure
 from ..engine.cn import cn_num
-from ..engine.fx import typewriter
 from ..engine.gfx import Gfx
 from ..engine.scene import Ritual, register
-from .r2_common import brush, rays
+from .r2_common import (ARM_C, act, arm_spr, brush, floor, hold_brush, mx_ring, ring, star4, vbox)
 
-SX = 78                      # 神像中轴
-MIRROR = (30, 16)
-PRELUDE = 20.0
-STEP = 62.0
-RENEW = 5.0
-# 部位：(咒句, 目标点)
+FLOOR = 58
+DAO_X = 71
+STAND = FLOOR - 8                  # 脚踏面
+SX = 98                            # 神像中线
+WIN = (26, 4, 44, 18)              # 窗
+SUN_IN = (40, 16)                  # 日光从窗里照进来的点
+INTRO = 16.0
+SLOT = 76.0
+RENEW = 6.0
+
+# 部位：(咒句, 目标点, 名)
 PARTS = [
-    ("左眼看万里", (73, 26)),
-    ("右眼看分明", (83, 26)),
-    ("左耳听远近", (66, 30)),
-    ("右耳知吉凶", (90, 30)),
-    ("鼻中七窍", (78, 31)),
-    ("开神口", (78, 36)),
-    ("开神心", (78, 54)),
+    ("左眼看万里", (94, 21), "eyeL"),
+    ("右眼看分明", (102, 21), "eyeR"),
+    ("左耳听远近", (88, 23), "earL"),
+    ("右耳知吉凶", (108, 23), "earR"),
+    ("鼻中七窍", (98, 24), "nose"),
+    ("开神口", (98, 27), "mouth"),
+    ("开神心", (98, 37), "heart"),
 ]
-FINAL = "五官齐明"
+NP = len(PARTS)
+DONE = INTRO + NP * SLOT
+CROWN = (98, 10)
+
+
+# ---------------------------------------------------------------- 道具
+
+def _statue_base(kind: int):
+    """神像（不含五官）34×50，左上角 (SX-17, 6)：莲花冠、长耳、脸、交领袍、拢手、莲台。kind 0 老君（长须）/ 1 灵官（竖目）"""
+    p = Part(34, 50)
+    c = 17
+    # 莲台
+    p.shape("rectangle", (3, 45, 30, 49), fill=1)
+    p.d.line((4, 47, 29, 47), fill=0)
+    for x in range(5, 29, 4):
+        p.px(x, 46, 0), p.px(x + 2, 48, 0)
+    for x in range(2, 31, 5):                                  # 莲瓣
+        p.shape("chord", (x - 1, 40, x + 5, 48), 180, 360, fill=1)
+        p.d.arc((x, 41, x + 4, 47), 200, 340, fill=0)
+    # 袍身（坐像，金身：亮面 + 黑线衣褶，右侧背光网点）
+    p.shape("polygon", [(c - 10, 25), (c + 10, 25), (c + 14, 42), (c - 14, 42)], fill=1)
+    p.d.line((c - 6, 25, c, 32), fill=0)                       # 交领
+    p.d.line((c + 6, 25, c, 32), fill=0)
+    p.d.line((c - 9, 29, c - 12, 41), fill=0)                  # 袖褶
+    p.d.line((c + 9, 29, c + 12, 41), fill=0)
+    p.d.line((c - 6, 36, c - 8, 41), fill=0)
+    p.d.line((c + 6, 36, c + 8, 41), fill=0)
+    p.dither([(c + 10, 27), (c + 14, 42), (c + 9, 42)], 0.5, 0)
+    p.d.rectangle((c - 4, 34, c + 4, 39), fill=0)              # 拢手（袖口相交）
+    p.d.rectangle((c - 3, 35, c + 3, 38), fill=1)
+    p.d.line((c, 35, c, 38), fill=0)
+    p.d.line((c - 13, 41, c + 13, 41), fill=0)
+    # 头
+    p.shape("rectangle", (c - 2, 23, c + 2, 25), fill=1)       # 颈
+    p.shape("ellipse", (c - 8, 7, c + 8, 24), fill=1)          # 脸
+    for s in (-1, 1):                                          # 长耳
+        x0 = c + s * 9
+        p.shape("polygon", [(x0, 11), (x0 + s * 2, 12), (x0 + s * 2, 19), (x0 + s, 21), (x0, 19)], fill=1)
+        p.px(x0 + s, 14, 0), p.px(x0 + s, 15, 0)
+    # 冠
+    p.shape("polygon", [(c - 6, 8), (c + 6, 8), (c + 5, 1), (c - 5, 1)], fill=1)
+    p.d.line((c - 5, 6, c + 5, 6), fill=0)
+    p.d.rectangle((c - 1, 2, c + 1, 4), fill=0)
+    p.px(c, 3, 1)
+    for s in (-1, 1):
+        p.shape("polygon", [(c + s * 6, 6), (c + s * 9, 3), (c + s * 9, 6)], fill=1)    # 冠翅
+    # 眉
+    if kind == 0:
+        p.d.line((c - 6, 13, c - 3, 12), fill=0)
+        p.d.line((c + 3, 12, c + 6, 13), fill=0)
+        p.d.line((c - 3, 21, c - 4, 23), fill=0)              # 唇须
+        p.d.line((c + 3, 21, c + 4, 23), fill=0)
+        p.shape("polygon", [(c - 3, 24), (c + 3, 24), (c + 1, 32), (c, 34), (c - 1, 32)], fill=1)   # 长须
+        p.d.polygon([(c - 3, 24), (c + 3, 24), (c + 1, 32), (c, 34), (c - 1, 32)], outline=0)
+        p.d.line((c, 26, c, 31), fill=0)
+    else:
+        p.d.line((c - 6, 12, c - 2, 14), fill=0)              # 怒眉
+        p.d.line((c + 2, 14, c + 6, 12), fill=0)
+        p.d.line((c - 4, 22, c - 1, 21), fill=0)              # 八字胡
+        p.d.line((c + 1, 21, c + 4, 22), fill=0)
+    return p.sprite()
+
+
+def _cloth(w: int = 36, h: int = 46):
+    """红布：顶上圆、往下垂出褶，布面网点（红色），几道亮褶线，下摆一圈流苏"""
+    p = Part(w, h)
+    p.shape("polygon", [(8, 2), (w - 9, 2), (w - 3, 10), (w - 1, h - 3), (0, h - 3), (2, 10)], fill=1)
+    p.shape("ellipse", (6, 0, w - 7, 10), fill=1)
+    p.dither((1, 3, w - 2, h - 4), 0.5, 0)
+    for x in (8, 14, 21, 28):
+        p.d.line((x, 8, x + (x - w / 2) * 0.2, h - 4), fill=1)
+    for x in range(1, w - 1, 2):
+        p.px(x, h - 2), p.px(x, h - 1) if x % 4 == 1 else None
+    return p.sprite()
+
+
+def _mirror():
+    """宝镜 8×10：圆镜（亮边、暗镜面、一道斜高光）+ 镜柄"""
+    p = Part(8, 10)
+    p.shape("ellipse", (0, 0, 7, 7), fill=1)
+    p.d.ellipse((1, 1, 6, 6), fill=0)
+    p.d.line((2, 4, 4, 2), fill=1)
+    p.px(5, 5, 1)
+    p.shape("rectangle", (3, 8, 4, 9), fill=1)
+    return p.sprite()
+
+
+def _window():
+    """棂花窗 19×15：外框 + 方格棂条"""
+    p = Part(19, 15)
+    p.shape("rectangle", (0, 0, 18, 14), fill=1)
+    p.d.rectangle((2, 2, 16, 12), fill=0)
+    for x in (6, 10, 14):
+        p.d.line((x, 2, x, 12), fill=1)
+    for y in (5, 9):
+        p.d.line((2, y, 16, y), fill=1)
+    return p.sprite()
+
+
+def _stool():
+    p = Part(22, 8)
+    p.shape("rectangle", (0, 0, 21, 2), fill=1)
+    p.d.line((1, 1, 20, 1), fill=0)
+    for x in (2, 18):
+        p.shape("rectangle", (x, 3, x + 1, 7), fill=1)
+    p.shape("line", (3, 5, 18, 5), fill=1)
+    return p.sprite()
+
+
+_P: dict = {}
+
+
+def prop(name):
+    if name not in _P:
+        _P[name] = {"s0": lambda: _statue_base(0), "s1": lambda: _statue_base(1), "cloth": _cloth,
+                    "mirror": _mirror, "window": _window, "stool": _stool}[name]()
+    return _P[name]
 
 
 @register
 class KaiGuang(Ritual):
     id = "r2.kaiguang"
     name = "开光点睛"
-    desc = "揭去红布，宝镜引日光照像，朱笔依次点开神像的眼、耳、鼻、口、心，五官齐明时神像放光"
-    T = {"enter": 4.5, "interrupt": 1.5, "resume": 1.6, "complete": 5.5}
-    CYCLE = PRELUDE + STEP * len(PARTS) + 146.0   # 600 秒
+    desc = "小道士揭去红布，左手宝镜引日光照像，右手朱笔依次点开神像的眼、耳、鼻、口、心，五官齐明时神像放光"
+    T = {"enter": 6.0, "interrupt": 1.5, "resume": 1.8, "complete": 5.5}
+    CYCLE = 600.0
 
     def setup(self):
-        self.s = self.rng.randrange(1000)
-        self.variant0 = self.rng.randrange(2)
+        self.sparks = pix.Sparks(self.seed)
+        self.puffs = pix.Puffs(self.seed + 1)
+        self.last_t = None
+
+    def _dt(self, t):
+        dt = 1 / 30 if self.last_t is None or t < self.last_t else min(t - self.last_t, 0.2)
+        self.last_t = t
+        return dt
 
     # ------------------------------------------------------------ 状态
 
-    def stage(self, u: float):
-        """→ (已点开几处, 当前处序号 or -1, 本处经过秒数)"""
-        if u < PRELUDE:
-            return 0, -1, u
-        i = int((u - PRELUDE) // STEP)
-        k = (u - PRELUDE) - i * STEP
-        if i >= len(PARTS):
-            return len(PARTS), -1, u - PRELUDE - len(PARTS) * STEP
-        return i + (k >= 2.4), i, k
+    def state(self, u: float):
+        """→ (已点开几处, 当前处 or -1, 本处秒数, 镜光照的点)"""
+        if u < INTRO:
+            a = u * 0.9
+            return 0, -1, u, (CROWN[0] + math.sin(a) * 5, CROWN[1] + math.cos(a * 1.3) * 2)
+        i = int((u - INTRO) // SLOT)
+        if i >= NP:
+            return NP, -1, u - DONE, (SX, 22 + math.sin(u * 0.7) * 6)
+        k = u - INTRO - i * SLOT
+        prev = PARTS[i - 1][1] if i else CROWN
+        q = ease_in_out(span(k, 0, 3.0))
+        tgt = PARTS[i][1]
+        aim = (lerp(prev[0], tgt[0], q), lerp(prev[1], tgt[1], q))
+        if k > 8:
+            aim = (tgt[0] + math.sin(k * 0.8) * 1.5, tgt[1] + math.cos(k * 1.1) * 1.0)
+        return i + (1 if k >= 4.6 else 0), i, k, aim
 
     # ------------------------------------------------------------ 画面零件
 
-    def statue(self, g: Gfx, opened: int, t: float, variant: int, glow: float = 0.0, open_k: float = 1.0):
-        """opened = 已点开几处（按 PARTS 顺序），open_k = 最后一处睁开的进度"""
-        cx = SX
+    def room(self, g: Gfx, t: float):
+        floor(g, FLOOR)
+        g.d.line((0, FLOOR - 3, 127, FLOOR - 3), fill=1)        # 踢脚
+        pix.blit(g, prop("window"), WIN[0], WIN[1])
+        for x in (19, 121):                                      # 柱
+            g.d.line((x, 0, x, FLOOR - 4), fill=1)
+        pix.blit(g, prop("stool"), DAO_X - 10, STAND)
 
-        def ok(i):
-            return i < opened
-
-        def k_of(i):
-            return open_k if i == opened - 1 else 1.0
-
-        # 身：袍服与交领
-        robe = [(cx - 12, 44), (cx + 12, 44), (cx + 26, 52), (cx + 30, 64), (cx - 30, 64), (cx - 26, 52)]
-        g.d.polygon(robe, fill=0)
-        g.shade_poly(robe, 0.25)
-        g.d.line((cx - 10, 44, cx, 58), fill=0, width=3)
-        g.d.line((cx + 10, 44, cx, 58), fill=0, width=3)
-        g.d.line((cx - 10, 44, cx, 58), fill=1)
-        g.d.line((cx + 10, 44, cx, 58), fill=1)
-        # 头：耳（长垂）、脸
-        for side, i in ((-1, 2), (1, 3)):
-            ex = cx + side * 11
-            g.d.ellipse((ex - 3, 24, ex + 3, 37), fill=0, outline=1)
-            if ok(i):
-                g.d.line((ex, 27, ex, 33), fill=1)
-                if blink(t + i, 2.3, 0.15):
-                    g.px(ex + side * 4, 26)
-        g.d.ellipse((cx - 10, 15, cx + 10, 43), fill=0, outline=1)
-        # 冠
-        g.d.polygon([(cx - 10, 18), (cx - 8, 8), (cx - 3, 12), (cx, 5), (cx + 3, 12), (cx + 8, 8), (cx + 10, 18)],
-                    fill=0, outline=1)
-        g.d.line((cx - 10, 18, cx + 10, 18), fill=1)
-        g.d.ellipse((cx - 2, 11, cx + 2, 15), fill=1)
-        g.d.line((cx - 13, 19, cx - 10, 17), fill=1)  # 冠带
-        g.d.line((cx + 13, 19, cx + 10, 17), fill=1)
-        # 眉
-        g.d.line((cx - 8, 22, cx - 3, 23), fill=1)
-        g.d.line((cx + 3, 23, cx + 8, 22), fill=1)
-        # 眼
-        for side, i in ((-1, 0), (1, 1)):
-            ex = cx + side * 5
-            if ok(i):
-                k = k_of(i)
-                h = 0.5 + 1.0 * k
-                g.d.polygon([(ex - 4, 26), (ex, 26 - h * 1.5), (ex + 4, 26), (ex, 26 + h)], fill=0, outline=1)
-                if k > 0.5:  # 眼珠，偶尔转一下
-                    look = 1 if noise(t * 0.4, i + self.s) > 0.7 else 0
-                    g.d.rectangle((ex - 1 + look, 25, ex + look, 26), fill=1)
+    def statue(self, g: Gfx, t: float, kind: int, opened: set, glow: float = 0.0):
+        pix.blit(g, prop("s1" if kind else "s0"), SX - 17, 6)
+        c, y0 = SX, 6
+        look = int(math.sin(t * 0.37) * 1.4) if int(t) % 9 < 3 else 0
+        blink = (t % 4.3) < 0.15
+        for name, ex in (("eyeL", c - 4), ("eyeR", c + 4)):
+            if name in opened and not blink:
+                g.d.rectangle((ex - 2, y0 + 14, ex + 1, y0 + 16), fill=0)
+                g.px(ex - 1 + look + (1 if look < 0 else 0), y0 + 15, 1)
             else:
-                g.d.line((ex - 3, 26, ex + 3, 26), fill=1)
-                g.d.line((ex - 2, 27, ex + 2, 27), fill=1)
-        # 鼻
-        g.d.line((cx, 27, cx - 1, 32), fill=1)
-        g.d.line((cx - 2, 32, cx + 2, 32), fill=1)
-        if ok(4):
-            g.px(cx - 2, 31)
-            g.px(cx + 2, 31)
-        # 口
-        if ok(5):
-            g.d.line((cx - 3, 36, cx + 3, 36), fill=1)
-            g.d.line((cx - 2, 37, cx + 2, 37), fill=1)
-            g.px(cx - 4, 35)
-            g.px(cx + 4, 35)
+                g.d.line((ex - 2, y0 + 15, ex + 1, y0 + 15), fill=0)
+                g.px(ex - 2, y0 + 14, 0) if name in opened else None
+        if kind == 1:  # 灵官眉心竖目：眼睛点开时一起睁
+            if "eyeL" in opened and not blink:
+                g.d.rectangle((c - 1, y0 + 9, c + 1, y0 + 12), fill=0)
+                g.px(c, y0 + 10, 1)
+            else:
+                g.d.line((c, y0 + 9, c, y0 + 12), fill=0)
+        g.d.line((c, y0 + 16, c, y0 + 18), fill=0)                       # 鼻梁
+        if "nose" in opened:
+            g.px(c - 1, y0 + 18, 0), g.px(c + 1, y0 + 18, 0)
+            g.px(c - 2, y0 + 17, 0), g.px(c + 2, y0 + 17, 0)
+        if "mouth" in opened:
+            talk = (t % 2.6) < 0.3
+            g.d.rectangle((c - 2, y0 + 20, c + 2, y0 + 21 + talk), fill=0)
+            g.d.line((c - 1, y0 + 20, c + 1, y0 + 20), fill=1)
         else:
-            g.d.line((cx - 2, 36, cx + 2, 36), fill=1)
-        # 须（老君相：三绺长须）
-        if variant == 0:
-            for dx in (-4, 0, 4):
-                pts = [(cx + dx, 39), (cx + dx * 1.2 + math.sin(t + dx) * 0.6, 45), (cx + dx * 0.9, 51)]
-                g.d.line(pts, fill=1)
-        else:  # 灵官相：眉心竖目（开心光时一起亮）
-            g.d.line((cx, 19, cx, 22), fill=1 if ok(6) else 0)
-            if not ok(6):
-                g.px(cx, 21)
-        # 心
-        if ok(6):
-            r = 2 + (1 if blink(t, 1.2, 0.5) else 0)
-            g.d.ellipse((cx - r, 54 - r, cx + r, 54 + r), fill=1)
+            g.d.line((c - 2, y0 + 21, c + 2, y0 + 21), fill=0)
+        for name, ex, s in (("earL", c - 10, -1), ("earR", c + 10, 1)):
+            if name in opened and (t * 0.7 + (s > 0) * 0.5) % 3 < 0.25:
+                for j in range(3):
+                    g.px(ex + s * (3 + j), y0 + 15 - j * 2)
+        if "heart" in opened:
+            on = (t % 2.0) < 1.2
+            g.d.ellipse((c - 3, y0 + 28, c + 3, y0 + 34), fill=0)
+            g.d.ellipse((c - 2, y0 + 29, c + 2, y0 + 33), outline=1, fill=1 if on else 0)
+            if on:
+                g.px(c, y0 + 31, 0)
         if glow > 0:
-            rays(g, cx, 26, 18, 18 + glow * 10, 16, phase=t * 0.2, sy=1.0)
+            for i in range(10):
+                a = i * math.pi / 5 + t * 0.4
+                r0 = 22
+                r1 = r0 + 2 + 3 * glow * (0.5 + 0.5 * math.sin(t * 4 + i))
+                x0, y_0 = c + math.cos(a) * r0 * 0.8, 28 + math.sin(a) * r0
+                if x0 > DAO_X + 10:
+                    g.d.line((x0, y_0, c + math.cos(a) * r1 * 0.8, 28 + math.sin(a) * r1), fill=1)
 
-    def mirror(self, g: Gfx, face: float = 1.0, dy: float = 0.0):
-        """宝镜：圆镜 + 握柄的手；face<1 时镜面侧转（收光）"""
-        x, y = MIRROR[0], MIRROR[1] + dy
-        rx = 7 * max(0.15, face)
-        g.d.ellipse((x - rx, y - 7, x + rx, y + 7), fill=0, outline=1)
-        if face > 0.5:
-            g.d.ellipse((x - rx + 2, y - 5, x + rx - 2, y + 5), outline=1)
-            g.d.line((x - 2, y - 3, x + 1, y - 4), fill=1)  # 镜面高光
-        g.d.line((x, y + 7, x - 2, y + 15), fill=1)          # 柄
-        g.d.line((x + 1, y + 7, x - 1, y + 15), fill=1)
-        # 握柄的手 + 袖（往左下出画）
-        g.d.ellipse((x - 5, y + 13, x + 2, y + 19), fill=0, outline=1)
-        pts = [(x - 5, y + 16), (x + 1, y + 19), (x - 6, y + 48), (x - 24, y + 48)]
-        g.d.polygon(pts, fill=0)
-        g.shade_poly(pts, 0.25)
+    def cloth(self, g: Gfx, k: float = 0.0, down: float = 1.0):
+        """红布：k = 往右滑落的进度；down = 从上面落下盖住的进度"""
+        spr = prop("cloth")
+        x = SX - 18 + ease_in(k) * 40
+        y = 4 + ease_in(k) * 20 - (1 - down) * 52
+        if k > 0.5:
+            spr = pix.stretch(spr, 1.0, max(0.3, 1.5 - k))
+            y = FLOOR - spr.h + 1 if k >= 0.99 else y
+        pix.blit(g, spr, x, y)
 
-    def sunbeam(self, g: Gfx, t: float, a: float = 1.0):
-        """日光从上方照进镜子"""
-        x, y = MIRROR
-        if a <= 0:
+    def dao(self, g: Gfx, t: float, aim, tip=None, mirror: float = 1.0, x: float = DAO_X, face="normal", head="up"):
+        """小道士：后手把宝镜举过头顶（mirror 0..1 举起的程度）、前手朱笔（tip 有就伸过去点，否则平端着）。返回镜心"""
+        mang = lerp(0.5, -1.45, mirror)
+        marm = arm_spr(mang, lerp(10, 15, mirror))
+        mh = {}
+
+        def behind(gg, at):
+            at(-2 - ARM_C, -15 - ARM_C, marm)
+            mh["p"] = (x - 2 - ARM_C + marm.hand[0], STAND - 15 - ARM_C + marm.hand[1])
+
+        if tip is not None:
+            hand = (min(tip[0] - 9, x + 14), max(tip[1] + 6, STAND - 30))
+            h = act(g, x, STAND, t, hand_to=hand, face=face, head=head, behind=behind)["hand"]
+            hold_brush(g, h, tip, past=2)
+        else:
+            h = act(g, x, STAND, t, hand_to=(x + 9, STAND - 11), face=face, head=head, behind=behind)["hand"]
+            hold_brush(g, h, (h[0] + 6, h[1] - 3), past=4)
+        mx_, my = mh["p"]
+        spr = prop("mirror")
+        pix.blit(g, spr, mx_ - 3, my - 9)
+        return mx_ + 0.5, my - 5.5
+
+    def beams(self, g: Gfx, t: float, mc, aim, k: float = 1.0):
+        """日光：窗 → 镜（虚线）→ 照到的部位（虚线 + 光斑），光里浮尘"""
+        if k <= 0:
             return
-        for j in range(0, y - 8, 3):
-            yy = (j + int(t * 20)) % (y - 8)
-            g.px(x - 8 + yy * 0.3, yy)
-            g.px(x - 5 + yy * 0.3, yy + 1)
+        ph = int(t * 10)
+        pix.dotted(g, SUN_IN[0], SUN_IN[1], mc[0], mc[1], step=3, phase=ph)
+        ex, ey = lerp(mc[0], aim[0], k), lerp(mc[1], aim[1], k)
+        pix.dotted(g, mc[0], mc[1], ex, ey, step=2, phase=ph)
+        if k >= 1:
+            star4(g, aim[0], aim[1], big=int(t * 5) % 2 == 0)
+        for j in range(3):  # 浮尘
+            q = (t * 0.15 + j * 0.33) % 1
+            g.px(lerp(SUN_IN[0], mc[0], q) + math.sin(t + j) * 2, lerp(SUN_IN[1], mc[1], q) + 2)
 
-    def beam(self, g: Gfx, tx: float, ty: float, t: float, a: float = 1.0):
-        """镜光照向神像某处：流动的点线 + 落点光斑"""
-        x, y = MIRROR
-        if a <= 0.05:
-            return
-        d = math.hypot(tx - x, ty - y)
-        n = int(d / 3)
-        for j in range(n):
-            if (j + int(t * 12)) % 3 == 0 or rand(j, 4) > a:
-                continue
-            k = j / n
-            g.px(lerp(x + 7, tx, k), lerp(y, ty, k))
-        r = 3 + math.sin(t * 6)
-        for i in range(8):
-            ang = i / 8 * 2 * math.pi + t
-            g.px(tx + math.cos(ang) * r, ty + math.sin(ang) * r)
-
-    def texts(self, g: Gfx, s: str, n: int, a: float = 1.0, right: str | None = None):
-        g.vtext(2, 2, s[:int(round(a * len(s)))])
-        r = right if right is not None else f"第{cn_num(n)}尊"
-        g.vtext(115, 2, r[:int(round(a * len(r)))])
-
-    def cloth(self, g: Gfx, p: float, t: float):
-        """红布：p=1 全盖，0 揭开（往右滑落）"""
-        if p <= 0:
-            return
-        dx = (1 - p) * 60
-        dy = (1 - p) * 20
-        cx = SX + dx
-        pts = [(cx - 4, 4 + dy), (cx + 4, 4 + dy), (cx + 16, 20 + dy), (cx + 30, 64), (cx - 30, 64), (cx - 16, 20 + dy)]
-        g.d.polygon(pts, fill=0)
-        g.shade_poly(pts, 0.5)
-        for j in range(3):  # 褶
-            g.d.line((cx - 2 + j * 2, 8 + dy, cx - 14 + j * 14, 62), fill=0)
-
-    def mx(self, g: Gfx, opened: int, t: float, dot: bool = False):
-        for side, i in ((0, 0), (5, 1)):
-            if i < opened:
-                g.mx[2, side + 1] = g.mx[4, side + 1] = True
-                g.mx[3, side] = g.mx[3, side + 2] = True
-                g.mx[3, side + 1] = blink(t + i, 1.7, 0.85)
-            else:
-                g.mx[3, side:side + 3] = True
-        if opened > 5:
-            g.mx[6, 2:6] = True
-        if dot:
-            g.mx[0, 3:5] = True
-            g.mx_level = 5
-
-    # ------------------------------------------------------------ 主画面
+    def opened_set(self, n: int):
+        return {PARTS[j][2] for j in range(min(n, NP))}
 
     def variant(self, e: float) -> int:
-        return (self.variant0 + int(e // self.CYCLE)) % 2
+        return int(e // self.CYCLE) % 2
 
-    def frame(self, g: Gfx, t: float, u: float, e: float, beam_a: float = 1.0, brush_on: bool = True):
-        opened, cur, k = self.stage(u)
-        var = self.variant(e)
-        open_k = 1.0
-        if cur >= 0:
-            open_k = span(k, 2.4, 3.4)
-        final = u >= PRELUDE + STEP * len(PARTS)
-        glow = 0.0
-        if final:
-            ff = (u - PRELUDE - STEP * len(PARTS)) % 5.0
-            glow = 1 - span(ff, 0, 1.5)
-        self.statue(g, opened, t, var, glow=glow, open_k=open_k)
-        self.sunbeam(g, t, beam_a)
-        self.mirror(g)
-        # 镜光：从上一处扫到这一处
-        if cur >= 0:
-            prev = PARTS[cur - 1][1] if cur > 0 else (SX, 10)
-            tgt = PARTS[cur][1]
-            p = ease_in_out(span(k, 0, 1.4))
-            self.beam(g, lerp(prev[0], tgt[0], p), lerp(prev[1], tgt[1], p), t, beam_a)
-            text = PARTS[cur][0]
-            ta = span(k, 0, 1.2)
-        elif final:
-            self.beam(g, SX, 26, t, beam_a)
-            text, ta = FINAL, span(u - PRELUDE - STEP * len(PARTS), 0, 1.2)
-        else:
-            self.beam(g, SX, 10 + 2 * math.sin(t), t, beam_a * span(u, 2, 4))
-            text, ta = "神笔灵灵", span(u, 0, 2.0)
-        dot = False
-        if cur >= 0 and brush_on and 1.2 < k < 3.4:  # 朱笔从右下来，点一下
-            tx, ty = PARTS[cur][1]
-            if k < 2.0:
-                p = ease_out(span(k, 1.2, 2.0))
-                bx, by = lerp(126, tx + 3, p), lerp(70, ty + 3, p)
-            elif k < 2.4:
-                q = span(k, 2.0, 2.4)
-                bx, by = tx + 3 * (1 - q), ty + 3 * (1 - q)
+    def label(self, g: Gfx, s: str):
+        vbox(g, 7, 22, s)
+
+    def counter(self, g: Gfx, e: float, s: str | None = None):
+        n = int(e // self.CYCLE) + 1
+        vbox(g, 122, 10, s or ("第" + (cn_num(n) if n < 100 else str(n)) + "尊"))
+
+    def mx(self, g: Gfx, t: float, opened: set, flash: bool = False):
+        blink = (t % 4.3) < 0.15
+        for name, x0 in (("eyeL", 1), ("eyeR", 5)):
+            if name in opened and not blink:
+                g.mx[2:4, x0:x0 + 2] = True
             else:
-                p = ease_in(span(k, 2.4, 3.4))
-                bx, by = lerp(tx, 130, p), lerp(ty, 74, p)
-            brush(g, bx, by, 0.75, 34)
-            if 2.3 < k < 2.7:  # 点下去的一瞬：朱点迸光
-                rays(g, tx, ty, 3, 7, 8, phase=0.3)
-                dot = True
-        self.texts(g, text, int(e // self.CYCLE) + 1, a=1.0)
-        if ta < 1:
-            g.d.rectangle((0, 2 + int(ta * len(text)) * 12, 14, 63), fill=0)
-        self.mx(g, opened, t, dot)
-        if glow > 0.5:
-            g.mx_level = 3
+                g.mx[3, x0:x0 + 2] = True
+        if "mouth" in opened:
+            g.mx[6, 3:5] = True
+        if "nose" in opened:
+            g.mx[4, 3] = g.mx[4, 4] = True
+        if flash:
+            g.mx[0, 3:5] = True
+            g.mx_level = 6
 
     # ------------------------------------------------------------ 阶段
 
     def enter(self, g: Gfx, t: float):
-        self.statue(g, 0, t, self.variant(0))
-        self.cloth(g, 1 - ease_in_out(span(t, 1.0, 2.0)), t)
-        if t > 1.9:  # 宝镜从左下举起
-            p = ease_out_back(span(t, 1.9, 2.8))
-            self.mirror(g, dy=(1 - p) * 40)
-        if t > 2.8:
-            self.sunbeam(g, t, span(t, 2.8, 3.4))
-            self.beam(g, SX, 10 + 2 * math.sin(t), t, span(t, 3.2, 4.0))
-        self.texts(g, "神笔灵灵", 1, a=span(t, 2.6, 4.5))
-        self.mx(g, 0, t)
-        if t < 1.2:
-            g.mx[:, :] = False
-            g.mx[1:8, 1:7] = True  # 红布
-        g.mx_level = 3 if 1.0 < t < 1.3 else 1
+        dt = self._dt(t)
+        self.room(g, t)
+        self.statue(g, t, 0, set())
+        pull = span(t, 2.9, 3.9)
+        self.cloth(g, pull)
+        if 3.9 <= t < 3.9 + dt:
+            pix.shake(g, t, 1.2)
+            for j in range(4):
+                self.puffs.emit(SX + 6 + j * 6, FLOOR - 2, vx=8, vy=-4, life=0.8, rmax=1.8)
+        if t < 2.0:
+            daoshi(g, lerp(-12, DAO_X - 16, ease_out(span(t, 0, 2.0))), FLOOR, "walk", t)
+        elif t < 2.5:
+            q = span(t, 2.0, 2.5)
+            daoshi(g, lerp(DAO_X - 16, DAO_X, q), lerp(FLOOR, STAND, q) - math.sin(q * math.pi) * 7, "raise", t)
+        elif t < 3.9:  # 伸手扯红布
+            q = span(t, 2.5, 2.9)
+            reach = (lerp(DAO_X + 8, SX - 14, q), lerp(STAND - 14, 20, q)) if t < 2.9 else \
+                (lerp(SX - 14, DAO_X + 12, ease_out(span(t, 2.9, 3.3))), lerp(20, STAND - 12, span(t, 2.9, 3.3)))
+            act(g, DAO_X, STAND, t, hand_to=reach, face="wow" if t > 3.0 else "normal")
+        else:
+            m = ease_out_back(span(t, 4.2, 5.0))
+            mc = self.dao(g, t, CROWN, None, mirror=m)
+            self.beams(g, t, mc, CROWN, k=span(t, 5.0, 5.8))
+        self.puffs.step(dt)
+        self.puffs.draw(g)
+        if t > 5.0:
+            self.label(g, "神笔灵灵")
+        self.counter(g, 0.0)
+        self.mx(g, t, set())
 
     def hold(self, g: Gfx, t: float, e: float):
+        dt = self._dt(t)
         u = e % self.CYCLE
         if e >= self.CYCLE and u < RENEW:
-            self._renew(g, t, u, e)
-            return
-        self.frame(g, t, u, e)
-
-    def _renew(self, g: Gfx, t: float, u: float, e: float):
-        """红布盖上这一尊，再揭开，下一尊"""
-        n = int(e // self.CYCLE) + 1
-        if u < 2.5:
-            self.statue(g, len(PARTS), t, self.variant(e - u - 1), glow=1 - span(u, 0, 1))
-            self.cloth(g, ease_out(span(u, 0.6, 1.6)), t)
-            self.texts(g, FINAL, n - 1)
+            return self.renew(g, t, e, u, dt)
+        kind = self.variant(e)
+        n, i, k, aim = self.state(u)
+        opened = self.opened_set(n)
+        self.room(g, t)
+        glow = 1.0 if n >= NP else 0.0
+        self.statue(g, t, kind, opened, glow=glow)
+        tip = None
+        face = "normal"
+        if i >= 0:
+            tgt = PARTS[i][1]
+            if 3.0 <= k < 4.6:  # 朱笔伸过去
+                q = ease_in_out(span(k, 3.0, 4.2))
+                tip = (lerp(DAO_X + 11, tgt[0], q), lerp(STAND - 21, tgt[1], q))
+                if k > 4.2:
+                    tip = (tgt[0] - (1 if k > 4.5 else 0), tgt[1])
+            elif 4.6 <= k < 5.4:  # 点！收笔
+                tip = (lerp(tgt[0], DAO_X + 11, ease_in(span(k, 4.8, 5.4))), lerp(tgt[1], STAND - 21, span(k, 4.8, 5.4)))
+            if 4.6 <= k < 4.6 + dt:
+                self.sparks.burst(tgt[0], tgt[1], 12, 26, life=0.5, gravity=30)
+                pix.shake(g, t, 0.8)
+            if 4.6 <= k < 5.0:
+                ring(g, tgt[0], tgt[1], (k - 4.6) * 18, step=2)
+            face = "happy" if 5.4 < k < 7.0 else ("wow" if 4.6 <= k < 5.0 else "normal")
+        head = "bow" if i >= 0 and 30.0 < k < 31.4 else "up"
+        mirror = 1.0 - (0.25 if i >= 0 and 50 < k < 52 else 0.0) * math.sin(span(k, 50, 52) * math.pi)
+        mc = self.dao(g, t, aim, tip, mirror=mirror, face=face, head=head)
+        self.beams(g, t, mc, aim)
+        if int(t * 10) % 37 == 0:  # 镜面闪光
+            star4(g, mc[0] - 2, mc[1] - 2, big=True)
+        if n >= NP:
+            r = ((u - DONE) % 6.0) * 10
+            if r < 34:
+                ring(g, SX, 28, 20 + r, step=3, sy=1.0)
+        self.sparks.step(dt)
+        self.sparks.draw(g)
+        if i >= 0:
+            self.label(g, PARTS[i][0])
         else:
-            self.statue(g, 0, t, self.variant(e))
-            self.cloth(g, 1 - ease_in_out(span(u, 3.0, 4.2)), t)
-            self.texts(g, "神笔灵灵", n, a=span(u, 3.6, 5.0))
-        self.mirror(g)
-        self.sunbeam(g, t)
-        self.mx(g, len(PARTS) if u < 1.6 else 0, t)
+            self.label(g, "五官齐明" if n >= NP else "神笔灵灵")
+        self.counter(g, e)
+        self.mx(g, t, opened, flash=i >= 0 and 4.6 <= k < 5.0)
+
+    def renew(self, g: Gfx, t: float, e: float, u: float, dt: float):
+        """续：红布落下盖住这一尊 → 揭开是下一尊"""
+        self.room(g, t)
+        swapped = u >= 2.2
+        kind = self.variant(e if swapped else e - u - 1)
+        self.statue(g, t, kind, self.opened_set(NP) if not swapped else set())
+        if u < 3.0:
+            self.cloth(g, 0.0, down=ease_out(span(u, 0.4, 1.4)))
+        else:
+            self.cloth(g, span(u, 3.0, 4.0))
+        if 1.4 <= u < 1.4 + dt or 4.0 <= u < 4.0 + dt:
+            pix.shake(g, t, 1.0)
+            self.puffs.emit(SX, FLOOR - 3, vy=-3, life=0.8, rmax=2)
+        if 2.4 < u < 3.0:
+            act(g, DAO_X, STAND, t, hand_to=(SX - 14, 22))
+        elif u < 4.4:
+            mc = self.dao(g, t, CROWN, None, mirror=1 - span(u, 0, 0.5) if u < 2.4 else span(u, 3.4, 4.0))
+        else:
+            mc = self.dao(g, t, CROWN, None, mirror=1.0, head="bow" if u < 5.4 else "up")
+            self.beams(g, t, mc, CROWN, k=span(u, 4.4, 5.0))
+        self.puffs.step(dt)
+        self.puffs.draw(g)
+        self.label(g, "神笔灵灵")
+        self.counter(g, e if swapped else e - u - 1)
+        self.mx(g, t, set() if swapped else self.opened_set(NP))
 
     def interrupt(self, g: Gfx, t: float, e: float):
-        """宝镜翻转收光，朱笔放下"""
+        dt = self._dt(t)
         u = e % self.CYCLE
-        if e >= self.CYCLE and u < RENEW:
-            u = RENEW
-        opened, cur, k = self.stage(u)
-        f = ease_in_out(span(t, 0, 1.0))
-        self.statue(g, opened, t, self.variant(e))
-        self.sunbeam(g, t, 1 - f)
-        self.mirror(g, face=1 - f)
-        if cur >= 0:
-            self.beam(g, *PARTS[cur][1], t, 1 - f)
-        self.texts(g, "", int(e // self.CYCLE) + 1, right="暂歇")
-        self.mx(g, opened, t)
+        n, i, k, aim = self.state(u)
+        opened = self.opened_set(n)
+        self.room(g, t)
+        self.statue(g, t, self.variant(e), opened)
+        m = 1 - ease_in_out(span(t, 0.2, 1.0))
+        mc = self.dao(g, t, aim, None, mirror=m, face="sleep" if t > 1.1 else "normal")
+        self.beams(g, t, mc, aim, k=1 - span(t, 0.0, 0.5))
+        self.label(g, "暂歇")
+        self.counter(g, e)
+        self.mx(g, t, opened)
 
     def resume(self, g: Gfx, t: float, e: float):
+        dt = self._dt(t)
         u = e % self.CYCLE
-        if e >= self.CYCLE and u < RENEW:
-            u = RENEW
-        f = ease_in_out(span(t, 0.2, 1.2))
-        if t < 1.2:
-            opened, cur, k = self.stage(u)
-            self.statue(g, opened, t, self.variant(e))
-            self.mirror(g, face=f)
-            self.sunbeam(g, t, f)
-            if cur >= 0:
-                self.beam(g, *PARTS[cur][1], t, f)
-            self.texts(g, "", int(e // self.CYCLE) + 1)
-            self.mx(g, opened, t)
+        n, i, k, aim = self.state(u)
+        opened = self.opened_set(n)
+        self.room(g, t)
+        self.statue(g, t, self.variant(e), opened)
+        m = ease_out_back(span(t, 0.2, 0.9))
+        mc = self.dao(g, t, aim, None, mirror=m, face="wow" if t < 0.4 else "normal")
+        self.beams(g, t, mc, aim, k=span(t, 0.9, 1.6))
+        if 0.9 <= t < 0.9 + dt:
+            star4(g, mc[0], mc[1], big=True)
+        if i >= 0:
+            self.label(g, PARTS[i][0])
         else:
-            self.frame(g, t, u, e, brush_on=False)
+            self.label(g, "五官齐明" if n >= NP else "神笔灵灵")
+        self.counter(g, e)
+        self.mx(g, t, opened)
 
     def complete(self, g: Gfx, t: float, e: float):
-        """余下各处一气点完，五官齐明，神像放光"""
+        dt = self._dt(t)
         u = e % self.CYCLE
-        opened0, cur, k = self.stage(max(u, 0))
-        opened = min(len(PARTS), opened0 + int(span(t, 0, 1.6) * (len(PARTS) - opened0 + 0.99)))
-        glow = ease_out(span(t, 1.8, 2.6))
-        self.statue(g, opened, t, self.variant(e), glow=0)
-        if t < 1.7 and opened < len(PARTS):  # 朱笔快速点过剩下的
-            tx, ty = PARTS[opened][1]
-            brush(g, tx + 1, ty + 1, 0.75, 34)
-            rays(g, tx, ty, 3, 6, 8)
-        self.mirror(g)
-        self.sunbeam(g, t)
-        self.beam(g, SX, 26, t)
-        if t > 1.8:
-            k2 = t - 1.8
-            for j in range(3):
-                r = ((k2 * 24 + j * 12) % 36) + 14
-                rays(g, SX, 28, r, r + 4, 18, phase=j * 0.17)
-            if k2 < 0.12:
-                g.invert((50, 0, 108, 64))
-        if t < 1.8:
-            self.texts(g, "神笔灵灵", int(e // self.CYCLE) + 1)
-        else:
-            g.vtext(2, 2, FINAL[:int(clamp((t - 1.8) * 5, 0, 4))])
-            g.vtext(115, 2, "开光")
-        self.mx(g, opened, t, dot=t < 1.7)
-        if t > 1.8:
-            g.mx[0, :] = g.mx[7, :] = blink(t, 0.3)
-            g.mx_level = 1 + int(5 * (1 - span(t, 1.8, 3.5)))
+        n0 = self.state(u)[0]
+        fast = n0 + span(t, 0.0, 2.0) * (NP - n0)
+        n = int(fast)
+        opened = self.opened_set(n)
+        self.room(g, t)
+        self.statue(g, t, self.variant(e), opened, glow=1.0 if t > 2.2 else 0.0)
+        tip = None
+        aim = CROWN
+        if n < NP:
+            tgt = PARTS[n][1]
+            q = fast - n
+            tip = (lerp(DAO_X + 12, tgt[0], min(q * 2, 1)), lerp(STAND - 20, tgt[1], min(q * 2, 1)))
+            aim = tgt
+            if int(fast * 30) != int((fast - dt * (NP - n0) / 2.0) * 30) and q > 0.5 and int(t * 30) % 3 == 0:
+                self.sparks.burst(tgt[0], tgt[1], 3, 18, life=0.3)
+        mc = self.dao(g, t, aim, tip, face="happy" if t > 2.4 else "normal",
+                      head="bow" if 3.2 < t < 4.4 else "up")
+        self.beams(g, t, mc, aim if t < 2.2 else (SX, 20))
+        if 2.2 <= t < 2.2 + dt:
+            pix.flash(g)
+            self.sparks.burst(SX, 24, 30, 46, up=10, life=1.0, gravity=30)
+        if 2.2 < t < 2.5:
+            pix.shake(g, t, 1.4)
+        for r in range(3):
+            rr = (t - 2.2) * 24 - r * 10
+            if 0 < rr < 40:
+                ring(g, SX, 28, 18 + rr, step=2)
+        self.sparks.step(dt)
+        self.sparks.draw(g)
+        self.label(g, "五官齐明" if t > 2.2 else (PARTS[min(n, NP - 1)][0]))
+        self.counter(g, e, "开光" if t > 2.2 else None)
+        self.mx(g, t, opened, flash=t < 2.2 and int(t * 10) % 3 == 0)
+        if t > 2.2:
+            mx_ring(g, (t - 2.2) * 4)
+            g.mx_level = 1 + int(6 * (1 - span(t, 2.2, 3.6)))

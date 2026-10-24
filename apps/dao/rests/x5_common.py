@@ -1,271 +1,316 @@
-"""x5 道观日常：共用零件——小道士（可摆姿势的人偶）、抖动填充、事件计时。
+"""x5 道观日常（像素风）共用零件：会干活的小道士、旋转道具、确定性事件、竖写题字。
 
-小道士 daoshi()：侧身，头顶发髻插簪，交领道袍（抖动灰度），宽袖。手的位置由场景直接给（绝对坐标），
-肘部用两段式 IK 自动算。f=1 面朝右，f=-1 面朝左。脚底在 (x, gy)。
+worker()：在 engine.chars.figure 上拼出干活的小道士——手臂按“肩 → 手”的屏幕角度现场取精灵（宽袖下垂、
+袖口镶边、背光网点、露手），可以一只手或两只手（后手画在身后），道具画在身前 / 身后；
+behind_head=True 时举过头顶的手臂和道具画在头后面，只从头顶露出拳头和道具。
+rotate() / blit_rot()：把“柄朝右画”的道具精灵（斧、锄、瓮）绕握点转到任意角度。
+所有精灵按角度 / 长度量化后只生成一次（pix 的描边、翻转缓存按对象 id 存，不要每帧新建精灵）。
 """
 from __future__ import annotations
 
 import math
 
-from PIL import Image, ImageChops, ImageDraw
-
+from ..engine import pix
 from ..engine.anim import clamp, rand
-from ..engine.gfx import BAYER, Gfx, H, W
+from ..engine.chars import Part, figure
+from ..engine.gfx import Gfx, Sprite
 
-# ---------------------------------------------------------------- 抖动填充（只在包围盒里做，便宜）
+# ---------------------------------------------------------------- 手臂
 
-_PATS: dict[int, Image.Image] = {}
-
-
-def _pat(level: float) -> Image.Image:
-    k = int(round(clamp(level) * 16))
-    if k not in _PATS:
-        _PATS[k] = Image.fromarray(BAYER < k)
-    return _PATS[k]
+_ARMS: dict = {}
 
 
-def dpoly(g: Gfx, pts, level: float, outline: int | None = 1):
-    """多边形：内部清空后填抖动灰度（level 0..1），可带轮廓。比 g.shade_poly 便宜（不转整屏）"""
-    xs = [p[0] for p in pts]
-    ys = [p[1] for p in pts]
-    x0, y0 = max(int(min(xs)) - 1, 0), max(int(min(ys)) - 1, 0)
-    x1, y1 = min(int(max(xs)) + 2, W), min(int(max(ys)) + 2, H)
-    if x1 <= x0 or y1 <= y0:
-        return
-    m = Image.new("1", (x1 - x0, y1 - y0))
-    ImageDraw.Draw(m).polygon([(px - x0, py - y0) for px, py in pts], fill=1)
-    g.img.paste(0, (x0, y0), m)
-    if level > 0:
-        g.img.paste(1, (x0, y0), ImageChops.logical_and(m, _pat(level).crop((x0, y0, x1, y1))))
-    if outline is not None:
-        g.d.polygon(pts, outline=outline)
+def limb(ang: float, ln: int) -> tuple[Sprite, int]:
+    """宽袖手臂：从肩 (R, R) 朝屏幕角 ang（度，0 = 右，90 = 下）伸出 ln 像素到手。返回 (精灵, R)；spr.hand 为手"""
+    a = int(round(ang / 10.0)) * 10 % 360
+    ln = int(clamp(round(ln), 5, 24))
+    key = (a, ln)
+    v = _ARMS.get(key)
+    if v is None:
+        R = ln + 5
+        p = Part(2 * R + 1, 2 * R + 1)
+        r = math.radians(a)
+        ux, uy = math.cos(r), math.sin(r)
+        nx, ny = -uy, ux                       # 法向；朝下的一侧是袖子下垂的一侧
+        if ny < 0 or (abs(ny) < 1e-6 and nx < 0):
+            nx, ny = -nx, -ny
+        sx, sy = R, R
+        cl = ln - 2                                          # 袖口离肩
+        wx, wy = sx + ux * cl, sy + uy * cl
+        hx, hy = sx + ux * ln, sy + uy * ln                  # 手
+        P = lambda x, y: (int(round(x)), int(round(y)))  # noqa: E731
+        # 手（先画，袖口压在手腕上）
+        p.shape("line", (P(wx, wy), P(hx, hy)), fill=1, width=2)
+        ix, iy = P(hx, hy)
+        p.shape("rectangle", (ix - 1, iy - 1, ix + 1, iy), fill=1)
+        # 袖筒：肩处 3 像素，往袖口渐宽
+        droop = 1.5 + 2.0 * abs(ux)                          # 手臂越平，宽袖垂得越多
+        tube = [P(sx - nx * 1.2, sy - ny * 1.2), P(wx - nx * 1.6, wy - ny * 1.6),
+                P(wx + nx * 1.6, wy + ny * 1.6), P(sx + nx * 1.4, sy + ny * 1.4)]
+        p.shape("polygon", tube, fill=1)
+        flap = [P(wx - ux * 4 + nx * 1.4, wy - uy * 4 + ny * 1.4), P(wx + nx * 1.6, wy + ny * 1.6),
+                P(wx - ux * 0.5 + nx * (1.6 + droop), wy - uy * 0.5 + ny * (1.6 + droop) + droop * 0.6)]
+        p.shape("polygon", flap, fill=1)                     # 垂下来的袖口
+        p.shape("ellipse", (sx - 2, sy - 2, sx + 1, sy + 1), fill=1)  # 肩头
+        p.dither(flap, 0.5, 0)                               # 袖里背光
+        # 袖口镶边：一道暗线
+        cx, cy = wx - ux * 1, wy - uy * 1
+        p.d.line((P(cx - nx * 1, cy - ny * 1), P(cx + nx * 1, cy + ny * 1)), fill=0)
+        spr = p.sprite()
+        spr.hand = (ix, iy)
+        v = _ARMS[key] = (spr, R)
+    return v
 
 
-def dbox(g: Gfx, box, level: float):
-    """矩形抖动填充（只画亮点）"""
-    x0, y0, x1, y1 = (int(v) for v in box)
-    x0, y0, x1, y1 = max(x0, 0), max(y0, 0), min(x1, W), min(y1, H)
-    if x1 <= x0 or y1 <= y0 or level <= 0:
-        return
-    g.img.paste(1, (x0, y0), _pat(level).crop((x0, y0, x1, y1)))
+SHOULDER = {"stand": (1, -15), "walk": (1, -15), "kneel": (3, -12), "sit": (1, -18)}
+BACK_SH = {"stand": (-2, -15), "walk": (-2, -15), "kneel": (0, -12), "sit": (-2, -18)}
 
 
-def dellipse(g: Gfx, box, level: float, outline: int | None = 1):
-    x0, y0, x1, y1 = box
-    n = 16
-    cx, cy, rx, ry = (x0 + x1) / 2, (y0 + y1) / 2, (x1 - x0) / 2, (y1 - y0) / 2
-    pts = [(cx + math.cos(i / n * 2 * math.pi) * rx, cy + math.sin(i / n * 2 * math.pi) * ry) for i in range(n)]
-    dpoly(g, pts, level, None)
-    if outline is not None:
-        g.d.ellipse(box, outline=outline)
+def shoulder(x: float, floor: float, t: float, legs: str = "stand", flip: bool = False, back: bool = False,
+             bob: bool = True, dy: int = 0) -> tuple[int, int]:
+    """肩在屏幕上的位置（跟 figure 的呼吸、走路起伏一致）"""
+    sx, sy = (BACK_SH if back else SHOULDER)[legs]
+    lift = 1 if bob and legs == "stand" and (t * 0.7) % 1 > 0.5 else 0
+    bounce = (int(t * 8) % 4) % 2 if legs == "walk" else 0
+    x, floor = int(round(x)), int(round(floor)) + dy
+    return (x - sx if flip else x + sx), floor + sy + lift - bounce
 
 
-def fade_box(g: Gfx, level: float, box=None):
-    """g.fade 的包装（level≥1 不做事）"""
-    if level < 1:
-        g.fade(max(level, 0), box)
+def arm_spr(sh, hand, ln: int | None = None, maxl: int = 16):
+    """从肩 sh 朝 hand 的手臂精灵：→ (精灵, 左上 x, y, 实际手的位置)"""
+    dx, dy = hand[0] - sh[0], hand[1] - sh[1]
+    d = math.hypot(dx, dy)
+    ang = math.degrees(math.atan2(dy, dx)) if d > 0.5 else 90
+    L = ln if ln is not None else int(clamp(round(d), 6, maxl))
+    spr, R = limb(ang, L)
+    x0, y0 = sh[0] - R, sh[1] - R
+    return spr, x0, y0, (x0 + spr.hand[0], y0 + spr.hand[1])
+
+
+def arm_to(g: Gfx, sh, hand, ln: int | None = None) -> tuple[int, int]:
+    """从肩 sh 朝 hand 画一只手臂（长度默认 = 距离，夹在 6–13）。返回实际手的位置"""
+    spr, x0, y0, h = arm_spr(sh, hand, ln)
+    pix.blit(g, spr, x0, y0)
+    return h
+
+
+FIST = Sprite("""
+###
+#.#
+###
+""")
+
+
+def worker(g: Gfx, x: float, floor: float, t: float, hand=None, hand2=None, legs: str = "stand",
+           head: str = "up", face: str = "normal", flip: bool = False, tool=None, back_tool=None,
+           bob: bool = True, dy: int = 0, ln: int | None = None, ln2: int | None = None, fist: bool = False,
+           front=None, behind_head: bool = False) -> dict:
+    """干活的小道士。hand = 前手的目标（屏幕坐标），hand2 = 后手的目标（画在身后，常用于双手握柄）；
+    None 时前手自然下垂。behind_head：前手和道具也画在身体后面（举过头顶时只从头顶露出手和道具）。tool(g, h1, h2)：道具，画在身体前、前手下面；back_tool：画在身体后面。
+    返回 {"hand": 前手, "hand2": 后手, "sh": 前肩}"""
+    out = {}
+    sh1 = shoulder(x, floor, t, legs, flip, False, bob, dy)
+    sh2 = shoulder(x, floor, t, legs, flip, True, bob, dy)
+    mx = 23 if behind_head else 16
+    a1 = arm_spr(sh1, hand, ln, mx) if hand is not None else None
+    a2 = arm_spr(sh2, hand2, ln2, mx) if hand2 is not None else None
+    if a1:
+        out["hand"] = a1[3]
+    if a2:
+        out["hand2"] = a2[3]
+
+    def _arm1(gg):
+        if tool:
+            tool(gg, out.get("hand"), out.get("hand2"))
+        if a1:
+            pix.blit(gg, a1[0], a1[1], a1[2])
+            if fist:
+                pix.blit(gg, FIST, a1[3][0] - 1, a1[3][1] - 1)
+
+    def _behind(gg, at):
+        if a2:
+            pix.blit(gg, a2[0], a2[1], a2[2])
+        if back_tool:
+            back_tool(gg, out.get("hand"), out.get("hand2"))
+        if behind_head:
+            _arm1(gg)
+
+    def _front(gg, at):
+        if not behind_head:
+            _arm1(gg)
+        if front:
+            front(gg, at)
+
+    r = figure(g, x, floor, t, legs=legs, arm=("down" if hand is None else None), head=head, face=face,
+               flip=flip, bob=bob, dy=dy, behind=_behind, front=_front)
+    if hand is None:
+        out["hand"] = r.get("hand")
+    out["sh"] = sh1
+    return out
+
+
+# ---------------------------------------------------------------- 旋转道具
+
+_ROT: dict = {}
+
+
+def rotate(spr: Sprite, deg: float, px: float, py: float, step: int = 10) -> tuple[Sprite, int, int]:
+    """把一个“柄朝右画”的道具精灵绕 (px, py)（握点）转到屏幕角 deg（0 = 右，90 = 下）。
+    最近邻反向映射，按 step 度缓存。返回 (精灵, 握点在新精灵里的 x, y)"""
+    import numpy as np
+    d = int(round(deg / step)) * step % 360
+    key = (id(spr), d, px, py)
+    v = _ROT.get(key)
+    if v is None:
+        r = math.radians(d)
+        c, s_ = math.cos(r), math.sin(r)
+        R = int(math.ceil(max(math.hypot(x - px, y - py) for x in (0, spr.w) for y in (0, spr.h)))) + 1
+        n = 2 * R + 1
+        ys, xs = np.mgrid[0:n, 0:n]
+        dx, dy = xs - R, ys - R
+        sx = np.rint(dx * c + dy * s_ + px).astype(int)       # 反向旋转回原图
+        sy = np.rint(-dx * s_ + dy * c + py).astype(int)
+        ok = (sx >= 0) & (sx < spr.w) & (sy >= 0) & (sy < spr.h)
+        on = np.zeros((n, n), bool)
+        mk = np.zeros((n, n), bool)
+        on[ok] = spr.on[sy[ok], sx[ok]]
+        mk[ok] = spr.mask[sy[ok], sx[ok]]
+        v = _ROT[key] = (Sprite(on=on, mask=mk), R, R)
+    return v
+
+
+def blit_rot(g: Gfx, spr: Sprite, x: float, y: float, deg: float, px: float, py: float, outline: bool = True):
+    """把道具的握点 (px, py) 放在屏幕 (x, y)，转到 deg"""
+    r, ox, oy = rotate(spr, deg, px, py)
+    pix.blit(g, r, x - ox, y - oy, outline=outline)
+
+
+def tip(x: float, y: float, deg: float, along: float, side: float = 0.0):
+    """道具上的一点：从握点沿柄 along、沿法向（柄朝右时的“下方”）side"""
+    r = math.radians(deg)
+    return x + math.cos(r) * along - math.sin(r) * side, y + math.sin(r) * along + math.cos(r) * side
 
 
 # ---------------------------------------------------------------- 时间
 
-def phase(t: float, period: float) -> tuple[int, float]:
-    """→ (第几轮, 本轮内秒数)"""
+def keys(t: float, ks, ease=None):
+    """关键帧插值：ks = [(时刻, 值), ...]（值为数或元组），段内用 ease（默认 ease_in_out）"""
+    from ..engine.anim import ease_in_out
+    ease = ease or ease_in_out
+    if t <= ks[0][0]:
+        return ks[0][1]
+    for (t0, v0), (t1, v1) in zip(ks, ks[1:]):
+        if t < t1:
+            k = ease((t - t0) / (t1 - t0)) if t1 > t0 else 1.0
+            if isinstance(v0, tuple):
+                return tuple(a + (b - a) * k for a, b in zip(v0, v1))
+            return v0 + (v1 - v0) * k
+    return ks[-1][1]
+
+
+def arc_pt(p0, p1, k: float, h: float):
+    """抛物线：从 p0 到 p1，顶点高出 h"""
+    return (p0[0] + (p1[0] - p0[0]) * k, p0[1] + (p1[1] - p0[1]) * k - 4 * h * k * (1 - k))
+
+
+class Clock:
+    """有状态粒子用的 dt（t 回跳或大跳时重置）与“跨过某时刻”判定"""
+    _last = None
+
+    def tick(self, t: float) -> float:
+        last = self._last
+        self._last = t
+        if last is None or t < last or t - last > 0.5:
+            self._prev = None
+            return 1 / 30
+        self._prev = last
+        return t - last
+
+    def crossed(self, t: float, at: float) -> bool:
+        """本帧（上一帧 t → 这一帧 t）跨过了 at"""
+        p = getattr(self, "_prev", None)
+        return p is not None and p < at <= t
+
+
+def cyc(t: float, period: float) -> tuple[int, float]:
     n = int(t // period)
     return n, t - n * period
 
 
-def event(t: float, period: float, dur: float, seed: int, jitter: float = 0.35, skip: float = 0.0):
-    """每隔约 period 秒发生一次、持续 dur 秒的小事件（确定性）。
-    返回 (第几次, 事件内秒数) 或 None。jitter：开始时刻在一轮里浮动的比例；skip：这一轮不发生的概率"""
-    n, k = phase(t, period)
-    if rand(n * 7 + 3, seed) < skip:
+def event(t: float, period: float, dur: float, seed: int, skip: float = 0.0):
+    """约每 period 秒一次、持续 dur 秒的小事件（确定性）。返回 (第几次, 事件内秒数) 或 None"""
+    n, k = cyc(t, period)
+    if rand(n, seed) < skip:
         return None
-    start = period * (1 - jitter) * 0.5 + rand(n, seed) * period * jitter
-    start = min(start, period - dur)
-    if n == 0:
-        start = max(start, min(period * 0.35, period - dur))  # 第一轮别太早
+    start = 4 + rand(n, seed + 7) * max(period - dur - 8, 0)
     if start <= k < start + dur:
         return n, k - start
     return None
 
 
-# ---------------------------------------------------------------- 小道士
+# ---------------------------------------------------------------- 小精灵
 
-def _ik(sx, sy, hx, hy, l1, l2, bend):
-    """两段臂：肩 (sx,sy)、手 (hx,hy) → 肘；bend=±1 选弯向"""
-    dx, dy = hx - sx, hy - sy
-    d = math.hypot(dx, dy)
-    if d < 1e-6:
-        return sx, sy + l1, hx, hy
-    if d > l1 + l2 - 0.01:  # 够不着：手拉到最远
-        k = (l1 + l2 - 0.01) / d
-        hx, hy = sx + dx * k, sy + dy * k
-        dx, dy, d = hx - sx, hy - sy, l1 + l2 - 0.01
-    a = (l1 * l1 - l2 * l2 + d * d) / (2 * d)
-    h = math.sqrt(max(l1 * l1 - a * a, 0))
-    mx, my = sx + dx * a / d, sy + dy * a / d
-    ex, ey = mx - dy / d * h * bend, my + dx / d * h * bend
-    return ex, ey, hx, hy
+SWEAT = pix.frames("""
+ #
+###
+###
+ #
+""")[0]
 
+BANG = Sprite("""
+.#.
+.#.
+.#.
+...
+.#.
+""")
 
-def _sleeve(g: Gfx, sx, sy, ex, ey, hx, hy, s, level, cuff=True):
-    """宽袖：肩→肘→腕，袖口下垂"""
-    def nrm(ax, ay, bx, by):
-        dx, dy = bx - ax, by - ay
-        d = math.hypot(dx, dy) or 1
-        return -dy / d, dx / d
+NOTE = Sprite("""
+ .##
+ .#.#
+ .#
+##.
+##
+""")
 
-    n1 = nrm(sx, sy, ex, ey)
-    n2 = nrm(ex, ey, hx, hy)
-    if n1[1] < 0:
-        n1 = (-n1[0], -n1[1])
-    if n2[1] < 0:  # 让法线朝下（袖子往下垂）
-        n2 = (-n2[0], -n2[1])
-    w0, w1, w2 = 1.6 * s, 1.8 * s, 2.0 * s
-    drop = (3.2 if cuff else 1.8) * s
-    # 腕处往回缩一点（袖口在手前）
-    dx, dy = hx - ex, hy - ey
-    d = math.hypot(dx, dy) or 1
-    cx, cy = hx - dx / d * 1.5 * s, hy - dy / d * 1.5 * s
-    pts = [(sx - n1[0] * w0, sy - n1[1] * w0), (ex - n2[0] * w1, ey - n2[1] * w1), (cx - n2[0] * w1, cy - n2[1] * w1),
-           (cx + n2[0] * (w2 + drop), cy + n2[1] * (w2 + drop) + drop * 0.4),
-           (ex + n2[0] * w2, ey + n2[1] * w2 + drop * 0.3), (sx + n1[0] * w0, sy + n1[1] * w0)]
-    dpoly(g, pts, level, 0 if level >= 1 else 1)
-    g.d.rectangle((hx - s * 0.8, hy - s * 0.8, hx + s * 0.8, hy + s * 0.8), fill=1)
+STARS = pix.frames("""
+#   .
+   ###
+     .
+---
+  #
+ ###   #
+  #
+""")
 
 
-class Pose:
-    """daoshi() 返回的关键点，方便场景把工具挂在手上 / 头上"""
-
-    def __init__(self, **kw):
-        self.__dict__.update(kw)
+def mark(g: Gfx, spr: Sprite, x: float, y: float):
+    """头上的小标记（感叹号、音符）：描黑边"""
+    pix.blit(g, spr, x, y)
 
 
-def daoshi(g: Gfx, x: float, gy: float, f: int = 1, hands=None, lean: float = 0.0, crouch: float = 0.0,
-           step: float | None = None, s: float = 1.0, level: float = 1.0, bend=(1, 1), head_dy: float = 0.0,
-           eye: str = "open", look: float = 0.0, sit: bool = False, draw_far: bool = True,
-           draw_near: bool = True) -> Pose:
-    """小道士。hands = [(近手x,y), (远手x,y)] 绝对坐标，None 为自然下垂。
-    lean：上身前倾像素（朝 f）；crouch 0..1 下蹲；step：走路相位（弧度）；sit：盘坐 / 坐小凳（不画脚）
-    eye：open / closed / x（被烟呛）；look：头抬（负）低（正）"""
-    lx = lean * f
-    hem_y = gy - 1
-    sy = gy - (21 - 6 * crouch) * s
-    sx = x + lx
-    hcx, hcy = sx + f * 0.8 * s, sy - (4.8 - head_dy) * s + look * s
-    r = 4.0 * s
-    # 两肩、默认手
-    near_s = (sx + f * 0.6 * s, sy + 1.6 * s)
-    far_s = (sx - f * 0.8 * s, sy + 1.4 * s)
-    if hands is None:
-        hands = [None, None]
-    hn = hands[0] or (near_s[0] + f * 1.5 * s, near_s[1] + 11 * s)
-    hf = hands[1] or (far_s[0] - f * 0.5 * s, far_s[1] + 11 * s)
-    l1, l2 = 6.2 * s, 6.0 * s
-    # 远臂（在身后）
-    if draw_far:
-        e = _ik(*far_s, *hf, l1, l2, bend[1] * -f)
-        _sleeve(g, *far_s, *e, s, 0.5)
-    # 脚
-    hw = (6.0 + 3.0 * crouch) * s
-    if not sit:
-        if step is None:
-            fa, fb = 2.0, -2.0
-            la = lb = 0.0
-        else:
-            fa, fb = 3.0 * math.sin(step), -3.0 * math.sin(step)
-            la, lb = max(0, math.cos(step)) * 1.5, max(0, -math.cos(step)) * 1.5
-        for off, lift in ((fb, lb), (fa, la)):
-            fx = x + f * off * s
-            g.d.rectangle((fx - (1 if f > 0 else 2) * s, gy - 1 * s - lift, fx + (2 if f > 0 else 1) * s, gy - lift),
-                          fill=1)
-    # 道袍
-    wy = sy + (9.5 - 2.5 * crouch) * s  # 腰
-    robe = [(sx - 3.4 * s, sy), (sx + 3.4 * s, sy), (x + lx * 0.3 + hw, hem_y - 1 * s), (x + lx * 0.3 - hw, hem_y - 1 * s)]
-    if sit:
-        robe = [(sx - 3.4 * s, sy), (sx + 3.4 * s, sy), (x + hw + 2 * s, hem_y), (x - hw - 2 * s, hem_y)]
-    dpoly(g, robe, level)
-    # 腰带
-    k = (wy - sy) / max(hem_y - sy, 1)
-    wl = lerp_pt(robe[0], robe[3], k)
-    wr = lerp_pt(robe[1], robe[2], k)
-    ink = 0 if level >= 0.5 else 1
-    g.d.line((wl[0] + 1, wy, wr[0] - 1, wy), fill=ink)
-    g.d.line((sx - f * 1.5 * s, wy, sx - f * 2.5 * s, wy + 4 * s), fill=ink)  # 带尾
-    # 交领
-    g.d.line((sx - f * 2.2 * s, sy, sx + f * 1.6 * s, sy + 4.5 * s), fill=ink)
-    # 衣摆下缘一道镶边
-    g.d.line((robe[3][0] + 1, robe[3][1] - 2 * s, robe[2][0] - 1, robe[2][1] - 2 * s), fill=ink)
-    # 头：脸挖空 + 后脑头发 + 发髻 + 簪
-    g.d.ellipse((hcx - r, hcy - r, hcx + r, hcy + r), fill=0, outline=1)
-    g.d.chord((hcx - r, hcy - r, hcx + r, hcy + r), 195, 345, fill=1)  # 头发梳上去：头顶一片
-    # 后脑整片头发（面朝右时左半边）
-    if f > 0:
-        g.d.rectangle((hcx - r, hcy - r * 0.2, hcx - r * 0.35, hcy + r * 0.5), fill=1)
-    else:
-        g.d.rectangle((hcx + r * 0.35, hcy - r * 0.2, hcx + r, hcy + r * 0.5), fill=1)
-    g.d.ellipse((hcx - r, hcy - r, hcx + r, hcy + r), outline=1)
-    bx, by = hcx - f * 0.6 * s, hcy - r - 1.2 * s
-    g.d.ellipse((bx - 1.6 * s, by - 1.6 * s, bx + 1.6 * s, by + 1.4 * s), fill=1)
-    g.d.line((bx - f * 3.2 * s, by + 0.2 * s, bx + f * 2.6 * s, by - 0.6 * s), fill=1)  # 簪
-    # 眼
-    ex_, ey_ = hcx + f * 1.6 * s, hcy + 0.2 * s
-    if eye == "open":
-        g.d.rectangle((ex_, ey_, ex_ + (s > 1.4) * s * 0.6, ey_ + (s > 1.4) * s * 0.6), fill=1)
-    elif eye == "closed":
-        g.d.line((ex_ - f * 0.8 * s, ey_, ex_ + f * 0.6 * s, ey_), fill=1)
-    elif eye == "x":
-        g.d.line((ex_ - 1, ey_ - 1, ex_ + 1, ey_ + 1), fill=1)
-        g.d.line((ex_ - 1, ey_ + 1, ex_ + 1, ey_ - 1), fill=1)
-    # 近臂
-    pose = Pose(x=x, gy=gy, f=f, sx=sx, sy=sy, head=(hcx, hcy), r=r, near=hn, far=hf, bun=(bx, by), waist=wy,
-                near_s=near_s, s=s, level=level, bend=bend[0] * -f)
-    if draw_near:
-        pose.near = near_arm(g, pose, hn)
-    return pose
+# ---------------------------------------------------------------- 题字
+
+def scroll(g: Gfx, x: int, s: str, y: int = 3, k: float = 1.0, side: str = "left"):
+    """竖写题字（每帧最后画）：先压一条黑底，再写字；k 0..1 = 已经写出来的比例（逐字出现）。
+    x = 字列左边；side = 字列在屏幕哪一边（另一边画一道点线和画面隔开）"""
+    n = len(s)
+    shown = int(n * clamp(k) + 0.999)
+    if shown <= 0:
+        return
+    hgt = n * 12 - 1
+    g.d.rectangle((x - 2, y - 2, x + 13, y + hgt + 2), fill=0)
+    edge = x + 14 if side == "left" else x - 3
+    for yy in range(y - 1, y + hgt + 2, 2):  # 一道点线，把字列和画面分开
+        g.px(edge, yy)
+    g.vtext(x, y, s[:shown])
 
 
-def near_arm(g: Gfx, pose: Pose, hand) -> tuple:
-    """单独画近手臂（比如手要压在别的东西上面时，先画人、再画东西、最后画手臂）"""
-    l1, l2 = 6.2 * pose.s, 6.0 * pose.s
-    e = _ik(*pose.near_s, *hand, l1, l2, pose.bend)
-    _sleeve(g, *pose.near_s, *e, pose.s, pose.level)
-    return e[2:]
+def fade_out(g: Gfx, k: float):
+    """退场：有序网点淡出（k 0→1 由亮到暗）"""
+    if k > 0:
+        g.fade(1 - clamp(k))
 
 
-def lerp_pt(a, b, k):
-    return a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k
-
-
-# ---------------------------------------------------------------- 小零件
-
-def sweat(g: Gfx, x: float, y: float, k: float):
-    """一滴汗：k 0..1 甩出去"""
-    if 0 <= k < 1:
-        xx, yy = x + k * 5, y - 2 + k * k * 8
-        g.d.polygon([(xx, yy - 2), (xx - 1, yy), (xx + 1, yy)], fill=1)
-
-
-def note(g: Gfx, x: float, y: float):
-    """哼歌的小音符"""
-    g.d.line((x + 2, y, x + 2, y + 4), fill=1)
-    g.d.rectangle((x, y + 4, x + 2, y + 5), fill=1)
-    g.d.line((x + 2, y, x + 4, y + 1), fill=1)
-
-
-def bubble(g: Gfx, x: float, y: float, s: str, size: int = 12):
-    """小对话框（右下角有尾巴），(x, y) 为框左上角"""
-    from ..engine.gfx import text_width
-    w = text_width(s, size) + 4
-    hh = (11 if size == 12 else 7) + 4
-    g.d.rectangle((x, y, x + w, y + hh), fill=0, outline=1)
-    g.d.polygon([(x + 3, y + hh), (x + 7, y + hh), (x + 2, y + hh + 4)], fill=0, outline=1)
-    g.d.line((x + 4, y + hh, x + 6, y + hh), fill=0)
-    g.text(x + 2, y + 2, s, size)
-
-
-def ground(g: Gfx, gy: int, seed: int = 0, x0: int = 0, x1: int = 128, tufts: int = 6):
-    g.d.line((x0, gy, x1 - 1, gy), fill=1)
-    for i in range(tufts):
-        x = x0 + rand(i, seed) * (x1 - x0)
-        g.d.line((x, gy + 2, x + 2, gy + 2), fill=1)
+__all__ = ["rotate", "blit_rot", "tip", "limb", "shoulder", "arm_to", "arm_spr", "keys", "arc_pt", "worker", "Clock",
+           "cyc", "event", "SWEAT", "BANG", "NOTE", "STARS", "mark", "scroll", "fade_out", "FIST"]

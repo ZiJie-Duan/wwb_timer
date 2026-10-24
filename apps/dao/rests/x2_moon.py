@@ -1,12 +1,14 @@
-"""邀月：李白《月下独酌》（李白曾受道箓，自号“青莲居士”，与道士吴筠、元丹丘交游）。
+"""邀月：李白《月下独酌》“花间一壶酒，独酌无相亲。举杯邀明月，对影成三人……我歌月徘徊，我舞影零乱”；
+李白曾于齐州紫极宫受道箓，与道士吴筠、元丹丘交游。
 
-“花间一壶酒，独酌无相亲。举杯邀明月，对影成三人……我歌月徘徊，我舞影零乱。”
-
-入场：明月从右下升起，花枝从左上探进来，酒客在石上渐渐显形，月光把他的影子投在地上。
-持续：每 12 秒一次：举杯向月（杯中映出一点月光）→ 仰头饮尽 → 放下；影子在地上跟着做同样的动作。
-      右下角不时题一句诗。花瓣偶尔飘落，薄云慢慢掠过月面。
-      每 48 秒一次彩蛋：他起身对月且歌且舞，月亮左右“徘徊”，地上的影子乱舞——“我歌月徘徊，我舞影零乱”。
-退场：画面收拢成一个圆。
+月夜，左上一枝梅花探进来，右上一轮满月（环形山网点、一圈虚光晕）。小道士坐在石头上，脚边一只酒葫芦；
+月光把他投成地上的影子（按画出来的人形实时投影：网点、压扁、往左下斜，动作同步）。
+入场：月亮从右下升起，梅枝从左上探进来，小道士在石上弹出坐定，影子随之出现。
+持续：每 12 秒举杯向月（杯里映出一点月光）→ 仰头饮尽 → 放下，隔一次在右下题一句诗；
+      花瓣偶尔飘落，薄云慢慢掠过月面，星星闪。
+      彩蛋每 48 秒：起身且歌且舞，长袖翻飞，月亮左右“徘徊”，地上影子乱舞——“我歌月徘徊”“我舞影零乱”。
+退场：收圆。
+点阵：一轮满月，云影掠过；跳舞时月亮在点阵上也左右挪。
 """
 from __future__ import annotations
 
@@ -14,284 +16,280 @@ import math
 
 import numpy as np
 
-from ..engine.anim import blink, clamp, ease_in, ease_in_out, ease_out, ease_out_back, lerp, noise, rand, span
-from ..engine.fx import cloud, typewriter
-from ..engine.gfx import BAYER, Gfx, Sprite
+from ..engine import pix
+from ..engine.anim import ease_in_out, ease_out, ease_out_back, lerp, rand, span
+from ..engine.chars import Part, figure
+from ..engine.gfx import Gfx
 from ..engine.scene import Rest, register
-from .x2_common import iris, win
+from .x2_common import TUFT, Clock, iris, label, put_arm, rock, win
 
-MOON = (104, 15, 11)       # 月：中心、半径
-FX, FY = 46, 45            # 酒客坐处：石头顶面中点
-GROUND = 51
-CYC = 12.0
-DANCE_P, DANCE_OFF, DANCE_D = 48.0, 24.0, 12.0
-
-SEATED = Sprite("""
-      .###.
-     .#####.
-     #######
-      #...#.
-      #....#
-      #..#.#
-      #....#
-       #..#
-     .##..##.
-    #........#
-   #..........#
-   #..........#
-   #..........#
-  #...........#
-  #............#
- #.......#######
- #..............#
- ################
-""")
-STAND = Sprite("""
-     .###.
-    .#####.
-    #######
-     #...#.
-     #....#
-     #..#.#
-     #....#
-      #..#
-    .##..##.
-   #........#
-   #........#
-   #........#
-   #........#
-   #........#
-   ##########
-   #........#
-   #........#
-  #..........#
-  #..........#
- #............#
- #............#
- ##############
-""")
-GOURD = Sprite("""
-  .#.
-  ###
- #...#
- #...#
-  #.#
- #...#
-#.....#
-#.....#
-#.....#
- #...#
-  ###
-""")
-HEAD = Sprite("""
-      .###.
-     .#####.
-     #######
-      #...#.
-      #....#
-      #..#.#
-      #....#
-""")
+FLOOR = 52
+DX, DF = 44, 46               # 小道士坐在石上
+MOON = (104, 15)
+TOAST = 12.0
+DANCE = 48.0
 LINES = ["举杯邀明月", "对影成三人", "花间一壶酒", "独酌无相亲"]
 
 
-def moon(g: Gfx, x: float, y: float, r: float):
-    """满月：亮面 + 几处暗斑（桂影）"""
-    g.d.ellipse((x - r, y - r, x + r, y + r), fill=1)
-    for dx, dy, rr in ((-4, -3, 2.2), (3, 2, 1.8), (-1, 5, 1.4), (5, -5, 1.0), (-6, 3, 1.0)):  # 暗斑
-        g.d.ellipse((x + dx - rr, y + dy - rr * 0.8, x + dx + rr, y + dy + rr * 0.8), fill=0)
-    for i in range(10):  # 边缘一圈抖动，月晕柔一点
-        a = i / 10 * 2 * math.pi
-        g.px(x + math.cos(a) * (r + 2), y + math.sin(a) * (r + 2))
+def _moon():
+    """满月 21×21：圆盘 + 环形山（网点小块）+ 左下一道暗边"""
+    p = Part(21, 21)
+    p.shape("ellipse", (0, 0, 20, 20), fill=1)
+    p.dither([(3, 7), (9, 5), (12, 9), (8, 12), (3, 11)], 0.5, 0)      # 月海（一大片）
+    p.dither([(11, 13), (15, 12), (16, 16), (12, 17)], 0.5, 0)
+    p.d.ellipse((14, 4, 16, 6), outline=0)                                # 一个小环形山
+    p.d.arc((1, 1, 19, 19), 120, 190, fill=0)
+    p.px(16, 3), p.px(17, 4)                                              # 亮边
+    return p.sprite()
 
 
-def branch(g: Gfx, t: float, dx: float = 0.0):
-    """左上角的花枝：一枝梅（五点小花）"""
-    sw = math.sin(t * 0.7) * 0.8
-    g.d.line([(dx - 2, 3), (dx + 12, 7), (dx + 24, 6 + sw), (dx + 34, 11 + sw)], fill=1, width=2)
-    g.d.line([(dx + 12, 7), (dx + 18, 15 + sw)], fill=1)
-    g.d.line([(dx + 24, 6 + sw), (dx + 28, 1)], fill=1)
-    for fx, fy in ((dx + 18, 15 + sw), (dx + 28, 1), (dx + 34, 11 + sw), (dx + 8, 4), (dx + 22, 9 + sw)):
-        g.d.ellipse((fx - 2, fy - 2, fx + 2, fy + 2), fill=0, outline=1)
-        g.px(fx, fy)
+def _gourd():
+    """酒葫芦 7×11：系绳、上小下大、高光"""
+    p = Part(7, 11)
+    p.shape("rectangle", (3, 0, 3, 1), fill=1)
+    p.shape("ellipse", (1, 1, 5, 5), fill=1)
+    p.shape("ellipse", (0, 4, 6, 10), fill=1)
+    p.d.line((1, 5, 5, 5), fill=0)                 # 束腰的绳
+    p.px(2, 2, 0), p.px(1, 7, 0)
+    p.dither((4, 6, 6, 10), 0.5, 0)
+    return p.sprite()
+
+
+def _cloud():
+    p = Part(26, 5)
+    p.shape("ellipse", (0, 1, 14, 4), fill=1)
+    p.shape("ellipse", (8, 0, 25, 4), fill=1)
+    p.dither((0, 0, 26, 5), 0.5, 0)
+    p.d.line((2, 4, 23, 4), fill=1)
+    return p.sprite()
+
+
+BLOSSOM = pix.frames("""
+ #
+#.#
+ #
+---
+ ##
+#..#
+ ##
+""")
+
+PETAL = pix.frames("""
+#
+---
+##
+---
+ #
+#
+""")
+
+
+def _branch():
+    """梅枝 46×22：从左上画外伸进来的老枝，折角分叉，枝头几朵梅花和花苞"""
+    p = Part(48, 24)
+    main = [(0, 3), (8, 6), (14, 5), (21, 10), (30, 11), (37, 16), (45, 17)]
+    p.shape("line", main[:4], fill=1, width=2)
+    p.shape("line", main[3:], fill=1)
+    p.shape("line", ((14, 5), (19, 1), (24, 0)), fill=1)
+    p.shape("line", ((21, 10), (22, 17), (26, 21)), fill=1)
+    p.shape("line", ((30, 11), (34, 7)), fill=1)
+    for x, y in ((5, 4), (17, 7)):
+        p.px(x, y, 0)
+    for x, y in ((23, 0), (24, 20), (33, 6), (44, 16), (12, 3), (28, 12)):
+        p.shape("rectangle", (x, y, x + 1, y + 1), fill=1)
+    return p.sprite()
+
+
+_P: dict = {}
+
+
+def prop(name):
+    if not _P:
+        _P.update(moon=_moon(), gourd=_gourd(), cloud=_cloud(), branch=_branch())
+    return _P[name]
+
+
+FLOWERS = [(10, 1), (20, 3), (27, 17), (35, 3), (40, 12), (47, 14)]
 
 
 @register
 class Moon(Rest):
     id = "x2.moon"
     name = "邀月"
-    desc = "花下独酌，举杯邀明月、对影成三人；不时起舞，月徘徊、影零乱"
+    desc = "月下梅边，小道士坐石独酌，举杯邀明月、对影成三人（影子实时投在地上）；不时起舞，月徘徊、影零乱"
     T = {"enter": 3.0, "exit": 1.2}
 
     def setup(self):
         self.ht = 0.0
-        self.line0 = self.rng.randrange(len(LINES))
+        self.clock = Clock()
+        self.sh = Gfx()
 
-    # ------------------------------------------------------------ 动作
+    # ------------------------------------------------------------ 小道士（姿势函数）
 
     def pose(self, t: float):
-        """→ (状态, 参数)：("sit", 举杯程度 raise, 饮 drink) 或 ("dance", 秒数)"""
-        k, n = win(t, DANCE_P, DANCE_D, DANCE_OFF)
-        if k is not None:
-            return "dance", k
-        s = t % CYC
-        lift = ease_in_out(span(s, 6.0, 7.2)) * (1 - ease_in_out(span(s, 8.5, 9.4)))
-        drink = math.sin(math.pi * span(s, 8.5, 10.4))
-        return "sit", (lift, drink)
+        """→ (legs, x, y, arm 参数 (dx, dy, over), face, 拿杯, 跳舞)"""
+        kd, _ = win(t, DANCE, 10.0, DANCE - 12.0)
+        if kd is not None:     # 起身且歌且舞
+            k = kd
+            if k < 0.6:
+                return "stand", DX, FLOOR, None, "normal", False, 0.0, k
+            ph = (k - 0.6) / 0.55
+            frame = int(ph) % 4
+            arms = [(-3, -14, False), (11, -9, False), (9, 3, False), (4, -16, False)][frame]
+            x = DX + 6 + math.sin(k * 1.4) * 8
+            return "dance", x, FLOOR, arms, "happy" if frame % 2 else "sleep", False, 1.0, k
+        k = t % TOAST
+        if k < 1.0:            # 举杯向月
+            q = ease_in_out(span(k, 0, 1.0))
+            return "sit", DX, DF, (lerp(7, 13, q), lerp(6, -11, q), False), "normal", True, 0.0, k
+        if k < 2.8:
+            return "sit", DX, DF, (13, -11, False), "happy" if k > 1.6 else "normal", True, 0.0, k
+        if k < 3.6:            # 拿到嘴边
+            q = ease_in_out(span(k, 2.8, 3.6))
+            return "sit", DX, DF, (lerp(13, 4, q), lerp(-11, -3, q), q > 0.5), "normal", True, 0.0, k
+        if k < 5.2:            # 仰头饮尽
+            return "sit", DX, DF, (4, -4, True), "sleep", True, 0.0, k
+        q = ease_in_out(span(k, 5.2, 6.2))
+        return "sit", DX, DF, (lerp(4, 7, q), lerp(-3, 6, q), q < 0.4), "normal", True, 0.0, k
 
-    def figure(self, g: Gfx, t: float):
-        """画酒客；返回脚下（影子的根）"""
-        st, a = self.pose(t)
-        if st == "dance":
-            k = a
-            up = ease_out_back(span(k, 0.0, 1.0)) * (1 - ease_in_out(span(k, DANCE_D - 1.0, DANCE_D)))
-            if up < 0.5:
-                return self.seated(g, 0, 0, t)
-            bob = abs(math.sin(k * 3.2)) * 2
-            x, y = FX - 7, FY - STAND.h + 1 - bob
-            g.blit(STAND, x, y)
-            for side in (-1, 1):  # 舞袖：长袖翻飞
-                ph = k * 3.2 + (0 if side > 0 else 1.7)
-                sx, sy = x + 7 + side * 3, y + 10
-                hx = sx + side * (6 + 4 * math.sin(ph))
-                hy = sy - 6 + 8 * math.cos(ph)
-                g.d.line((sx, sy, hx, hy), fill=1, width=2)
-                tail = [(hx, hy), (hx + side * 7, hy + 4 + 3 * math.sin(ph * 1.3)), (hx + side * 3, hy + 9)]
-                g.d.polygon(tail, fill=0, outline=1)
-            return FX, FY
-        lift, drink = a
-        return self.seated(g, lift, drink, t)
-
-    def seated(self, g: Gfx, lift: float, drink: float, t: float):
-        x, y = FX - 8, FY - SEATED.h + 1
-        tilt = int(round(drink * 1.5))
-        g.blit(SEATED, x, y)
-        if tilt:  # 仰头：脸往后上方挪一点
-            g.d.rectangle((x + 5, y, x + 12, y + 7), fill=0)
-            g.blit(HEAD, x - 1, y - tilt)
-        # 手臂与杯：闲时杯在膝上；举杯时伸向月亮；饮时到嘴边
-        sx, sy = x + 11, y + 10
-        rest = (x + 15, y + 15)
-        toward = (x + 21, y + 1)
-        mouth = (x + 13, y + 6 - tilt)
-        if drink > 0:
-            hx, hy = lerp(rest[0], mouth[0], drink), lerp(rest[1], mouth[1], drink)
+    def draw_man(self, g: Gfx, t: float, legs, x, y, arm_p, face, cup):
+        if arm_p is None:
+            spr, at = "down", None
         else:
-            breath = math.sin(t * 1.2) * 0.5
-            hx, hy = lerp(rest[0], toward[0], lift), lerp(rest[1] + breath, toward[1], lift)
-        g.d.line((sx, sy, hx, hy), fill=1, width=2)
-        g.d.rectangle((hx - 1, hy - 3, hx + 2, hy), fill=1)  # 杯
-        if lift > 0.9 and blink(t, 0.3):  # 杯中映月
+            spr, at = put_arm(arm_p[0], arm_p[1], "fist", over=arm_p[2])
+        if legs == "dance":
+            h = figure(g, x, y, t, legs="walk", arm=spr, arm_at=at, face=face)
+        else:
+            h = figure(g, x, y, t, legs=legs, arm=spr, arm_at=at, face=face)
+        if cup:
+            hx, hy = h["hand"]
+            g.d.rectangle((hx - 1, hy - 3, hx + 2, hy - 1), fill=1)
             g.px(hx, hy - 2, 0)
-        g.blit(GOURD, x - 9, FY - GOURD.h + 2)
-        return FX, FY
-
-    def rock(self, g: Gfx):
-        pts = [(FX - 16, GROUND), (FX - 13, FY + 1), (FX - 4, FY - 1), (FX + 10, FY), (FX + 15, GROUND)]
-        g.d.polygon(pts, fill=0, outline=1)
-        g.shade_poly(pts, 0.2)
-
-    def shadow(self, g: Gfx, box, t: float, wild: float = 0.0):
-        """把画好的人影投到地上：月在右上，影子向左倒在地面（抖动灰度），wild > 0 时乱舞"""
-        x0, y0, x1, y1 = box
-        a = g.array()
-        sub = a[y0:y1, x0:x1]
-        ys, xs = np.nonzero(sub)
-        if len(xs) == 0:
-            return
-        ys = ys + y0
-        xs = xs + x0
-        h = FY - ys  # 离地高度
-        jit = 0
-        if wild > 0:
-            jit = (np.sin(ys * 0.7 + t * 9) * 3 + np.sin(ys * 0.3 - t * 5) * 2) * wild
-        px = (xs - h * 0.95 - 3 + jit).astype(int)
-        py = (GROUND + 1 + h * 0.42).astype(int)
-        ok = (px >= 0) & (px < 128) & (py >= 0) & (py < 64)
-        px, py = px[ok], py[ok]
-        a[py, px] |= BAYER[py, px] < 11
-        px1 = np.minimum(px + 1, 127)
-        a[py, px1] |= BAYER[py, px1] < 11
-        g.put(a)
+            g.px(hx, hy)
+        return h
 
     # ------------------------------------------------------------ 画面
 
-    def frame(self, g: Gfx, t: float, show=1.0, moon_y: float | None = None, bdx: float = 0.0):
-        st, a = self.pose(t)
-        sway = 0.0
-        if st == "dance":
-            sway = math.sin(a * 1.4) * 5 * span(a, 0.5, 2.0) * (1 - span(a, 10.0, 11.5))
-        mx_, my_, r = MOON
-        moon(g, mx_ + sway, moon_y if moon_y is not None else my_, r)
-        # 薄云掠过月面
-        cx = 160 - (t * 2.5 % 220)
-        cloud(g, cx, my_ + 4, 26, 8, seed=self.seed + int(t * 2.5 // 220))
-        branch(g, t, bdx)
-        for j in range(2):  # 落花
-            ph = t / 9 + j * 0.5
-            k = ph % 1
-            px = 14 + rand(int(ph) * 2 + j, self.seed) * 24 + math.sin(k * 9) * 4 + k * 10
-            py = 8 + k * 50
-            if py < GROUND:
-                g.px(px, py)
-                g.px(px + 1, py + (1 if int(k * 20) % 2 else 0))
-        g.d.line((0, GROUND, 127, GROUND), fill=1)
-        for i in range(70, 128, 11):  # 草
-            g.d.line((i, GROUND - 1, i + 1, GROUND - 3), fill=1)
-        self.rock(g)
-        if show > 0:
-            before = g.array() if show < 1 else None
-            self.figure(g, t)
-            self.shadow(g, (FX - 22, 12, FX + 26, FY + 1), t, wild=1.0 if st == "dance" and a > 1 else 0.0)
-            if before is not None:  # 显形：抖动淡入
-                after = g.array()
-                m = BAYER < int(show * 16)
-                g.put(np.where(m, after, before))
-        # 诗
-        if st == "dance":
-            if 1.0 < a < 11.0:
-                line = "我歌月徘徊" if a < 6 else "我舞影零乱"
-                typewriter(g, 66, 53, line, (a - 1.0) % 5.0, cps=3)
-        else:
-            s = t % CYC
-            n = int(t // CYC)
-            if 6.5 < s < 11.5 and n % 2 == 0:
-                typewriter(g, 66, 53, LINES[(n // 2 + self.line0) % len(LINES)], s - 6.5, cps=3)
-        self.mx(g, t, st, a, sway)
+    def scene(self, g: Gfx, t: float, enter: float = 1.0):
+        dt = self.clock.dt(t)
+        on = enter >= 1
+        e3 = enter * self.T["enter"]
+        legs, x, y, arm_p, face, cup, dancing, k = self.pose(t) if on else ("sit", DX, DF, (7, 6, False), "normal",
+                                                                             True, 0.0, 0.0)
+        # 星
+        for i in range(10):
+            sx, sy = int(rand(i, 7) * 124) + 2, int(rand(i, 8) * 34) + 2
+            if (t * 0.8 + i * 0.37) % 2.5 > 0.2 and not (40 < sx < 60 and sy > 10):
+                g.px(sx, sy)
+        # 月（徘徊）
+        rise = ease_out(span(e3, 0, 1.4)) if not on else 1.0
+        mx_ = MOON[0] + (math.sin((k - 0.6) * 1.4) * 6 if dancing else 0)
+        my = MOON[1] + (1 - rise) * 40
+        for i in range(0, 32, 2):                                  # 光晕
+            a = i / 32 * 2 * math.pi + t * 0.05
+            g.px(mx_ + math.cos(a) * 14, my + math.sin(a) * 14)
+        pix.blit(g, prop("moon"), mx_ - 10, my - 10)
+        cx = (t * 2.2) % 220 - 40                                  # 薄云
+        if 60 < cx < 140:
+            pix.blit(g, prop("cloud"), cx, MOON[1] + 2 + math.sin(t * 0.2) * 2, outline=False)
+        # 地面、石、葫芦
+        g.d.line((0, FLOOR, 127, FLOOR), fill=1)
+        for i in range(14):                                         # 地上零星的草点
+            gx, gy = int(rand(i, 21) * 126), FLOOR + 3 + int(rand(i, 22) * 9)
+            g.px(gx, gy), g.px(gx + 1, gy - 1)
+        for gx in (8, 70, 92, 118):
+            pix.blit(g, TUFT[(gx // 3) % 3], gx, FLOOR - 2, outline=False)
+        pix.blit(g, rock(22, 7), DX - 11, FLOOR - 6)
+        pix.blit(g, prop("gourd"), DX + 14, FLOOR - 11)
+        # 梅枝、花瓣
+        bx = -48 + 48 * ease_out(span(e3, 0.3, 1.3)) if not on else 0
+        pix.blit(g, prop("branch"), bx, 0)
+        for i, (fx, fy) in enumerate(FLOWERS):
+            pix.blit(g, BLOSSOM[i % 2], bx + fx - 1, fy - 1)
+        for i in range(3):                                          # 飘落的花瓣
+            pk = ((t + i * 5.3) % 16) / 6.0
+            if pk < 1:
+                fx, fy = FLOWERS[(i * 2 + int((t + i * 5.3) // 16)) % len(FLOWERS)]
+                px_ = bx + fx + pk * 14 + math.sin(pk * 9 + i) * 3
+                py_ = fy + pk * (FLOOR - fy - 2)
+                pix.blit(g, PETAL[int(pk * 6) % 3], px_, py_, outline=False)
+        # 人与影
+        pop = ease_out_back(span(e3, 0.9, 1.5)) if not on else 1.0
+        if pop > 0.05:
+            yy = y + (1 - pop) * 8
+            self.shadow(g, t, legs, x, yy, arm_p, face, cup, span(e3, 1.2, 2.2) if not on else 1.0)
+            h = self.draw_man(g, t, legs, x, yy, arm_p, face, cup)
+            if cup and arm_p and arm_p[1] < -9 and not dancing:   # 杯中映月
+                hx, hy = h["hand"]
+                if int(t * 6) % 2:
+                    g.px(hx + 1, hy - 5), g.px(hx, hy - 6), g.px(hx + 2, hy - 6), g.px(hx + 1, hy - 7)
+        # 字（右下，地面上）
+        if on:
+            if dancing:
+                if 1.0 < k < 9.6:
+                    label(g, 126, FLOOR - 1, "我歌月徘徊" if k < 5.3 else "我舞影零乱", align="right")
+            else:
+                n = int(t // TOAST)
+                kk = t % TOAST
+                if n % 2 == 1 and 5.4 < kk < 11.5:
+                    label(g, 126, FLOOR - 1, LINES[(n // 2) % len(LINES)], align="right")
+        return dancing, mx_
 
-    def mx(self, g: Gfx, t: float, st, a, sway: float):
-        ox = int(round(sway / 3))
-        for y in range(8):
-            for x in range(8):
-                if (x - 3.5 - ox) ** 2 + (y - 3.5) ** 2 <= 12.5:
-                    g.mx[y, x] = True
-        cy = int((t * 0.6) % 14) - 3  # 云影从月面掠过
-        for x in range(8):
-            if 0 <= cy < 8 and (x + int(t)) % 3:
-                g.mx[cy, x] = False
-        if st == "sit" and a[0] > 0.9:  # 举杯时月亮“眨眼”
-            g.mx_level = 2
+    def shadow(self, g: Gfx, t, legs, x, y, arm_p, face, cup, a: float):
+        """月在右上：影子往左下投——把人形画到暂存画布，上下翻转、压扁、斜切，铺成网点"""
+        if a <= 0:
+            return
+        s = self.sh
+        s.clear()
+        self.draw_man(s, t, legs, x, y, arm_p, face, cup)
+        m = s.array()
+        y0 = max(0, int(y) - 40)
+        sub = m[y0:int(y) + 1]
+        if not sub.any():
+            return
+        rows = sub[::-1][::2]                       # 翻转 + 压扁一半
+        out = np.zeros_like(m)
+        for i, row in enumerate(rows):
+            yy = FLOOR + 1 + i
+            if yy >= 64:
+                break
+            shift = -int(i * 2.2) - 3
+            if shift < 0:
+                out[yy, :shift] = row[-shift:]
+        if a < 1:
+            out &= (np.arange(128)[None, :] % 4) < int(a * 4 + 1)
+        pat = (np.add.outer(np.arange(64), np.arange(128)) % 2 == 0)
+        img = g.array()
+        img[out] = False
+        img[out & pat] = True
+        g.put(img)
 
-    # ------------------------------------------------------------ 阶段
+    def mx(self, g: Gfx, t: float, dancing: bool, mxx: float):
+        off = int(round((mxx - MOON[0]) / 4)) if dancing else 0
+        for yy in range(8):
+            for xx in range(8):
+                if (xx - 3.5 - off) ** 2 + (yy - 3.5) ** 2 < 11.5:
+                    g.mx_set(xx, yy)
+        g.mx_set(2 + off, 2, False), g.mx_set(5 + off, 4, False)
+        cx = (t * 2.2) % 220 - 40
+        if 60 < cx < 140:                           # 云影掠过
+            c = int((cx - 60) / 10)
+            for xx in range(c - 2, c + 1):
+                g.mx_set(xx, 4, False), g.mx_set(xx + 1, 5, False)
 
     def enter(self, g: Gfx, t: float):
-        my = lerp(80, MOON[1], ease_out(span(t, 0.0, 1.6)))
-        bdx = lerp(-40, 0, ease_out(span(t, 0.5, 1.5)))
-        self.frame(g, 0.0, show=span(t, 1.4, 2.6), moon_y=my, bdx=bdx)
-        if t < 1.6:
-            g.mx[:] = False
-            r = ease_out(span(t, 0, 1.6)) * 4
-            for y in range(8):
-                for x in range(8):
-                    if (x - 3.5) ** 2 + (y - 3.5 - (4 - r) * 2) ** 2 <= 12.5 and y >= 8 - r * 2:
-                        g.mx[y, x] = True
+        self.scene(g, t, min(t / self.T["enter"], 0.999))
+        self.mx(g, t, False, MOON[0])
+        if t < 1.0:
+            g.mx[: int(8 - t * 8)] = False
 
     def hold(self, g: Gfx, t: float):
         self.ht = t
-        self.frame(g, t)
+        d, mxx = self.scene(g, t)
+        self.mx(g, t, d, mxx)
 
     def exit(self, g: Gfx, t: float):
-        self.frame(g, self.ht + t)
-        iris(g, span(t, 0.0, self.T["exit"]), 80, 30)
-        if t > 0.8:
-            g.mx[:] = False
+        tt = self.ht + t
+        d, mxx = self.scene(g, tt)
+        self.mx(g, tt, d, mxx)
+        iris(g, t / self.T["exit"], MOON[0], MOON[1] + 4)

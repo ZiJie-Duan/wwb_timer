@@ -1,319 +1,371 @@
-"""听雨：温庭筠《更漏子》“梧桐树，三更雨，不道离情正苦。一叶叶，一声声，空阶滴到明。”
+"""听雨：温庭筠《更漏子》“梧桐树，三更雨……一叶叶，一声声，空阶滴到明”；雨打芭蕉；
+《道德经》七十八章“天下莫柔弱于水，而攻坚强者莫之能胜”（檐下的滴水石被滴出一个小坑）。
 
-入场：屋檐从上方压下来，第一滴水在滴水瓦尖上鼓起、落下，阶前溅起水花，雨声渐密。
-持续：檐下一排瓦当、滴水，每个瓦尖按自己的节奏滴水：水珠鼓胀 → 落下 → 石阶上溅开、漾出一圈水纹；
-      石阶上被滴出一个个小坑（滴水穿石，“天下莫柔弱于水，而攻坚强者莫之能胜”）。
-      左边一片芭蕉被檐水打得一颤一颤（雨打芭蕉）。远山在雨里若有若无。
-      小事件：青蛙跳上石阶鼓腮叫两声又跳走；远处闷雷一闪，随后雨下得急一阵；蜗牛沿匾绳慢慢往上爬。
-退场：屋檐收起，雨帘落尽。
+侧视：左边一间小屋的檐廊（瓦顶斜下来，檐口一片瓦当、一片滴水），廊柱、木地板，墙上挂“听雨”小匾；
+小道士盘坐廊下听雨，手边一盏茶冒着热气。右边院子：远山在雨里只剩一道隔点山脊，斜雨丝一阵密一阵疏，
+芭蕉三片大叶被雨打得一颤一颤，地上水洼一圈圈涟漪。
+持续：檐口水珠鼓起 → 落下（越落越快）→ 打在滴水石上溅起水花；风铃轻摆；小道士呼吸眨眼，时而闭目。
+      小事件：端起茶盏喝一口，热气一冒（37s）；青蛙跳上石阶，鼓腮叫两声再跳走（83s）；
+      远处一道闪电，满屏一闪，小道士吓一跳，随后雨急一阵（151s）；廊柱上一只蜗牛慢慢往上爬（十分钟一趟）。
+退场：雨渐停，檐口最后一滴落下，画面淡出。
+点阵：顶上一行檐，三列水珠落下，落地溅开。
 """
 from __future__ import annotations
 
 import math
 
+from ..engine import pix
 from ..engine.anim import clamp, ease_in, ease_out, ease_out_back, lerp, noise, rand, span
-from ..engine.fx import lightning, rain
-from ..engine.gfx import Gfx, Sprite
+from ..engine.chars import Part, daoshi, figure
+from ..engine.gfx import Gfx
 from ..engine.scene import Rest, register
-from .x3_lib import ctext, ptext, every, halo, layer, peaks
+from .x3_lib import bake, drops, every, mountain, plate, ridge, ring, splash
 
-EAVE = 6          # 檐口
-TIP = 12          # 滴水瓦尖（水珠挂在这里）
-STEP = 50         # 石阶面
-DRIPS = [10, 20, 30, 40, 50, 60, 70, 80]  # 滴水位置（右边被匾挡住的不画）
-LEAF_DRIP = 2     # 第 3 个滴水落在芭蕉上
-LEAF_BASE = (3, 63)
+FLOOR = 50          # 廊下地板
+DX = 40             # 小道士
+TIP = (73, 17)      # 檐口滴水
+STONE = (74, 57)    # 滴水石
+GROUND = 58
+PILLAR = 60
 
-FROG = [halo(Sprite("""
-  .##.##.
-  #######
-  .#####.
-  ##...##
-""")), halo(Sprite("""
-  .##.##.
-  #######
-  ######.
-  .##.##.
-  #.....#
-"""))]
+
+def _roof():
+    """瓦顶（侧视）：斜坡上一垄垄筒瓦（竖肋），檐口一排圆瓦当，下面梁和一排椽头"""
+    def ry(x):
+        return 1 + max(0.0, (x - 24) * 11 / 48)
+
+    def draw(g):
+        g.d.polygon([(-1, -1), (24, -1), (73, 11), (73, 16), (-1, 16)], fill=0)
+        g.d.line((-1, 0, 24, 0, 73, 11), fill=1)                 # 屋脊线
+        for x in range(0, 72, 3):                                 # 筒瓦：竖肋
+            y = ry(x)
+            g.d.line((x, y + 1, x, y + 4), fill=1)
+            g.px(x + 1, y + 4)
+        for x in range(1, 73, 3):                                 # 檐口一排瓦当
+            y = ry(x) + 5
+            g.d.ellipse((x - 1, y, x + 1, y + 2), fill=1)
+            g.px(x, y + 1, 0)
+        g.d.line((0, 15, 66, 15), fill=1)                        # 檐下梁
+        for x in range(3, 64, 6):                                 # 椽头
+            g.d.rectangle((x, 12 if x > 24 else 9, x + 1, 14), fill=1)
+
+    return bake(draw, solid=lambda d: d.polygon([(-1, -1), (24, -1), (74, 11), (74, 18), (-1, 16)], fill=1))
+
+
+def _porch():
+    """廊柱、地板、墙（窗格）"""
+    def draw(g):
+        g.d.rectangle((PILLAR, 16, PILLAR + 3, FLOOR), fill=1)       # 柱
+        g.d.line((PILLAR + 2, 18, PILLAR + 2, FLOOR - 2), fill=0)
+        g.d.rectangle((PILLAR - 1, FLOOR - 2, PILLAR + 4, FLOOR), fill=1)
+        g.d.line((0, FLOOR, 68, FLOOR), fill=1)                    # 地板
+        g.d.line((0, FLOOR + 2, 68, FLOOR + 2), fill=1)
+        for x in range(2, 72, 7):
+            g.px(x, FLOOR + 1)
+        g.d.rectangle((0, FLOOR + 3, 68, 63), fill=0)
+        for row, y in enumerate((FLOOR + 4, FLOOR + 9)):           # 台基：错缝条石
+            g.d.line((0, y + 4, 68, y + 4), fill=1)
+            for x in range(-6 + row * 7, 68, 14):
+                g.d.line((x, y, x, y + 3), fill=1)
+                g.px(x + 3, y + 1)
+        g.d.line((0, FLOOR + 3, 68, FLOOR + 3), fill=0)
+        g.d.line((68, FLOOR + 3, 68, 63), fill=1)
+        for x in range(2, 30, 6):                                  # 墙下的窗格
+            g.d.line((x, 34, x, 47), fill=1)
+        g.d.rectangle((0, 33, 30, 48), outline=1)
+        g.d.line((0, 40, 30, 40), fill=1)
+        g.d.line((31, 18, 31, FLOOR), fill=1)                      # 墙与廊的分界柱
+        g.d.line((32, 18, 32, FLOOR), fill=0)
+
+    return bake(draw)
+
+
+def _stone():
+    p = Part(11, 5)
+    p.shape("polygon", [(0, 4), (1, 1), (4, 0), (8, 0), (10, 2), (10, 4)], fill=0)
+    p.d.polygon([(0, 4), (1, 1), (4, 0), (8, 0), (10, 2), (10, 4)], outline=1)
+    p.d.line((3, 1, 7, 1), fill=1)
+    p.px(5, 1, 0)                                  # 滴出的小坑
+    p.dither([(7, 2), (10, 2), (10, 4), (7, 4)], 0.5, 1)
+    return p.sprite()
+
+
+def _cup():
+    p = Part(5, 4)
+    p.shape("polygon", [(0, 0), (4, 0), (3, 3), (1, 3)], fill=1)
+    p.d.line((1, 1, 3, 1), fill=0)
+    return p.sprite()
+
+
+FROG = pix.frames("""
+  ##   ##
+ #.## #.#
+ ########
+##.####.#
+#########
+ ##.  .##
+---
+  ##   ##
+ #.## #.#
+ ########
+##.####.#
+##.....##
+ #.....#
+ ##.  .##
+---
+   ##   ##
+  #.## #.#
+ #########
+#####.###
+##    ###
+#      ##
+""")
+
+SNAIL = pix.sprite("""
+ .##
+#.#.#
+ ##.#
+## ##
+""")
+
+_C: dict = {}
+
+
+def parts():
+    if not _C:
+        _C.update(roof=_roof(), porch=_porch(), stone=_stone(), cup=_cup(),
+                  far=mountain(ridge([(88, 34, 14), (104, 27, 16), (122, 31, 12)], 4, base=52, rough=1.0,
+                                     round_top=True), lit=((0.25, 2),), shade=((0.125, 1),), outline=2,
+                               solid=False))
+        p = Part(12, 8)                                         # 端茶的手（袖子向前上举）
+        p.shape("polygon", [(0, 2), (4, 1), (9, 0), (10, 4), (3, 7), (0, 6)], fill=1)
+        p.d.line((8, 0, 8, 4), fill=0)
+        p.dither([(1, 5), (8, 3), (8, 5), (3, 7)], 0.5, 0)
+        p.shape("rectangle", (9, 0, 11, 3), fill=1)
+        spr = p.sprite()
+        spr.hand = (10, 0)
+        _C["sip"] = spr
+    return _C
+
+
+def leaf(g: Gfx, x: float, y: float, ln: float, ang: float, droop: float, flip: bool = False, wd: float = 5.0):
+    """芭蕉叶（像素）：叶脉从 (x, y) 弯出去（先上扬、再下垂），叶片是一道道平行侧脉（芭蕉叶的竖纹），边上有裂口"""
+    s = -1 if flip else 1
+    mid = []
+    for i in range(14):
+        k = i / 13
+        a = ang - droop * k * k * 2.2
+        if i == 0:
+            px_, py_ = x, y
+        else:
+            px_ = mid[-1][0] + s * math.cos(a) * ln / 13
+            py_ = mid[-1][1] - math.sin(a) * ln / 13
+        mid.append((px_, py_))
+    edge = []
+    for i in range(1, 14):
+        k = i / 13
+        w_ = wd * math.sin(math.pi * min(1.0, k * 1.1)) * (0.4 + 0.6 * k ** 0.3)
+        mx, my = mid[i]
+        edge.append((mx + s * 1.0, my - w_))
+        if i % 1 == 0 and not (i in (5, 9)):            # 侧脉（5、9 处裂开）
+            g.d.line((mx, my, mx + s * 1.0, my - w_), fill=1)
+    g.d.line(mid, fill=1)
+    g.d.line([mid[1]] + edge, fill=1)
+    g.d.line(mid[4:], fill=1)
+    for i in range(4, 13, 2):                          # 叶下沿一道细边
+        g.px(mid[i][0], mid[i][1] + 1)
 
 
 @register
-class ListenRain(Rest):
+class RainListen(Rest):
     id = "x3.rain"
     name = "听雨"
-    desc = "檐下滴水一声声落在空阶上，溅花、漾纹，滴出小坑；雨打芭蕉，青蛙偶来，闷雷远去"
+    desc = "檐廊下小道士盘坐听雨：檐口水珠一滴滴落在石上溅花，芭蕉被雨打得一颤一颤；喝茶、蛙鸣、远雷，蜗牛爬柱"
     T = {"enter": 2.8, "exit": 1.2}
 
     def setup(self):
-        s = self.seed
-        self.hills = layer(peaks(128, 46, [(20, 30, 30), (64, 24, 26), (108, 32, 30)], s, 1.0), 0.14, outline=2,
-                           fog=10, floor=0.0)
-        self.period = [2.4 + rand(i, s) * 2.2 for i in range(len(DRIPS))]
-        self.phase = [rand(i + 40, s) for i in range(len(DRIPS))]
-        self.period[LEAF_DRIP] = 3.1
+        self.P = parts()
 
-    # ------------------------------------------------------------ 零件
+    # ------------------------------------------------------------ 雨
 
-    def roof(self, g: Gfx, dy: float = 0.0):
-        y0 = dy
-        g.d.rectangle((0, y0, 127, y0 + EAVE - 1), fill=0)
-        for x in range(-4, 132, 5):                       # 瓦垄
-            g.d.line((x + 2, y0, x, y0 + EAVE - 2), fill=1)
-        g.d.line((0, y0 + EAVE - 1, 127, y0 + EAVE - 1), fill=1)
-        for i, x in enumerate(range(5, 128, 10)):        # 瓦当（圆）与滴水（三角）相间
-            g.d.ellipse((x - 2, y0 + EAVE, x + 2, y0 + EAVE + 4), fill=0, outline=1)
-            g.px(x, y0 + EAVE + 2)
-            xd = x + 5
-            g.d.polygon([(xd - 3, y0 + EAVE), (xd + 3, y0 + EAVE), (xd, y0 + TIP - 1)], fill=1)
+    def rate(self, t: float) -> float:
+        """雨势 0..1：缓慢起伏；打雷后急一阵"""
+        r = 0.45 + 0.35 * noise(t * 0.05, self.seed)
+        ev = every(t, 151, 30, 40)
+        if ev and ev[1] > 1.0:
+            r += 0.5 * (1 - span(ev[1], 6, 30))
+        return clamp(r)
 
-    def plaque(self, g: Gfx, dy: float = 0.0, swing: float = 0.0):
-        """匾“听雨”"""
-        x0, y0 = 92 + swing, 14 + dy
-        g.d.line((x0 + 5 - swing, EAVE + dy, x0 + 5, y0), fill=1)
-        g.d.line((x0 + 29 - swing, EAVE + dy, x0 + 29, y0), fill=1)
-        g.d.rectangle((x0, y0, x0 + 34, y0 + 18), fill=0, outline=1)
-        g.d.rectangle((x0 + 2, y0 + 2, x0 + 32, y0 + 16), outline=1)
-        ctext(g, x0 + 17, y0 + 4, "听雨", align="center")
+    def drip(self, g: Gfx, t: float, on: float = 1.0):
+        """檐口的水珠：鼓起 → 落下 → 石上溅花"""
+        per = 1.9
+        k = (t % per) / per
+        x, y0 = TIP[0], TIP[1] + 2
+        y1 = STONE[1] - 1
+        if k < 0.55:
+            if on > 0:
+                r = k / 0.55
+                g.px(x, y0)
+                if r > 0.4:
+                    g.px(x, y0 + 1)
+                if r > 0.8:
+                    g.px(x - 1, y0 + 1), g.px(x + 1, y0 + 1), g.px(x, y0 + 2)
+        elif k < 0.8:
+            if on > 0:
+                f = ease_in(span(k, 0.55, 0.8))
+                yy = lerp(y0 + 2, y1, f)
+                g.d.line((x, yy - 1 - f * 2, x, yy), fill=1)
+        else:
+            f = span(k, 0.8, 1.0)
+            splash(g, x, y1 - 1, f)
+        if k > 0.82:
+            ring(g, x, y1 + 1, span(k, 0.82, 1.0), rmax=4, flat=0.3)
 
-    def snail(self, g: Gfx, t: float):
-        """蜗牛沿匾左边的绳往上爬，十分钟爬一趟"""
-        p = (t % 600.0) / 600.0
-        y = lerp(30, 9, p)
-        x = 96
-        if p > 0.97:
-            return
-        g.d.ellipse((x - 3, y, x + 1, y + 4), fill=0, outline=1)
-        g.px(x - 1, y + 2)
-        g.d.line((x, y - 2, x, y), fill=1)  # 触角
-        if int(t * 1.5) % 3:
-            g.px(x - 1, y - 3)
+    def yard(self, g: Gfx, t: float, rate: float):
+        g.blit(self.P["far"], 0, 0)
+        g.d.line((68, GROUND, 127, GROUND), fill=1)  # 院子地面、水洼
+        for x in range(76, 127, 3):
+            g.px(x, GROUND + 2 + (x // 3) % 2)
+        g.d.line((86, GROUND + 4, 112, GROUND + 4), fill=1)
+        for i in range(3):                         # 水洼里的涟漪
+            per = 1.3 + i * 0.4
+            k = ((t + i * 0.7) % per) / per
+            ring(g, 90 + i * 9 + int(rand(int((t + i * 0.7) // per), i) * 6), GROUND + 4, k, rmax=4, flat=0.3)
+        n = int(10 + 26 * rate)
+        drops(g, (70, 0, 128, GROUND), t, self.seed, n=n, speed=80, length=4, slant=0.3)
+        # 芭蕉：三片大叶，被雨点打中就往下一颤
+        g.d.rectangle((111, 30, 114, GROUND), fill=0, outline=1)    # 芭蕉的假茎
+        for y in range(33, GROUND, 4):
+            g.d.line((112, y, 113, y + 2), fill=1)
+        for j, (bx, by, ln, ang, fl, wd) in enumerate(((112, 31, 28, 1.2, True, 6), (113, 32, 22, 0.9, False, 5),
+                                                       (112, 37, 24, 0.5, True, 5), (114, 40, 14, 0.7, False, 4))):
+            per = 2.3 + j * 0.9
+            k = ((t + j * 1.1) % per) / per
+            hit = math.exp(-k * 5) * math.sin(k * 20) * 0.22 * (0.5 + rate)
+            droop = 0.45 + hit + math.sin(t * 0.8 + j) * 0.03
+            leaf(g, bx, by, ln, ang, droop, flip=fl, wd=wd)
+        for x in (76, 80, 124):                    # 地上的雨花
+            per = 0.7 + (x % 5) * 0.11
+            k = ((t + x * 0.13) % per) / per
+            splash(g, x + int(rand(int((t + x * 0.13) / per), x) * 6), GROUND, k * 1.6)
 
-    def steps(self, g: Gfx, t: float):
-        g.d.rectangle((0, STEP, 127, 63), fill=0)
-        g.d.line((0, STEP, 127, STEP), fill=1)
-        g.d.line((0, 57, 127, 57), fill=1)
-        for x in (24, 66, 104):
-            g.d.line((x, STEP + 1, x, 56), fill=1)
-        for x in (8, 46, 88, 122):
-            g.d.line((x, 58, x, 63), fill=1)
-        for i, x in enumerate(DRIPS):                       # 滴水穿石：每个滴点下一个小坑
-            if i != LEAF_DRIP:
-                g.d.line((x - 1, STEP, x + 1, STEP), fill=0)
-                g.px(x, STEP + 1)
-        for j in range(18):  # 石面的苔点
-            g.px(rand(j, 21) * 128, 59 + rand(j, 22) * 5)
+    def chime(self, g: Gfx, t: float, gust: float):
+        x, y = 52, 17
+        a = math.sin(t * 2.1) * (0.12 + gust * 0.4)
+        bx, by = x + math.sin(a) * 6, y + math.cos(a) * 6
+        g.d.line((x, y, bx, by), fill=1)
+        g.d.polygon([(bx - 2, by + 3), (bx + 2, by + 3), (bx + 1, by), (bx - 1, by)], fill=1)
+        g.px(bx + math.sin(a) * 4, by + 6)
+        if gust > 0.5 and int(t * 4) % 2 == 0:
+            g.px(bx + 4, by - 1), g.px(bx + 5, by - 2)
 
-    def drip(self, g: Gfx, i: int, t: float, rate: float = 1.0):
-        x = DRIPS[i]
-        P = self.period[i] / rate
-        k = (t / P + self.phase[i])
-        n = math.floor(k)
-        p = k - n
-        fall_at, land_y = 0.62, STEP - 1
-        if i == LEAF_DRIP:
-            land_y = self.leaf_hit_y()
-        if p < fall_at:  # 水珠在瓦尖慢慢鼓起来
-            sz = p / fall_at
-            g.px(x, TIP)
-            if sz > 0.45:
-                g.px(x, TIP + 1)
-            if sz > 0.8:
-                g.d.rectangle((x - 1 if sz > 0.92 else x, TIP + 1, x, TIP + 2), fill=1)
-        ft = (p - fall_at) * P  # 下落经过的秒数
-        fall_s = math.sqrt(2 * (land_y - TIP) / 260.0)
-        if p >= fall_at and ft < fall_s:
-            y = TIP + 0.5 * 260 * ft * ft
-            g.d.line((x, y - 2, x, y), fill=1)
-        # 上一滴（或这一滴）落地之后的水花、水纹
-        since = ft - fall_s if p >= fall_at else (p + 1 - fall_at) * P - fall_s
-        if 0 <= since < 1.0 and i != LEAF_DRIP:
-            for j, (vx, vy) in enumerate(((-18, -22), (16, -26), (-9, -30), (10, -16))):
-                if since < 0.32:
-                    sx = x + vx * since
-                    sy = land_y + vy * since + 0.5 * 260 * since * since
-                    if sy <= land_y:
-                        g.px(sx, sy)
-            r = ease_out(since) * 9
-            if since > 0.08 and r > 1:
-                g.d.arc((x - r, STEP - 1.5, x + r, STEP + 1.5), 0, 360, fill=1) if since < 0.55 else None
-                if since >= 0.55:
-                    for a in range(0, 360, 30):
-                        if rand(a + n * 7, i) < 1 - since:
-                            g.px(x + math.cos(math.radians(a)) * r, STEP + math.sin(math.radians(a)) * 1.5)
-        return since if i == LEAF_DRIP else None
+    def world(self, g: Gfx, t: float, rate: float, drip: float = 1.0):
+        P = self.P
+        thunder = every(t, 151, 6, 40)
+        bolt = thunder and 1.0 < thunder[1] < 1.35
+        self.yard(g, t, rate)
+        if bolt:  # 闪电：从云里劈到远山
+            x = 104
+            pts = [(x, 0)]
+            for i in range(7):
+                x += (rand(i, int(t)) - 0.5) * 10
+                pts.append((x, (i + 1) * 4))
+            g.d.line(pts, fill=1, width=2)
+            g.d.line((pts[3][0], pts[3][1], pts[3][0] + 6, pts[3][1] + 5), fill=1)
+        g.blit(P["porch"], 0, 0)
+        pix.blit(g, P["stone"], STONE[0] - 5, STONE[1] - 3)
+        self.drip(g, t, drip)
+        # 蜗牛（十分钟爬一趟柱子）
+        k = (t % 600) / 600
+        g.blit(SNAIL, PILLAR - 1, lerp(FLOOR - 6, 20, k) + (int(t * 2) % 2) * 0)
+        g.blit(P["roof"], 0, 0)
+        self.chime(g, t, 1.0 if thunder and thunder[1] < 4 else 0.0)
+        self.frog(g, t)
+        # 小道士与茶
+        sip = every(t, 37, 5, 12)
+        wow = thunder and 1.0 < thunder[1] < 3.5
+        if sip and 0.6 < sip[1] < 4.4:
+            h = figure(g, DX, FLOOR, t, legs="sit", arm=P["sip"], arm_at=(-1, -18),
+                       face="sleep" if 1.6 < sip[1] < 3.4 else "normal")
+            hx, hy = h["hand"]
+            pix.blit(g, P["cup"], hx - 2, hy - 3)
+            self.steam(g, hx, hy - 4, t)
+        else:
+            ph = t % 23
+            pose = "meditate" if 9 < ph < 16 else "sit"
+            daoshi(g, DX, FLOOR, pose, t, face="wow" if wow else "normal")
+            pix.blit(g, P["cup"], DX + 15, FLOOR - 4)
+            self.steam(g, DX + 17, FLOOR - 5, t)
+        return thunder
 
-    def leaf_hit_y(self) -> float:
-        return 26.0
-
-    def leaf(self, g: Gfx, t: float):
-        """芭蕉：宽叶、横向平行叶脉、边上有被风撕开的口子；被檐水打中就一颤"""
-        i = LEAF_DRIP
-        P = self.period[i]
-        k = t / P + self.phase[i]
-        p = k - math.floor(k)
-        fall_s = math.sqrt(2 * (self.leaf_hit_y() - TIP) / 260.0)
-        since = (p - 0.62) * P - fall_s
-        if since < 0:
-            since += P
-        ang = -0.12 * math.exp(-since * 3.5) * math.cos(since * 14)
-        ang += (noise(t * 0.3, self.seed) - 0.5) * 0.04
-        bx, by = LEAF_BASE
-        ca, sa = math.cos(ang), math.sin(ang)
-
-        def rot(px, py):
-            dx, dy = px - bx, py - by
-            return bx + dx * ca - dy * sa, by + dx * sa + dy * ca
-
-        N = 16
-        p0, p1, p2 = (bx + 5, by - 4), (bx + 8, by - 46), (bx + 50, by - 30)
-        spine = []
-        for j in range(N + 1):  # 二次贝塞尔：叶柄往上，叶片向右拱、叶尖下垂
-            u = j / N
-            q = ((1 - u) ** 2 * p0[0] + 2 * u * (1 - u) * p1[0] + u * u * p2[0],
-                 (1 - u) ** 2 * p0[1] + 2 * u * (1 - u) * p1[1] + u * u * p2[1])
-            spine.append(rot(*q))
-        top, bot = [], []
-        for j in range(N + 1):
-            u = j / N
-            wdt = 0.8 if u < 0.2 else 8.5 * math.sin(math.pi * (u - 0.2) / 0.8) ** 0.6 + 0.6
-            if j in (9, 12):          # 撕裂的口子
-                wdt *= 0.45
-            a_, b_ = spine[max(j - 1, 0)], spine[min(j + 1, N)]
-            nx, ny = b_[0] - a_[0], b_[1] - a_[1]
-            ln = math.hypot(nx, ny) or 1
-            px_, py_ = ny / ln, -nx / ln          # 指向叶片上侧
-            sx, sy = spine[j]
-            top.append((sx + px_ * wdt, sy + py_ * wdt))
-            bot.append((sx - px_ * wdt * 0.7, sy - py_ * wdt * 0.7))
-        nx0 = bx + 9                                           # 后面一卷还没展开的新叶
-        g.d.polygon([(nx0, 63), (nx0 - 1, 40), (nx0 + 1, 24), (nx0 + 3, 40), (nx0 + 3, 63)], fill=0, outline=1)
-        g.d.polygon(top + bot[::-1], fill=0, outline=1)
-        for j in range(4, N - 1, 2):     # 平行侧脉：从主脉斜向叶尖方向伸到叶缘
-            g.d.line((spine[j], top[min(j + 1, N)]), fill=1)
-        g.d.line(spine, fill=1)
-        g.d.line((bx + 2, 63, spine[0][0], spine[0][1]), fill=1)   # 芭蕉茎
-        g.d.line((bx + 7, 63, spine[0][0] + 1, spine[0][1]), fill=1)
-        if 0 <= since < 0.3:  # 打在叶上的水花
-            for vx, vy in ((-14, -20), (12, -18), (2, -26)):
-                g.px(DRIPS[i] + vx * since, self.leaf_hit_y() - 2 + vy * since + 130 * since * since)
+    def steam(self, g: Gfx, x: float, y: float, t: float):
+        for i in range(2):
+            k = ((t * 0.6 + i * 0.5) % 1)
+            yy = y - k * 8
+            xx = x + math.sin(t * 3 + i * 2 + k * 5) * 1.2 + i
+            if k < 0.85:
+                g.px(xx, yy)
+                if k < 0.4:
+                    g.px(xx, yy - 1)
 
     def frog(self, g: Gfx, t: float):
-        ev = every(t, 83.0, 15.0, 37.0)
-        if not ev:
-            return False
-        k, lt = ev
-        sit_x = 40 + rand(k, 4) * 30
-        y = STEP
-        if lt < 1.2:  # 跳上来
-            p = lt / 1.2
-            x = lerp(-8, sit_x, p)
-            yy = y - 6 - math.sin(p * math.pi) * 10
-            g.blit(FROG[1], x, yy)
-        elif lt < 13.6:
-            g.blit(FROG[0], sit_x, y - 5)
-            c = lt - 1.2
-            if 3 < c < 4.4 or 6 < c < 7.4:  # 鼓腮
-                r = 1.5 + math.sin((c % 3 - 0) * math.pi / 1.4) * 1.5
-                g.d.ellipse((sit_x + 2 - r, y - 1 - r * 0.5, sit_x + 4 + r, y + r * 0.5), fill=0, outline=1)
-                if int(c * 6) % 2:
-                    ctext(g, sit_x + 10, y - 13, "呱", size=8)
-        else:  # 跳走
-            p = (lt - 13.6) / 1.4
-            x = lerp(sit_x, 140, p)
-            yy = y - 6 - math.sin(p * math.pi * 2 % math.pi) * 8
-            g.blit(FROG[1], x, yy)
-        return True
-
-    def thunder(self, g: Gfx, t: float) -> float:
-        """远雷：一闪，之后雨急一阵。返回雨势倍数"""
-        ev = every(t, 151.0, 18.0, 64.0)
-        if not ev:
-            return 1.0
-        k, lt = ev
-        if lt < 0.12 or 0.22 < lt < 0.3:
-            x = 30 + rand(k, 9) * 60
-            lightning(g, x, 16, x + rand(k, 3) * 10 - 5, 38, seed=k * 3 + self.seed, jag=3, branches=1)
-        return 1.0 + 0.8 * span(lt, 1.5, 3.5) * (1 - span(lt, 12, 18))
-
-    def mx(self, g: Gfx, t: float, rate: float = 1.0):
-        g.mx[0, :] = True
-        for c, per in ((1, 1.3), (4, 1.7), (6, 1.1)):
-            p = (t * rate / per + c * 0.37) % 1.0
-            y = 1 + int(p * 7.5)
-            if y <= 6:
-                g.mx_set(c, y)
-            else:
-                g.mx_set(c - 1, 7)
-                g.mx_set(c + 1, 7)
-        for x in range(8):
-            if rand(x + int(t * 3) * 8, 5) < 0.12:
-                g.mx_set(x, 7)
-
-    # ------------------------------------------------------------ 阶段
-
-    def scene(self, g: Gfx, t: float, rate: float = 1.0, dy: float = 0.0, drips: bool = True):
-        g.blit(self.hills, 0, 0)
-        rain(g, t, self.seed, n=int(22 * rate), speed=110, length=3, slant=0.18, box=(0, EAVE + 2 + dy, 128, STEP))
-        self.steps(g, t)
-        if drips:
-            for i in range(len(DRIPS)):
-                self.drip(g, i, t, rate if i != LEAF_DRIP else 1.0)
-        self.leaf(g, t)
-        self.roof(g, dy)
-        self.plaque(g, dy, swing=(noise(t * 0.4, self.seed + 3) - 0.5) * 1.2)
-
-    def enter(self, g: Gfx, t: float):
-        T = self.T["enter"]
-        dy = -(1 - ease_out(span(t, 0, 1.0))) * 30   # 屋檐从上方压下来
-        rate = 0.3 + 0.7 * span(t, 0.8, T)
-        g.blit(self.hills, 0, 0)
-        rain(g, t, self.seed, n=int(22 * rate), speed=110, length=3, slant=0.18, box=(0, EAVE + 2 + dy, 128, STEP))
-        self.steps(g, t)
-        if t > 1.0:
-            for i in range(len(DRIPS)):
-                if t - 1.0 > i * 0.12:
-                    self.drip(g, i, t, 1.0)
-        self.leaf(g, t)
-        self.roof(g, dy)
-        self.plaque(g, dy, swing=math.sin(t * 6) * 3 * (1 - span(t, 1.0, 2.5)))
-        self.mx(g, t, rate)
-
-    def hold(self, g: Gfx, t: float):
-        rate = 1.0 + 0.3 * (noise(t / 40, self.seed) - 0.5)
-        g.blit(self.hills, 0, 0)
-        rate *= self.thunder(g, t)
-        rain(g, t, self.seed, n=int(22 * rate), speed=110 * min(rate, 1.3), length=3 + int(rate > 1.4), slant=0.18,
-             box=(0, EAVE + 2, 128, STEP))
-        self.steps(g, t)
-        for i in range(len(DRIPS)):
-            self.drip(g, i, t, 1.0)
-        self.leaf(g, t)
-        self.frog(g, t)
-        self.roof(g)
-        self.plaque(g, swing=(noise(t * 0.4, self.seed + 3) - 0.5) * 1.2)
-        self.snail(g, t)
-        self.poem(g, t)
-        self.mx(g, t, rate)
-
-    def poem(self, g: Gfx, t: float):
-        """空阶滴到明：隔一阵在石阶上浮现一次"""
-        ev = every(t, 120.0, 22.0, 6.0)
+        ev = every(t, 83, 10, 25)
         if not ev:
             return
         lt = ev[1]
-        k = span(lt, 0, 2.5) * (1 - span(lt, 19, 22))
-        s = "空阶滴到明"
-        n = int(round(k * len(s)))
-        if n:
-            g.d.rectangle((64, STEP + 1, 127, 63), fill=0)
-            ptext(g, 66, STEP + 2, s, n)
+        sx, sy = STONE[0] + 2, STONE[1] - 3
+        if lt < 1.0:  # 从右边跳过来
+            k = span(lt, 0, 1.0)
+            x = lerp(118, sx, k)
+            y = lerp(GROUND, sy, k) - math.sin(k * math.pi) * 9
+            pix.blit(g, FROG[2], x - 4, y - 6, flip=True)
+        elif lt < 8.5:
+            croak = (1.8 < lt < 2.4) or (3.0 < lt < 3.6)
+            pix.blit(g, FROG[1] if croak else FROG[0], sx - 4, sy - (7 if croak else 6))
+            if croak:
+                for j in range(2):
+                    g.d.arc((sx + 6 + j * 3, sy - 8 - j, sx + 10 + j * 3, sy - 2 + j), 300, 60, fill=1)
+        else:
+            k = span(lt, 8.5, 9.6)
+            x = lerp(sx, 130, k)
+            y = lerp(sy, GROUND, k) - math.sin(k * math.pi) * 10
+            pix.blit(g, FROG[2], x - 4, y - 6)
+
+    def mx(self, g: Gfx, t: float, rate: float = 1.0, drip: float = 1.0):
+        g.mx[0, :] = True
+        g.mx[1, ::2] = True
+        for j, col in enumerate((1, 4, 6)):
+            per = 1.3 + j * 0.37
+            k = ((t + j * 0.5) % per) / per
+            y = int(ease_in(k) * 8) + 1
+            if drip > 0 and y < 7:
+                g.mx[y, col] = True
+            elif y >= 7:
+                g.mx[7, col] = True
+                if k > 0.9:
+                    g.mx[6, max(col - 1, 0)] = g.mx[6, min(col + 1, 7)] = True
+
+    def hold(self, g: Gfx, t: float):
+        th = self.world(g, t, self.rate(t))
+        plate(g, 9, 20, "听雨")
+        if th and 1.0 < th[1] < 1.12:
+            pix.flash(g)
+        self.mx(g, t)
+
+    def enter(self, g: Gfx, t: float):
+        T = self.T["enter"]
+        tw = t - T
+        self.world(g, tw, self.rate(tw) * span(t, 0.4, T))
+        g.fade(span(t, 0, 1.0))
+        drop = ease_out_back(span(t, 0.8, 1.8))  # 小匾落下来晃一晃
+        plate(g, 9, lerp(3, 20, drop), "听雨")
+        self.mx(g, tw)
+        g.mx[: max(0, int(8 - t * 6))] = False
 
     def exit(self, g: Gfx, t: float):
-        """屋檐收起，雨帘落尽，画面淡去"""
-        T = self.T["exit"]
-        p = ease_in(t / T)
-        self.scene(g, self.hold_t + t, rate=1 - p, dy=-p * 30, drips=p < 0.3)
-        g.fade(1 - ease_in(span(t, 0.2, T)))
-        self.mx(g, t, 1.0)
-        g.mx[:int(round(p * 8)), :] = False
+        tt = self.hold_t + t
+        k = span(t, 0, self.T["exit"])
+        self.world(g, tt, self.rate(tt) * (1 - k) ** 2)
+        g.fade(1 - span(t, 0.5, 1.2))
+        self.mx(g, tt)
+        g.mx[:, : int(k * 8)] = False

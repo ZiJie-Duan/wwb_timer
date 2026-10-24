@@ -1,320 +1,242 @@
-"""坐看云起：王维《终南别业》“行到水穷处，坐看云起时。偶然值林叟，谈笑无还期。”
+"""坐看云起：王维《终南别业》“行到水穷处，坐看云起时”；陶渊明《归去来兮辞》“云无心以出岫，鸟倦飞而知还”。
 
-入场：隐者拄杖从左边走上山石，坐下；山谷里第一朵云从山后冒出来（陶渊明“云无心以出岫”）。
-持续：远山稀疏、近山浓、山脚隐在雾里；云一朵接一朵从山谷升起、长大、飘散；溪水流到石下就没了（水穷处）。
-      小事件：倦鸟飞回远山（鸟倦飞而知还）；每隔几分钟一位林叟拄杖走来，坐下谈笑一阵再走。
+入场：小道士从左边走上崖头，盘腿坐下（扬起一点土），山水淡入。
+持续：远山（山脊线 + 稀网点）、中山两座夹着山谷（25% 网点、受光坡亮带）；
+      像素云朵从山谷里冒出来（出岫）：小 → 中 → 大，一边升一边往右飘，到高处散成点消失（三朵错开，一朵 33 秒）；
+      山脚一湾溪水碎光往左流，流到崖下就没了（水穷处）；崖头草叶摇动；天上一条长云缓缓横移。
+      小道士坐看，眨眼呼吸，时而闭目一会儿。
+      小事件：倦鸟两只飞回远山、落进山后（47s）；一朵小云飘到小道士跟前，他伸指一点，云“噗”地散成三小团、
+      他笑一下（113s）；“坐看云起时”题在左上角（75s 一次，12 秒）。
 退场：云海从山谷涌上来，把整幅画淹没。
+点阵：两座小山，山谷里一团云往上冒。
 """
 from __future__ import annotations
 
 import math
-import random
 
-from ..engine.anim import clamp, ease_in, ease_in_out, ease_out, lerp, noise, rand, span
-from ..engine.gfx import Gfx, Sprite
+from ..engine import pix
+from ..engine.anim import clamp, ease_in_out, ease_out, ease_out_back, lerp, rand, span
+from ..engine.chars import daoshi, figure
+from ..engine.gfx import Gfx
 from ..engine.scene import Rest, register
-from .x3_lib import Cloud, bird, ctext, every, halo, layer, peaks, poem_cols
+from .x3_lib import bird, cloud, every, faded, glints, mountain, plate, ridge, rock, tri
 
-SIT = Sprite("""
-  ...##...
-  ..####..
-  ..####..
-  ...##...
-  ..####..
-  .######.
-  .######.
-  ########
-  ###.####
-  ###.####
-  ########
-""")  # 背影：坐看
-WALK = [Sprite("""
-  ..##.
-  .####
-  .####
-  ..##.
-  .###.
-  ####.
-  #####
-  .###.
-  .###.
-  .#.#.
-  .#..#
-  #...#
-"""), Sprite("""
-  ..##.
-  .####
-  .####
-  ..##.
-  .###.
-  .###.
-  .####
-  .###.
-  .###.
-  ..#..
-  ..##.
-  ..#..
-""")]
-ELDER_WALK = [Sprite("""
-  .###..
-  #####.
-  .##...
-  .###..
-  ####..
-  #####.
-  .###..
-  .###..
-  .#.#..
-  #...#.
-"""), Sprite("""
-  .###..
-  #####.
-  .##...
-  .###..
-  ####..
-  ####..
-  .###..
-  .###..
-  ..#...
-  .##...
-""")]
-ELDER_SIT = Sprite("""
-  .###..
-  #####.
-  .##...
-  .###..
-  #####.
-  ######
-  ######
-  .#####
+LEDGE = 47          # 崖头（小道士坐的地面）
+DX = 22             # 小道士
+VALLEY = (80, 46)   # 出云的山谷
+LIFE = 33.0
+
+_CACHE: dict = {}
+
+
+def _layers(seed: int):
+    if seed not in _CACHE:
+        far = mountain(ridge([(8, 26, 26), (40, 19, 24), (72, 25, 20), (100, 17, 28), (128, 24, 20)], seed,
+                             base=44, rough=0.8), lit=((0.25, 2),), shade=(), outline=2)
+        mid_h = ridge([(50, 37, 22), (64, 34, 14), (106, 25, 22), (124, 30, 14)], seed + 3, base=70, rough=0.8,
+                      power=0.9, round_top=True)
+        mid = mountain(mid_h, lit=((0.75, 1), (0.5, 3), (0.25, 3)), shade=((0.25, 1),), body=0.125, veins=3,
+                       seed=seed)
+        clouds = [[cloud(9, 5, seed + i * 7), cloud(14, 7, seed + i * 7 + 1), cloud(21, 10, seed + i * 7 + 2)]
+                  for i in range(3)]
+        long_c = cloud(34, 8, seed + 99, lumps=6)
+        bank = [cloud(24 + i * 2, 12 + i, seed + 200 + i, lumps=3) for i in range(3)]
+        _CACHE[seed] = dict(far=far, mid=mid, clouds=clouds, long=long_c, bank=bank, cliff=_cliff(seed),
+                            tiny=cloud(10, 6, seed + 300))
+    return _CACHE[seed]
+
+
+def _cliff(seed: int):
+    """近景崖头：黑剪影白轮廓，左边一块高石，顶面平（坐人），右边断崖；顶面受光、岩层横纹、竖裂、断面网点背光"""
+    from .x3_lib import bake
+
+    pts = [(-1, 34), (3, 33), (7, 36), (9, 42), (12, LEDGE), (42, LEDGE), (45, 49), (46, 54), (50, 58), (52, 64),
+           (-1, 64)]
+
+    def draw(g):
+        g.d.polygon(pts, fill=0, outline=1)
+        g.d.line((2, 34, 6, 36), fill=1)                    # 高石顶面受光
+        for x in range(13, 42, 2):                          # 顶面下一行网点
+            g.px(x, LEDGE + 2)
+        for x0, y0, x1, y1 in ((4, 52, 9, 51), (24, 53, 30, 52), (34, 51, 37, 51), (12, 58, 17, 57),
+                               (30, 59, 36, 58), (2, 61, 6, 61), (21, 62, 25, 62), (2, 41, 4, 40)):
+            g.d.line((x0, y0, x1, y1), fill=1)              # 岩层短纹
+            g.px(x1 + 1, y1 + 1)
+        for x, y, ln in ((18, 52, 3), (8, 56, 2), (40, 55, 3), (5, 45, 3)):
+            g.d.line((x, y, x + 1, y + ln), fill=1)         # 裂
+        for y in range(LEDGE + 2, 64):                      # 断面背光
+            x1 = 42 + (y - LEDGE) * 10 // 17
+            for x in range(x1 - 3, x1):
+                if (x + y) % 2 == 0:
+                    g.px(x, y)
+        for x in (14, 22, 31, 40):                          # 苔点
+            g.px(x, LEDGE - 1)
+
+    return bake(draw, solid=lambda d: d.polygon(pts, fill=1))
+
+
+GRASS = pix.frames("""
+# #
+ #
+---
+ ##
+ #
+---
+# #
+ #
+---
+##
+ #
 """)
 
-SIT, ELDER_SIT = halo(SIT), halo(ELDER_SIT)
-WALK = [halo(s) for s in WALK]
-ELDER_WALK = [halo(s) for s in ELDER_WALK]
 
-ROCK = [(0, 47), (8, 44), (20, 43), (30, 45), (36, 49), (40, 54), (42, 60), (43, 64), (0, 64)]
-SEAT = (24, 44)        # 隐者坐处（脚底）
-STREAM = [(128, 55), (110, 56), (92, 58), (74, 59), (60, 60), (50, 61)]
-POOL = (47, 61)        # 水穷处
-CLOUD_P = 33.0         # 一朵云从生到散
-N_CLOUD = 3
-ELDER_P, ELDER_D = 240.0, 42.0
-
-
-def rock_y(x: float) -> float:
-    """山石顶面高度"""
-    for (x0, y0), (x1, y1) in zip(ROCK, ROCK[1:]):
-        if x0 <= x <= x1 and x1 > x0:
-            return lerp(y0, y1, (x - x0) / (x1 - x0))
-    return ROCK[0][1]
+def mx_cloud(g: Gfx, t: float):
+    for x in range(8):  # 两座小山
+        h = max(0, 3 - abs(x - 1)) if x < 4 else max(0, 3 - abs(x - 6))
+        for y in range(8 - h, 8):
+            g.mx[y, x] = True
+    g.mx[7, :] = True
+    k = (t / 3.0) % 1
+    y = int(round(6 - k * 7))
+    for dx, dy in ((0, 0), (1, 0), (0, -1), (-1, 0)) if k < 0.7 else ((0, 0), (1, -1)):
+        xx, yy = 4 + dx, y + dy
+        if 0 <= yy < 8 and 0 <= xx < 8:
+            g.mx[yy, xx] = True
 
 
 @register
-class CloudRise(Rest):
+class CloudWatch(Rest):
     id = "x3.cloud"
     name = "坐看云起"
-    desc = "隐者坐在溪水尽头的山石上，云从山谷里一朵朵升起、散开；倦鸟归山，林叟偶来谈笑"
-    T = {"enter": 3.2, "exit": 1.3}
+    desc = "小道士坐在崖头，看像素云朵一朵朵从山谷里冒出来、长大、升高、散去；倦鸟归山，小云飘到跟前被他一指点散"
+    T = {"enter": 3.0, "exit": 1.3}
 
     def setup(self):
-        r = self.rng
-        s = self.seed
-        self.far = layer(peaks(128, 44, [(14, 16, 26), (44, 7, 24), (78, 15, 26), (112, 9, 30)], s, 1.2), 0.22,
-                         outline=2, fog=16, floor=0.0)
-        self.mid = layer(peaks(128, 58, [(8, 30, 34), (38, 38, 20), (100, 24, 34), (128, 32, 18)], s + 3, 1.6),
-                         0.5, outline=1, fog=18, floor=0.06, solid=True)
-        self.clouds = [Cloud(random.Random(s * 11 + i), 22 + r.random() * 8, 10 + r.random() * 3) for i in range(N_CLOUD)]
-        self.cx = [64 + r.uniform(-6, 6) for _ in range(N_CLOUD)]
-        self.drift = [r.choice((-1, 1)) * r.uniform(6, 16) for _ in range(N_CLOUD)]
+        self.L = _layers(self.seed % 4)
 
-    # ------------------------------------------------------------ 零件
+    # ------------------------------------------------------------ 画面
 
-    def rock(self, g: Gfx):
-        g.d.polygon(ROCK, fill=0, outline=1)
-        for x0, y0, x1, y1 in ((5, 50, 9, 55), (14, 48, 12, 53), (30, 50, 34, 58), (20, 55, 24, 62),
-                               (36, 56, 37, 61)):
-            g.d.line((x0, y0, x1, y1), fill=1)       # 皴
-        for x in range(2, 40, 3):                    # 石根暗处的苔点
-            if rand(x, 3) < 0.5:
-                g.px(x, 60 + rand(x, 4) * 3)
+    def clouds(self, g: Gfx, t: float):
+        """三朵出岫的云：小→中→大，升起、右飘、散去"""
+        for i in range(3):
+            tt = t + i * LIFE / 3 + 4
+            n = int(tt // LIFE)
+            k = (tt % LIFE) / LIFE
+            sz = 0 if k < 0.12 else 1 if k < 0.3 else 2
+            spr = self.L["clouds"][(n + i) % 3][sz]
+            drift = 8 + rand(n * 3 + i, self.seed) * 22
+            x = VALLEY[0] + ease_in_out(k) * drift + math.sin(tt * 0.4) * 1.5
+            y = VALLEY[1] - ease_out(k) * 40
+            if k > 0.72:
+                spr = faded(spr, 1 - span(k, 0.72, 1.0))
+            pix.blit(g, spr, x - spr.w // 2, y - spr.h // 2)
 
-    def stream(self, g: Gfx, t: float):
-        """溪水从右边山脚流来，越流越细，到石下的小潭就没了（水穷处）"""
-        g.d.rectangle((44, 57, 127, 63), fill=0)
-        up = [(x, y - 1.6 * (1 - i / 5)) for i, (x, y) in enumerate(STREAM)]
-        lo = [(x, y + 2.2 * (1 - i / 5) + 0.5) for i, (x, y) in enumerate(STREAM)]
-        g.d.line(up, fill=1)
-        g.d.line(lo, fill=1)
-        for j in range(5):  # 水纹短线往左流，到水穷处消失
-            k = (t * 0.07 + j / 5) % 1.0
-            idx = min(k * (len(STREAM) - 1), len(STREAM) - 1.001)
-            i = int(idx)
-            f = idx - i
-            (x0, y0), (x1, y1) = STREAM[i], STREAM[i + 1]
-            x, y = lerp(x0, x1, f), lerp(y0, y1, f)
-            if k < 0.82:
-                g.d.line((x, y, x - 3 + k * 2, y), fill=1)
-        g.d.ellipse((POOL[0] - 4, POOL[1] - 1, POOL[0] + 3, POOL[1] + 1), outline=1, fill=0)
-
-    def cloud_at(self, i: int, tc: float):
-        """第 i 朵云在 tc 时的 (x, y, s, a)，没有就 None"""
-        off = i * CLOUD_P / N_CLOUD
-        k = math.floor((tc - off) / CLOUD_P)
-        p = (tc - off) / CLOUD_P - k
-        if k < 0 and tc < off - CLOUD_P:
-            return None
-        sd = self.seed * 7 + k
-        x = self.cx[i] + (rand(k, sd) - 0.5) * 16 + self.drift[i] * ease_in_out(p) * (1 if k % 2 else -1)
-        y = lerp(62, 6 + rand(k + 3, sd) * 6, ease_out(p * 1.05))
-        s = lerp(0.35, 1.25, ease_out(p))
-        a = clamp(p / 0.06) * (1 - span(p, 0.72, 1.0))
-        return x, y, s, a, k
-
-    def clouds_draw(self, g: Gfx, tc: float):
-        order = []
-        for i in range(N_CLOUD):
-            c = self.cloud_at(i, tc)
-            if c:
-                order.append((c[2], i, c))
-        for _, i, (x, y, s, a, k) in sorted(order):  # 小的（新的）在后面
-            self.clouds[i].draw(g, x, y, s, a, seed=k * 13 + i, clear=a > 0.55)
-
-    def scenery(self, g: Gfx, t: float, clouds: bool = True):
-        g.blit(self.far, 0, 0)
-        if clouds:
-            self.clouds_draw(g, t)
-        g.blit(self.mid, 0, 0)
-        self.stream(g, t)
-        self.rock(g)
-
-    def hermit(self, g: Gfx, t: float):
-        x, y = SEAT
-        breathe = 1 if (t % 6.0) < 3.0 else 0          # 坐久了，肩头随呼吸微微起伏
-        g.blit(SIT, x - 5, y - SIT.h + 2)
-        if breathe:
-            g.px(x - 1, y - SIT.h + 1)
-            g.px(x, y - SIT.h + 1)
-        g.d.line((x + 5, y - 13, x + 8, y), fill=1)       # 竹杖斜靠在身边
-
-    def birds(self, g: Gfx, t: float):
-        ev = every(t, 47.0, 10.0, 11.0)
+    def world(self, g: Gfx, t: float, sit: bool = True, dx: float = DX):
+        L = self.L
+        lx = (t * 1.2) % 170 - 40  # 高处的长云
+        ev = every(t, 47, 9, 20)  # 倦鸟归山（画在远山之前：飞进山后就被挡住）
         if ev:
-            k, lt = ev
-            p = lt / 10.0
-            tx, ty = 30 + rand(k, 5) * 40, 12 + rand(k, 6) * 6
-            x = lerp(130, tx, ease_out(p))
-            y = lerp(8 + rand(k, 7) * 10, ty, p) + math.sin(lt * 2) * 2
-            if p < 0.9:
-                bird(g, x, y, lt, s=lerp(1.0, 0.5, p))
-            if rand(k, 8) < 0.5 and p < 0.85:  # 有时是两只
-                bird(g, x + 7, y + 3, lt + 0.4, s=lerp(0.9, 0.45, p))
-
-    def elder(self, g: Gfx, t: float):
-        """偶然值林叟，谈笑无还期"""
-        ev = every(t, ELDER_P, ELDER_D, 95.0)
-        if not ev:
+            k = ev[1] / 9
+            for j in range(2):
+                bx = lerp(134 + j * 9, 26 + j * 6, k)
+                by = lerp(8 + j * 3, 27, ease_in_out(k))
+                bird(g, bx, by, ev[1], fps=7 - 3 * k, flip=True, ph=j * 0.5)
+        pix.blit(g, L["long"], lx, 5)
+        g.blit(L["far"], 0, 0)
+        self.clouds(g, t)
+        g.blit(L["mid"], 0, 0)
+        # 山脚溪水：往左流到崖下就没了
+        g.d.rectangle((46, 56, 127, 63), fill=0)
+        g.d.line((58, 56, 127, 56), fill=1)
+        for x in range(50, 58, 2):
+            g.px(x, 56)
+        glints(g, 54, 127, 58, 63, -t, self.seed, n=16, speed=6, far=2, near=6, blink=0.35)
+        pix.blit(g, L["cliff"], 0, 0)
+        for j, x in enumerate((17, 30, 41)):  # 崖头草
+            gr = GRASS[int(t * 2.2 + j * 1.3) % 4]
+            g.blit(gr, x, LEDGE - 2)
+        if not sit:
             return
-        k, lt = ev
-        sx = 10  # 林叟坐处
-        if lt < 7 or lt > ELDER_D - 7:
-            back = lt > ELDER_D - 7
-            q = (lt - (ELDER_D - 7)) / 7 if back else lt / 7
-            x = lerp(sx, -10, q) if back else lerp(-10, sx, q)
-            spr = ELDER_WALK[int(lt * 3) % 2]
-            spr = spr.flip() if back else spr
-            y = rock_y(max(x, 0))
-            g.blit(spr, x - 4, y - spr.h + 2 + (int(lt * 3) % 2))
-            sx_ = x + (-4 if back else 4)
-            g.d.line((sx_, y - 9, sx_ + (-1 if back else 1), y), fill=1)  # 拄杖
-            return
-        y = rock_y(sx)
-        talk = lt - 7
-        laugh = int(talk / 2.6) % 5 == 4
-        g.blit(ELDER_SIT, sx - 4, y - ELDER_SIT.h + 2 - (int(talk * 8) % 2 if laugh else 0))
-        g.d.line((sx - 5, y - 10, sx - 6, y), fill=1)
-        who = int(talk / 2.6) % 2
-        if laugh:  # 大笑：两人头上都冒“哈”
-            if int(talk * 3) % 2:
-                g.d.rectangle((sx - 4, y - 21, sx + 5, y - 13), fill=0)
-                g.d.rectangle((SEAT[0] - 3, SEAT[1] - 22, SEAT[0] + 6, SEAT[1] - 14), fill=0)
-                ctext(g, sx - 3, y - 20, "哈", size=8)
-                ctext(g, SEAT[0] - 2, SEAT[1] - 21, "哈", size=8)
-        elif (talk % 2.6) < 2.0:  # 谈：两边轮流冒出“……”
-            bx = sx - 1 if who == 0 else SEAT[0] - 2
-            by = (y - ELDER_SIT.h - 4) if who == 0 else SEAT[1] - SIT.h - 4
-            g.d.rectangle((bx - 1, by - 1, bx + 9, by + 2), fill=0)
-            for d in range(int(span(talk % 2.6, 0, 0.9) * 3) + 1):
-                g.d.rectangle((bx + d * 3, by, bx + d * 3 + 1, by + 1), fill=1)
-
-    def poem(self, g: Gfx, t: float, k_in: float | None = None):
-        if k_in is None:
-            ev = every(t, 150.0, 26.0, 0.0)
-            if not ev:
-                return
-            lt = ev[1]
-            k = span(lt, 0, 2.0) * (1 - span(lt, 22, 26))
+        # 小道士：坐看；时而闭目
+        ev2 = every(t, 113, 14, 60)
+        ph = t % 26
+        pose = "meditate" if 15 < ph < 21 else "sit"
+        if ev2 and 3.5 < ev2[1] < 10.5:
+            lt = ev2[1]
+            face = "happy" if lt > 7.4 else "wow" if lt < 5 else "normal"
+            figure(g, dx, LEDGE, t, legs="sit", arm="point" if 5 < lt < 8.6 else "gong", face=face)
         else:
-            k = k_in
-        if k <= 0:
-            return
-        g.d.rectangle((99, 0, 127, 63), fill=0)
-        poem_cols(g, 127, 2, ("行到水穷处", "坐看云起时"), k)
+            daoshi(g, dx, LEDGE, pose, t)
+        if ev2:
+            self.tiny(g, ev2[1])
 
-    def mx(self, g: Gfx, t: float):
-        g.mx_rows([0, 0, 0, 0, 0, 0b00010000, 0b00111000, 0b11111110])
-        g.mx[7, 7] = True
-        g.mx[6, 7] = True
-        for j in range(2):  # 小云团从山谷升起
-            p = ((t / 5.0) + j * 0.5) % 1.0
-            y = 6 - p * 7.5
-            x = 3 + (1 if j else -1) * p * 1.5 + 1
-            if y < 5:
-                for dx, dy in ((0, 0), (1, 0), (1, -1), (2, 0)):
-                    if not (p > 0.8 and (dx + dy + int(t * 6)) % 2):
-                        g.mx_set(int(x + dx), int(y + dy))
+    def tiny(self, g: Gfx, lt: float):
+        """一朵小云飘到跟前，被一指点散成三小团"""
+        spr = self.L["tiny"]
+        if lt < 8.0:
+            k = ease_out(span(lt, 0, 7.0))
+            x = lerp(70, DX + 21, k) + math.sin(lt * 1.4) * 1.5
+            y = lerp(30, LEDGE - 21, k) + math.sin(lt * 2.1) * 1.0
+            if lt > 7.6:
+                spr = pix.stretch(spr, 1.3, 0.7)
+            pix.blit(g, spr, x - spr.w // 2, y - spr.h // 2)
+        elif lt < 13:
+            k = span(lt, 8.0, 13.0)
+            cx, cy = DX + 21, LEDGE - 21
+            for j, (vx, vy) in enumerate(((-5, -9), (6, -11), (1, -15))):
+                x, y = cx + vx * ease_out(k) * 1.4, cy + vy * ease_out(k) * 1.2
+                r = 2.5 * (1 - k) + 0.6
+                if k < 0.6:
+                    g.d.ellipse((x - r, y - r, x + r, y + r), fill=0, outline=1)
+                elif int(lt * 10 + j) % 2:
+                    g.px(x, y)
+            if k < 0.12:
+                for a in range(0, 360, 45):
+                    g.px(cx + math.cos(math.radians(a)) * 5, cy + math.sin(math.radians(a)) * 3)
 
-    # ------------------------------------------------------------ 阶段
+    def poem(self, g: Gfx, t: float):
+        ev = every(t, 75, 12, 50)
+        if ev:
+            plate(g, 6, 4, "坐看云起时")
+
+    def hold(self, g: Gfx, t: float):
+        self.world(g, t)
+        self.poem(g, t)
+        mx_cloud(g, t)
+
+    # ------------------------------------------------------------ 进出
 
     def enter(self, g: Gfx, t: float):
         T = self.T["enter"]
-        self.scenery(g, t - T)
-        if t < 2.2:  # 行到水穷处：拄杖走来
-            x = lerp(-6, SEAT[0], t / 2.2)
-            spr = WALK[int(t * 5) % 2]
-            y = rock_y(x)
-            g.blit(spr, x - 3, y - spr.h + 2 + (int(t * 5) % 2))
-            g.d.line((x + 4, y - 10, x + 5, y), fill=1)
-        elif t < 2.6:  # 坐下
-            sink = ease_out(span(t, 2.2, 2.6))
-            g.blit(WALK[0], SEAT[0] - 3, SEAT[1] - WALK[0].h + 2 + sink * 2)
-            g.d.line((SEAT[0] + 4, SEAT[1] - 10, SEAT[0] + 4 + sink * 4, SEAT[1]), fill=1)
-        else:
-            self.hermit(g, 0.0)
-        self.poem(g, 0, k_in=span(t, 1.2, T - 0.2))
-        self.mx(g, t)
-
-    def hold(self, g: Gfx, t: float):
-        self.scenery(g, t)
-        self.birds(g, t)
-        self.hermit(g, t)
-        self.elder(g, t)
-        self.poem(g, t, k_in=1.0 if t < 18 else (1 - span(t, 18, 21)) if t < 21 else None)
-        self.mx(g, t)
+        tw = t - T
+        walking = t < 2.1
+        self.world(g, tw, sit=not walking)
+        if walking:
+            x = lerp(-10, DX, ease_out(span(t, 0, 2.1)))
+            daoshi(g, x, LEDGE, "walk", t)
+        elif t < 2.5:  # 坐下扬起一点土
+            k = span(t, 2.1, 2.5)
+            for s in (-1, 1):
+                g.px(DX + s * (12 + k * 5), LEDGE - 1 - k * 2)
+                g.px(DX + s * (14 + k * 6), LEDGE - k * 1)
+        g.fade(span(t, 0, 1.0))
+        mx_cloud(g, tw)
+        if t < 1.0:
+            g.mx[: int(8 - t * 8)] = False
 
     def exit(self, g: Gfx, t: float):
-        """云海从山谷涌上来，淹没整幅画"""
-        T = self.T["exit"]
-        self.hold(g, self.hold_t + t)   # 接着持续阶段最后的样子
-        p = ease_in(t / T) * 0.6 + ease_in_out(t / T) * 0.4
-        front = lerp(66, -16, p)
-        pts = [(x, front + math.sin(x * 0.13 + t * 3) * 3 + noise(x * 0.2, self.seed) * 4) for x in range(-4, 133, 3)]
-        g.d.polygon(pts + [(132, 70), (-4, 70)], fill=0)
-        g.d.line(pts, fill=1)
-        for j in range(6):  # 云头卷纹
-            x = 6 + j * 23 + noise(t, j) * 6
-            y = front + 7 + (j % 2) * 6
-            g.d.arc((x - 6, y - 4, x + 6, y + 4), 190, 350, fill=1)
-        rows = int(round(8 - p * 9))  # 点阵也被云吞没（自下而上熄灭）
-        if rows < 8:
-            g.mx[max(rows, 0):, :] = False
+        tt = self.hold_t + t
+        self.world(g, tt)
+        k = ease_in_out(span(t, 0, self.T["exit"]))
+        top = lerp(70, -30, k)  # 云海从下往上涌：三排云头，后面是黑的
+        bank = self.L["bank"]
+        for row in range(3):
+            y = top + row * 14
+            g.d.rectangle((0, y + 2, 127, 63), fill=0)
+            for j, x in enumerate(range(-16 + row * 9, 140, 20)):
+                spr = bank[(j + row) % 3]
+                pix.blit(g, spr, x + math.sin(tt * 1.5 + j + row) * 2, y - spr.h + 6 + ((j + row) % 2) * 3)
+        mx_cloud(g, tt)
+        rows = int(k * 8)
+        if rows:
+            g.mx[8 - rows:] = False

@@ -78,8 +78,8 @@ h = daoshi(g, x, FLOOR, "bow", t, flip=False, face="normal")   # (x, FLOOR) = �
 `Puffs`、`Sparks`、`shake`、`flash`、`dotted`。**Part**（`chars.Part`）：在小画布上用 `shape("polygon"/"rectangle"/
 "ellipse"/"line", …)` 画形状、`px` 点像素、`dither` 加网点，`.sprite()` 得到精灵；道具都这样画，**在模块级生成一次缓存**。
 
-**其他**：`g.d`（白墨 ImageDraw）、`g.k`（黑墨：压在别的东西上的黑块，比如字的底板）、`g.text`、`g.vtext`、
-`symbols.py`（八卦、六十四卦、太极、`mx_hexagram`）、`cn.py`（中文数字、干支）、`anim.py`（缓动）。
+**其他**：`g.d`（ImageDraw，按画的顺序覆盖：`fill=1` 亮、`fill=0` 黑——字的黑底板、遮挡都用 `g.d.rectangle(..., fill=0)`；`g.k` 只能压灰度层，像素风里不要用）、`g.text`、`g.vtext`、
+`symbols.py`（八卦、六十四卦、太极、`mx_hexagram`、`taiji_mask`）、`gfx.text_image`（字形遮罩，配合 `Part.paste_mask` 把字印进道具）、`cn.py`（中文数字、干支）、`anim.py`（缓动）。
 点阵 `g.mx`（8×8 bool）每个场景都要用，`g.mx_level` 平时 1、高潮瞬间 4–8。
 
 ## 验证（必须做）

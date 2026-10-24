@@ -1,332 +1,372 @@
-"""采药：悬崖半腰一块石台，小道士背着竹篓，拿药锄在石缝里刨药，连根拔起，往肩后一甩丢进背篓。
-崖顶一棵老松探出身子，脚下是云海，远峰露尖；云一团团飘过。
-彩蛋：偶尔一团厚云整个把他吞没——“云深不知处”；偶尔石缝里长的是一朵灵芝，闪着光。
-贾岛《寻隐者不遇》：松下问童子，言师采药去。只在此山中，云深不知处。
-入场：云散开露出人；收场：云合拢。
+"""采药（像素风）：悬崖半腰一块石台，崖边一棵老松探向云海，远峰露尖，云海缓缓流动，偶尔一只鹤远远飞过。
+小道士背着竹篓，一段 9 秒：走到石缝前跪下，举药锄刨三下（碎石溅出、屏幕一颤），伸手连根拔起，
+往肩后一甩丢进背篓（篓里露出的药草越来越多），然后站起来望一会儿云。三处石缝轮流采，采过的慢慢长回来；
+约四分之一的时候石缝里是一朵闪光的灵芝（拔起时一闪）。
+彩蛋：约每 47 秒一团厚云从左边涌过来把他整个吞没，字换成“云深不知处”，几秒后云散。
+左侧竖写“只在此山中”（贾岛《寻隐者不遇》：松下问童子，言师采药去。只在此山中，云深不知处）。
 """
 from __future__ import annotations
 
 import math
 
-from ..engine.anim import clamp, ease_in, ease_in_out, ease_out, lerp, noise, rand, span
-from ..engine.fx import cloud
+from ..engine import pix
+from ..engine.anim import ease_in_out, ease_out, lerp, rand, span
 from ..engine.gfx import Gfx, Sprite
 from ..engine.scene import Rest, register
-from .x5_common import daoshi, dpoly, event, fade_box, phase
+from .x5_common import Clock, arc_pt, blit_rot, cyc, event, fade_out, scroll, worker
 
-LEDGE = 46
-X = 82
-P = 9.0
-SPOTS = [(37, -1.0), (29, 0.0), (42, 0.6)]   # 石缝的 y，人要抬手（负）/ 蹲（正）
+FLOOR = 50
+TEXT_X = 3
+EDGE = 98               # 石台右沿
+CRACKS = (62, 74, 86)
+CYC = 9.0
+
+HOE = Sprite("""
+          ###
+###########.
+###########.
+          ###
+          ####
+           ###
+""")
+HOE_GRIP = (2, 1)
+
 HERB = Sprite("""
-.#.#.
-#.#.#
-.###.
-..#..
-..#..
+  ###
+  #.#
+  ###
+   #
+##.#.##
+ #.#.#
+  .#.
+ ##.##
+  .#.
+   #
+""")
+ROOTS = Sprite("""
+   #
+  #.#
+ # # #
+#  #  #
+""")
+SPROUT = Sprite("""
+#.#
+.#.
+ #
 """)
 LINGZHI = Sprite("""
-.#####.
-#######
-.#...#.
-...#...
-...#...
+  #####
+ #.....#
+#.#####.#
+#########
+ .##.##.
+   ##
+   ##
+  ####
 """)
 
+BASKET = Sprite("""
+#########
+#.#.#.#.#
+##.#.#.##
+#.#.#.#.#
+ #.#.#.#
+ ##.#.##
+ #.#.#.#
+  #.#.#
+  #####
+""")
 
-def wall_x(y: float) -> float:
-    """崖壁左边缘"""
-    return 94 + 2.5 * math.sin(y * 0.33) + 1.5 * math.sin(y * 0.9 + 1)
+PADS = [Sprite("""
+   ######
+ ##.#.#.###
+###########
+ .........
+"""), Sprite("""
+  #####
+#########
+ .......
+""")]
+
+CRANE = pix.frames("""
+##      ##
+ ##    ##
+  #########
+       #
+---
+     ######
+ ###########
+           #
+""")
+
+CHIP = [Sprite("#"), Sprite("##"), Sprite("#\n#")]
 
 
 @register
 class Herbs(Rest):
     id = "x5.herbs"
     name = "采药"
-    desc = "悬崖石台上背篓刨药，云海翻涌，偶尔一团云把人吞没——云深不知处"
-    T = {"enter": 3.0, "exit": 1.5}
+    desc = "悬崖石台上背篓采药：药锄刨石缝、连根拔起甩进背篓，偶得灵芝；一团云涌来把他吞没——云深不知处"
+    T = {"enter": 3.0, "exit": 1.2}
 
     def setup(self):
-        self.s = self.rng.randrange(1000)
-        self._ht = 0.0
+        self.clock = Clock()
+        self.sparks = pix.Sparks(self.seed)
+        self.s = self.seed * 29 + 11
 
-    # ------------------------------------------------------------ 景
+    # ------------------------------------------------ 背景
+
+    def sea(self, g: Gfx, t: float, x0: int = 19):
+        """云海：一排慢慢往左流的云头，下面实心"""
+        base = 46
+        for i in range(-1, 10):
+            w = 14
+            cx = x0 + i * w - (t * 2.5) % w + 4
+            r = 4 + int(rand(i + int(t * 2.5 // w), 5) * 3)
+            g.d.ellipse((cx - r, base - r, cx + r, base + r), fill=1)
+            g.d.arc((cx - r + 2, base - r + 2, cx + r - 1, base + r), 200, 290, fill=0)
+        g.d.rectangle((x0, base, 127, 63), fill=1)
+        for i in range(8):  # 云海里几道流动的暗纹
+            y = base + 4 + (i % 4) * 4
+            x = (i * 23 - t * 4 * (1 + i % 3)) % 120 + x0
+            g.d.line((x, y, x + 6, y), fill=0)
 
     def backdrop(self, g: Gfx, t: float):
-        # 远峰
-        for cx, h, w in ((14, 22, 13), (34, 14, 10), (56, 18, 12)):
-            g.d.polygon([(cx - w, 56), (cx - 2, 56 - h), (cx + 1, 56 - h + 2), (cx + w, 56)], fill=0, outline=1)
-            g.d.line((cx - 2, 56 - h, cx - 4, 56 - h * 0.5), fill=1)
-        # 云海：几道起伏的线向左缓缓流
-        for j in range(3):
-            y = 52 + j * 4
-            pts = []
-            for x in range(0, 82, 4):
-                pts.append((x, y + math.sin((x + t * (4 + j * 2)) * 0.12 + j) * 1.5))
-            g.d.rectangle((0, y - 1, 80, y + 4), fill=0)
-            g.d.line(pts, fill=1)
-        # 远远一只鹤（小 v）
-        bx = 70 - (t * 3 + 30) % 110
-        g.d.line((bx - 2, 18, bx, 20, bx + 2, 18), fill=1)
+        # 远峰（露出云海的山尖）
+        g.d.polygon([(100, 46), (110, 22), (114, 28), (118, 18), (127, 34), (127, 46)], fill=0, outline=1)
+        g.d.line((110, 22, 108, 30), fill=1)
+        g.d.line((118, 18, 120, 26), fill=1)
+        cr = event(t, 31.0, 7.0, self.s + 4)
+        if cr:  # 鹤远远飞过
+            q = cr[1] / 7.0
+            pix.blit(g, pix.anim(CRANE, cr[1], 3), lerp(130, 10, q), 8 + math.sin(q * 6) * 2)
+        for i in range(3):  # 石台后面远远几缕云
+            y = 8 + i * 6
+            x = 22 + (i * 31 + t * (1.5 + i * 0.5)) % 60
+            g.d.line((x, y, x + 9 - i * 2, y), fill=1)
+            g.d.line((x + 3, y - 1, x + 6, y - 1), fill=1)
+        self.sea(g, t, EDGE - 8)
 
     def cliff(self, g: Gfx, t: float):
-        edge = [(wall_x(y), y) for y in range(0, LEDGE + 1, 3)]
-        wall = edge + [(128, LEDGE), (128, 0)]
-        dpoly(g, wall, 0.07, None)
-        g.d.line(edge, fill=1)
-        # 石台 + 下面的崖
-        drop = [(66, LEDGE), (wall_x(LEDGE), LEDGE), (128, LEDGE), (128, 64), (72, 64), (70, 56), (64, 50)]
-        dpoly(g, drop, 0.07, None)
-        g.d.line((64, LEDGE, 128, LEDGE), fill=1)
-        g.d.line((64, LEDGE, 64, 50), fill=1)
-        g.d.line((64, 50, 70, 56, 72, 64), fill=1)
-        for y0, x0 in ((10, 104), (22, 112), (34, 106), (54, 92)):  # 裂纹
-            g.d.line((x0, y0, x0 + 3, y0 + 5, x0 + 1, y0 + 9), fill=1)
-        # 崖顶老松，探向云海
-        sway = (noise(t * 0.5, 3) - 0.5) * 1.5
-        g.d.line((104, 2, 96, 6, 86, 7 + sway * 0.3, 78, 5 + sway * 0.5), fill=1)
-        g.d.line((104, 3, 96, 7, 86, 8 + sway * 0.3), fill=1)
-        for cx, cy, w in ((80, 4, 9), (90, 3, 7), (73, 8, 6)):
-            cy += sway * 0.5
-            g.d.ellipse((cx - w, cy - 2, cx + w, cy + 2), fill=0, outline=1)
-            for k in range(-w + 2, w - 1, 3):
-                g.px(cx + k, cy)
+        # 石台：顶面一道线，石块缝、崖壁暗纹
+        g.d.polygon([(19, FLOOR), (EDGE, FLOOR), (EDGE + 3, FLOOR + 3), (EDGE, 58), (EDGE + 2, 63), (19, 63)],
+                    fill=0, outline=1)
+        g.d.line((19, FLOOR, EDGE, FLOOR), fill=1)
+        pix.checker(g, (20, FLOOR + 6, EDGE - 1, 64), 0.125)
+        for x, y, l in ((30, 53, 6), (52, 55, 9), (70, 52, 5), (84, 56, 7), (40, 59, 6)):
+            g.d.line((x, y, x + l, y), fill=1)
+            g.d.line((x + l, y, x + l + 1, y + 2), fill=1)
+        # 老松：从石台右沿斜伸向云海
+        g.d.line((EDGE - 3, FLOOR, EDGE + 2, 36), fill=1, width=3)
+        g.d.line((EDGE + 2, 36, EDGE + 10, 24), fill=1, width=2)
+        g.d.line((EDGE + 1, 40, EDGE + 12, 36), fill=1, width=2)
+        g.d.line((EDGE - 1, 44, EDGE - 1, 46), fill=0)
+        sway = int(round(math.sin(t * 0.8)))
+        pix.blit(g, PADS[0], EDGE + 3 + sway, 18)
+        pix.blit(g, PADS[1], EDGE + 9 + sway, 31)
+        pix.blit(g, PADS[1], EDGE - 9, 24)
+        g.d.line((EDGE - 1, 30, EDGE + 3, 34), fill=1)
 
-    # ------------------------------------------------------------ 草药
+    # ------------------------------------------------ 一段采药
 
-    def herb_state(self, t: float, j: int):
-        """石缝 j 上的草药：(长到多少 0..1, 是不是灵芝)。被采了之后慢慢长回来"""
-        n, c = phase(t, P)
-        # 最近一次采 j 的轮
-        m = n - ((n - j) % 3)
-        if m == n and c < 3.4:
-            m -= 3
-        if m < 0:
-            return 1.0, self.lingzhi(j if j >= 0 else 0, j)
-        since = (n - m) * P + c - 3.4
-        nxt = m + 3
-        return clamp(since / (2 * P)), self.lingzhi(nxt, j)
-
-    def lingzhi(self, n: int, j: int) -> bool:
-        return rand(n, self.s + 11) < 0.25
-
-    def draw_herb(self, g: Gfx, j: int, grow: float, lz: bool, t: float, dx: float = 0, dy: float = 0):
-        y, _ = SPOTS[j]
-        x = wall_x(y) - 4
-        if grow <= 0.05:
-            return
-        spr = LINGZHI if lz else HERB
-        if grow < 1:
-            h = max(1, int(spr.h * grow))
-            g.d.line((x + 1, y, x + 1, y - h), fill=1)
-            if grow > 0.5:
-                g.px(x, y - h)
-                g.px(x + 2, y - h)
-            return
-        g.blit(spr, x - spr.w // 2 + 1 + dx, y - spr.h + dy)
-        if lz and (t * 2 + j) % 1.6 < 0.5:  # 灵芝闪光
-            g.px(x - 4 + dx, y - 6 + dy)
-            g.px(x + 5 + dx, y - 3 + dy)
-            g.px(x + 1 + dx, y - 8 + dy)
-
-    # ------------------------------------------------------------ 人
-
-    def basket(self, g: Gfx, bx: float, by: float, n: int):
-        """背篓：上口 (bx, by)，里面露出 n 株药"""
-        for i in range(min(n, 5)):
-            hx = bx - 3 + i * 1.6
-            g.d.line((hx, by, hx - 1 + (i % 2) * 2, by - 3 - (i % 3)), fill=1)
-            g.px(hx - 2 + (i % 2) * 4, by - 4 - (i % 3))
-        pts = [(bx - 5, by), (bx + 3, by), (bx + 2, by + 12), (bx - 4, by + 12)]
-        g.d.polygon(pts, fill=0, outline=1)
-        for k in range(3, 12, 3):  # 竹编
-            g.d.line((bx - 4.8 + k * 0.07, by + k, bx + 2.8 - k * 0.07, by + k), fill=1)
-        for k in (-2, 1):
-            g.d.line((bx + k, by + 1, bx + k, by + 11), fill=1)
-
-    def picker(self, g: Gfx, t: float, n: int, c: float, final: float = 0.0):
+    def state(self, k: float, n: int):
         j = n % 3
-        sy_, cr = SPOTS[j]
-        spot = (wall_x(sy_) - 3, sy_ - 2)
-        crouch = max(0.0, cr) * math.sin(span(c, 0, 0.6) * math.pi / 2) * (1 - span(c, 4.6, 5.4))
-        lean = 2.0
-        look = 0.0
-        eye = "closed" if (t % 3.9) < 0.14 else "open"
-        f = 1
-        hoe = None
-        hand = None
-        far = None
-        held = None
-        picks = n + (1 if c >= 4.4 else 0)
-        if c < 0.6:  # 抬锄
-            q = ease_in_out(c / 0.6)
-            hand = (lerp(X + 6, spot[0] - 5, q), lerp(LEDGE - 12, spot[1] - 6, q))
-            hoe = (hand, lerp(1.2, -0.6, q))
-        elif c < 3.0:  # 刨三下
-            k = ((c - 0.6) / 0.8) % 1
-            dig = math.sin(k * math.pi) if k < 0.5 else 0
-            hit = k < 0.25
-            hand = (spot[0] - 6 + (1 - k) * 0, spot[1] - 5 + (0 if hit else -3 * math.sin((k - 0.25) / 0.75 * math.pi)))
-            hoe = (hand, -0.6 + (0.9 if hit else 0.9 * (1 - math.sin((k - 0.25) / 0.75 * math.pi))))
-            if k < 0.3:  # 碎石
-                for i in range(3):
-                    g.px(spot[0] - 1 - k * 10 * (i + 1) * 0.5, spot[1] + 1 - k * 8 + k * k * 30 * (i % 2))
-        elif c < 3.4:  # 放下锄，伸手抓住
-            q = ease_in_out(span(c, 3.0, 3.4))
-            hand = (lerp(spot[0] - 6, spot[0] - 2, q), lerp(spot[1] - 5, spot[1] - 2, q))
-            far = (X + 2, LEDGE - 12)
-            hoe = ((X + 3, LEDGE - 11), 1.4)
-        elif c < 4.0:  # 连根拔起
-            q = ease_out(span(c, 3.4, 4.0))
-            hand = (spot[0] - 2 - q * 4, spot[1] - 2 - q * 6)
-            held = hand
-            hoe = ((X + 3, LEDGE - 11), 1.4)
-            lean = 2 - q * 3
-        elif c < 4.4:  # 往肩后一甩
-            q = ease_in(span(c, 4.0, 4.4))
-            hand = (lerp(spot[0] - 6, X - 2, q), lerp(spot[1] - 8, LEDGE - 30, q))
-            if q < 0.6:
-                held = hand
-            hoe = ((X + 3, LEDGE - 11), 1.4)
-            lean = -1 - q
-        else:  # 站着歇口气，回头望云
-            q = span(c, 4.4, 5.0)
-            hand = (lerp(X - 2, X + 4, q), lerp(LEDGE - 30, LEDGE - 11, ease_out(q)))
-            hoe = ((X + 3, LEDGE - 11), 1.4)
-            if 5.6 < c < 8.2:
-                f = -1
-                look = -0.5
-            lean = 0
-        if final > 0:
-            hand = (lerp(hand[0], X + 4, final), lerp(hand[1], LEDGE - 11, final))
-        # 背篓在背后（f=1 时在左边）
-        sy = LEDGE - (21 - 6 * crouch)
-        self.basket(g, X - f * 6 + lean * f * 0.5, sy + 1, picks)
-        # 被甩出去的药草在空中
-        if 4.2 <= c < 4.8:
-            u = span(c, 4.2, 4.8)
-            x = lerp(X - 2, X - 7, u)
-            y = lerp(LEDGE - 30, sy - 1, u) - math.sin(u * math.pi) * 6
-            g.blit(HERB, x - 2, y - 3)
-        pz = daoshi(g, X, LEDGE, f, hands=[hand if f == 1 else (X - 4, LEDGE - 11), far], crouch=crouch, lean=lean,
-                    eye=eye, look=look)
-        if hoe and f == 1:
-            (hx, hy), a = hoe
-            ex, ey = hx + math.cos(a) * 11, hy + math.sin(a) * 11
-            g.d.line((hx - math.cos(a) * 3, hy - math.sin(a) * 3, ex, ey), fill=1)
-            # 锄刃：垂直于柄，朝下
-            nx, ny = -math.sin(a), math.cos(a)
-            if ny < 0:
-                nx, ny = -nx, -ny
-            g.d.polygon([(ex - math.cos(a), ey - math.sin(a)), (ex + nx * 5 - math.cos(a) * 1.5, ey + ny * 5 - math.sin(a) * 1.5),
-                         (ex + nx * 5 + math.cos(a) * 2, ey + ny * 5 + math.sin(a) * 2), (ex + math.cos(a), ey + math.sin(a))],
-                        fill=1)
-            g.d.rectangle((hx - 1, hy - 1, hx + 1, hy + 1), fill=1)
-        if held:
-            hx, hy = held
-            lz = self.herb_state(t, j)[1] if c < 3.4 else self.lingzhi(n, j)
-            spr = LINGZHI if lz else HERB
-            g.blit(spr, hx - spr.w // 2, hy - spr.h)
-            g.d.line((hx, hy, hx - 1, hy + 3), fill=1)   # 根须
-            g.d.line((hx, hy, hx + 1, hy + 4), fill=1)
-        return pz
+        cx = CRACKS[j]
+        spot = cx - 14
+        prev = CRACKS[(n - 1) % 3] - 14
+        st = dict(x=spot, legs="stand", hand=None, hoe=None, face="normal", pull=None, toss=None, hit=None,
+                  up=False)
+        if k < 1.0:
+            q = ease_in_out(k)
+            st["x"] = lerp(prev, spot, q)
+            st["legs"] = "walk" if 0.05 < k < 0.95 and prev != spot else "stand"
+            st["flip"] = spot < prev
+            st["hoe"] = ((st["x"] + 9, FLOOR - 13), -60)
+            return st
+        st["flip"] = False
+        if k < 3.5:  # 跪下，刨三下
+            st["legs"] = "kneel" if k > 1.15 else "stand"
+            if k < 1.4:
+                st["hoe"] = ((spot + 9, FLOOR - 11), -60)
+            else:
+                q = ((k - 1.4) % 0.7) / 0.7
+                up = ((spot + 6, FLOOR - 24), -100)
+                down = ((spot + 10, FLOOR - 10), 15)
+                if q < 0.55:
+                    a = ease_in_out(q / 0.55)
+                    st["hoe"] = ((lerp(down[0][0], up[0][0], a), lerp(down[0][1], up[0][1], a)),
+                                 lerp(down[1], up[1], a))
+                    st["up"] = a > 0.6
+                else:
+                    a = span(q, 0.55, 0.75)
+                    st["hoe"] = ((lerp(up[0][0], down[0][0], a), lerp(up[0][1], down[0][1], a)), lerp(up[1], down[1], a))
+                    if q >= 0.75:
+                        st["hit"] = q - 0.75
+            return st
+        if k < 4.4:  # 伸手拔
+            st["legs"] = "kneel"
+            q = span(k, 3.5, 4.4)
+            st["hand"] = (cx - 1, FLOOR - 4 - ease_out(span(q, 0.4, 1)) * 7)
+            st["pull"] = span(q, 0.4, 1)
+            st["hoe_ground"] = True
+            return st
+        if k < 5.2:  # 往肩后一甩
+            q = span(k, 4.4, 5.2)
+            st["hand"] = (lerp(cx - 1, spot - 2, ease_out(q)), lerp(FLOOR - 11, FLOOR - 34, ease_out(q)))
+            st["toss"] = q
+            st["hoe_ground"] = True
+            st["up"] = q > 0.4
+            return st
+        st["hoe"] = ((spot + 9, FLOOR - 13), -60)   # 望云
+        st["face"] = "happy" if k < 6.5 else "normal"
+        return st
 
-    # ------------------------------------------------------------ 云
-
-    def drift_clouds(self, g: Gfx, t: float):
-        for i in range(3):
-            sp = 3 + i * 1.5
-            span_w = 200
-            cx = 150 - ((t * sp + i * 70 + self.s) % span_w)
-            cy = 22 + i * 9 + math.sin(t * 0.3 + i) * 2
-            if cx < 70:
-                cloud(g, cx, cy, 22 - i * 3, 7, seed=i + 3)
-
-    def cover(self, g: Gfx, cov: float, t: float, seed: int = 0):
-        """厚云盖过来：cov 0..1 = 盖住的程度（从左往右推）"""
-        if cov <= 0:
-            return
-        front = -40 + cov * 190
-        for k in range(9):
-            cx = front - k * 22 + math.sin(t * 0.8 + k) * 2
-            for row in range(3):
-                cy = 10 + row * 20 + (k % 2) * 6
-                if cx > -30:
-                    cloud(g, cx, cy, 34, 18, seed=seed + k * 3 + row)
-        if front - 170 > 0:
-            g.d.rectangle((0, 0, front - 170, 63), fill=0)
-
-    def text(self, g: Gfx, s: str, a: float = 1.0):
-        n = int(round(len(s) * clamp(a)))
-        g.d.rectangle((0, 0, 13, 63), fill=0)
-        g.vtext(1, 1, s[:n])
-
-    # ------------------------------------------------------------ 阶段
-
-    def draw(self, g: Gfx, t: float, final: float = 0.0):
-        n, c = phase(t, P)
+    def frame(self, g: Gfx, t: float, text_k: float = 1.0):
+        dt = self.clock.tick(t)
+        n, k = cyc(t, CYC)
+        st = self.state(k, n)
         self.backdrop(g, t)
-        self.drift_clouds(g, t)
         self.cliff(g, t)
-        for j in range(3):
-            if j == n % 3 and 3.4 <= c:
-                continue
-            gr, lz = self.herb_state(t, j)
-            self.draw_herb(g, j, gr, lz, t)
-        self.picker(g, t, n, c, final)
-        ev = event(t, 47.0, 9.0, self.s + 1)
-        cov = 0.0
-        if ev:
-            k = ev[1]
-            cov = ease_in_out(span(k, 0, 3.0)) * (1 - ease_in_out(span(k, 6.0, 9.0)))
-            self.cover(g, cov, t, ev[0])
-        self.text(g, "云深不知处" if cov > 0.5 else "只在此山中")
-        self.mx(g, t, n, c, cov)
+        j = n % 3
+        ling = rand(n, self.s) < 0.25
+        for i, cx in enumerate(CRACKS):  # 石缝里的草药
+            g.d.line((cx - 3, FLOOR, cx + 3, FLOOR), fill=0)
+            g.px(cx - 2, FLOOR + 1), g.px(cx + 1, FLOOR + 1), g.px(cx, FLOOR + 2)
+            if i == j:
+                if st["pull"] is None and st["toss"] is None and k < 4.0:
+                    spr = LINGZHI if ling else HERB
+                    pix.blit(g, spr, cx - spr.w // 2, FLOOR - spr.h)
+                    if ling and int(t * 4) % 3 == 0:
+                        g.px(cx + 5, FLOOR - 9), g.px(cx - 5, FLOOR - 6)
+            elif i == (n - 1) % 3:
+                pix.blit(g, SPROUT, cx - 1, FLOOR - 3)
+            else:
+                pix.blit(g, HERB, cx - 3, FLOOR - HERB.h)
+        in_basket = min(1 + (n % 8) // 2 + (1 if st["toss"] is not None and st["toss"] > 0.8 or k > 5.2 else 0), 4)
 
-    def mx(self, g: Gfx, t: float, n: int, c: float, cov: float):
-        if cov > 0.6:  # 云：一团团流过
+        def back(gg, h1, h2):
+            bx = st["x"] - 15 if not st.get("flip") else st["x"] + 6
+            by = FLOOR - 20 + (3 if st["legs"] == "kneel" else 0)
+            for i in range(in_basket):  # 篓口露出的药草
+                hx = bx + 2 + i * 2
+                gg.d.line((hx, by, hx - 1 + (i % 2) * 2, by - 3 - (i % 2)), fill=1)
+                gg.px(hx - 1, by - 4 - (i % 2))
+            pix.blit(gg, BASKET, bx, by)
+            if st["hoe"] is not None and st["up"]:
+                (hx, hy), deg = st["hoe"]
+                blit_rot(gg, HOE, h1[0] if h1 else hx, h1[1] if h1 else hy, deg, *HOE_GRIP)
+
+        def tool(gg, h1, h2):
+            if st["hoe"] is not None and not st["up"]:
+                (hx, hy), deg = st["hoe"]
+                blit_rot(gg, HOE, h1[0], h1[1], deg, *HOE_GRIP)
+            if st["pull"] is not None and h1:
+                spr = LINGZHI if ling else HERB
+                pix.blit(gg, spr, h1[0] - spr.w // 2 + 1, h1[1] - spr.h + 2)
+                if st["pull"] > 0.3:
+                    pix.blit(gg, ROOTS, h1[0] - 2, h1[1] + 2)
+
+        hand = st["hand"] if st["hand"] is not None else (st["hoe"][0] if st["hoe"] else None)
+        if st.get("hoe_ground"):
+            blit_rot(g, HOE, st["x"] + 6, FLOOR - 1, 170, *HOE_GRIP)
+        worker(g, st["x"], FLOOR, t, hand=hand, legs=st["legs"], flip=st.get("flip", False), face=st["face"],
+               tool=tool, back_tool=back, fist=st["hoe"] is not None, behind_head=st["up"],
+               bob=st["legs"] == "stand")
+        if st["toss"] is not None and 0.5 < st["toss"] < 1.0:  # 甩过肩的药草
+            q = span(st["toss"], 0.5, 1.0)
+            x, y = arc_pt((st["x"] - 2, FLOOR - 36), (st["x"] - 11, FLOOR - 30), q, 6)
+            pix.blit(g, HERB if not ling else LINGZHI, x - 3, y - 4)
+        for m in range(3):  # 每一锄：碎石溅出
+            if self.clock.crossed(t, t - k + 1.4 + m * 0.7 + 0.525):
+                self.sparks.burst(CRACKS[j] - 2, FLOOR - 1, 7, 26, up=18, life=0.5, gravity=110)
+        if st["hit"] is not None and st["hit"] < 0.08:
+            pix.shake(g, t, 0.8, seed=2)
+        if ling and st["pull"] is not None and 0.3 < st["pull"] < 0.6:
+            pix.flash(g)
+        self.sparks.step(dt)
+        for x, y, vx, vy, age, life, grav in self.sparks.p:
+            pix.blit(g, CHIP[int(x) % 3], x, y, outline=False)
+        cloud = event(t, 47.0, 9.0, self.s + 2)
+        if cloud:
+            self.engulf(g, cloud[1], t)
+        self.matrix(g, t, st, ling, cloud)
+        deep = cloud is not None and 2.0 < cloud[1] < 8.0
+        scroll(g, TEXT_X, "云深不知处" if deep else "只在此山中", y=2, k=text_k, side="left")
+
+    def engulf(self, g: Gfx, q: float, t: float):
+        """一团厚云从左边涌来，把石台上的人整个吞没，再慢慢散开"""
+        front = lerp(-30, 110, ease_out(span(q, 0, 2.5)))
+        thin = span(q, 6.5, 9.0)
+        for i in range(14):
+            cx = front - (i % 7) * 13 - (i // 7) * 6
+            cy = 18 + (i // 7) * 16 + math.sin(t * 0.8 + i) * 2
+            r = (9 + (i * 5) % 6) * (1 - thin * 0.9)
+            if cx + r < 19 or r < 1:
+                continue
+            g.d.ellipse((cx - r, cy - r, cx + r, cy + r), fill=1)
+            g.d.arc((cx - r + 2, cy - r + 2, cx + r - 1, cy + r - 1), 200, 280, fill=0)
+        if thin < 0.5 and front > 30:
+            g.d.rectangle((19, 22, min(front - 4, 110), 50), fill=1)
+            for i in range(6):
+                y = 26 + i * 4
+                x = 22 + (i * 17 + t * 6) % 80
+                if x + 6 < front:
+                    g.d.line((x, y, x + 6, y), fill=0)
+        g.d.rectangle((0, 0, 18, 63), fill=0)
+
+    def matrix(self, g: Gfx, t: float, st, ling: bool, cloud):
+        """点阵：一株草药（拔起时上移露出根）；灵芝；被云吞没时是流动的云"""
+        if cloud and 1.0 < cloud[1] < 8.0:
             for y in range(8):
                 for x in range(8):
-                    g.mx[y, x] = noise(x * 0.5 + t * 1.5 + y * 0.3, y) > 0.55
+                    g.mx[y, x] = math.sin(x * 0.9 + t * 3 + math.sin(y * 1.3 + t)) > 0.2
             return
-        j = n % 3
-        lz = self.lingzhi(n, j) if c >= 3.4 else self.herb_state(t, j)[1]
-        if lz:  # 灵芝
-            g.mx_rows([0b00111100, 0b01111110, 0b11111111, 0b01011010, 0b00011000, 0b00011000, 0b00011000, 0])
-            if 3.4 <= c < 4.4:
-                g.mx_level = 5
-        else:  # 一株草药，被拔起时往上走、露出根
-            up = int(ease_out(span(c, 3.4, 4.0)) * 2) if 3.4 <= c < 4.4 else 0
-            spr = ["01011010", "10100101", "01011010", "00111100", "00011000", "00011000"]
-            for r, row in enumerate(spr):
-                for x, ch in enumerate(row):
-                    if ch == "1":
-                        g.mx_set(x, r + 1 - up)
-            if up:
-                g.mx_set(3, 7 - up + 1)
-                g.mx_set(4, 7)
-            else:
-                g.mx[7, :] = True
+        lift = int((st["pull"] or 0) * 3) + (3 if st["toss"] is not None else 0)
+        if ling:
+            rows = [0x3C, 0x7E, 0xFF, 0x18, 0x18, 0x3C]
+            top = 1
+        else:
+            rows = [0x24, 0x5A, 0x18, 0x99, 0x5A, 0x3C]
+            top = 0
+        rows = rows + [0x24, 0x42] if lift else rows + [0x00, 0x00]
+        for i, r in enumerate(rows):
+            y = top + i - lift + 0
+            if 0 <= y < 8:
+                for x in range(8):
+                    if r & (0x80 >> x):
+                        g.mx[y, x] = True
+        if ling and lift and lift < 3:
+            g.mx_level = 5
 
     def enter(self, g: Gfx, t: float):
-        T = self.T["enter"]
-        self.draw(g, 0.0)
-        cov = 1 - ease_in_out(span(t, 0.2, T - 0.2))
-        # 云散开：从右往左退
-        if cov > 0:
-            self.cover(g, cov, t, 99)
-        self.text(g, "只在此山中", span(t, 1.5, T - 0.2))
+        """满屏的云从右往左退开，露出石台上的人；题字逐字写出"""
+        self.clock.tick(t)
+        self.backdrop(g, t)
+        self.cliff(g, t)
+        for cx in CRACKS:
+            pix.blit(g, HERB, cx - 3, FLOOR - HERB.h)
+        x = CRACKS[-1] - 14
+        worker(g, x, FLOOR, t, hand=(x + 9, FLOOR - 13), tool=lambda gg, h1, h2: blit_rot(gg, HOE, h1[0], h1[1], -60, *HOE_GRIP),
+               back_tool=lambda gg, h1, h2: pix.blit(gg, BASKET, x - 15, FLOOR - 20), fist=True, face="happy")
+        q = ease_in_out(span(t, 0.2, 2.6))
+        edge = lerp(0, 140, q)
+        g.d.rectangle((edge + 6, 0, 128, 64), fill=1)  # 退开的云墙：边上一排云头，里面几道云纹
+        for i in range(10):
+            cy = i * 7
+            cx = edge + (i % 3) * 4
+            g.d.ellipse((cx - 8, cy - 6, cx + 8, cy + 6), fill=1)
+            g.d.arc((cx - 6, cy - 4, cx + 7, cy + 5), 200, 280, fill=0)
+        for i in range(9):
+            x = edge + 14 + (i * 29) % 90
+            y = 5 + (i * 17) % 56
+            g.d.arc((x, y, x + 14, y + 8), 200, 340, fill=0)
+        g.d.rectangle((0, 0, 18, 63), fill=0)
+        self.matrix(g, t, dict(pull=None, toss=None), False, None)
+        scroll(g, TEXT_X, "只在此山中", y=2, k=span(t, 0.5, 2.6), side="left")
 
     def hold(self, g: Gfx, t: float):
-        self._ht = t
-        self.draw(g, t)
+        self.frame(g, t)
 
     def exit(self, g: Gfx, t: float):
-        T = self.T["exit"]
-        self.draw(g, self._ht, final=ease_in_out(span(t, 0, 0.4)))
-        self.cover(g, ease_in_out(span(t, 0.0, T * 0.8)), self._ht + t, 77)
-        if t < 0.25:
-            self.text(g, "只在此山中")
-        else:
-            self.text(g, "云深不知处", span(t, 0.25, 0.9))
-        fade_box(g, 1 - ease_in(span(t, T * 0.7, T)))
+        self.frame(g, self.hold_t + t)
+        fade_out(g, span(t, 0.1, self.T["exit"]))

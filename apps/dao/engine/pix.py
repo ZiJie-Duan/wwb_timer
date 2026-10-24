@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import math
 import random
+import weakref
 
 import numpy as np
 from PIL import Image
@@ -28,10 +29,10 @@ from .gfx import H, W, Gfx, Sprite
 
 
 def frames(art: str) -> list[Sprite]:
-    """多帧字符画 → 精灵列表（帧之间用只含 --- 的行隔开）"""
+    """多帧字符画 → 精灵列表（帧之间用只含减号（3 个及以上）的行隔开）"""
     out, cur = [], []
     for ln in art.strip("\n").split("\n"):
-        if ln.strip() == "---":
+        if len(ln.strip()) >= 3 and set(ln.strip()) == {"-"}:
             out.append(Sprite("\n".join(cur)))
             cur = []
         else:
@@ -45,12 +46,11 @@ def sprite(art: str) -> Sprite:
     return Sprite(art)
 
 
-_OUTLINE: dict[int, Image.Image] = {}
+_OUTLINE: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()  # 精灵 → 描边图（精灵回收后自动删除）
 
 
 def _outline_img(spr: Sprite) -> Image.Image:
-    key = id(spr)
-    im = _OUTLINE.get(key)
+    im = _OUTLINE.get(spr)
     if im is None:
         m = np.pad(spr.mask, 1)
         grown = m.copy()
@@ -58,17 +58,17 @@ def _outline_img(spr: Sprite) -> Image.Image:
         grown[:-1, :] |= m[1:, :]
         grown[:, 1:] |= m[:, :-1]
         grown[:, :-1] |= m[:, 1:]
-        im = _OUTLINE[key] = Image.fromarray(grown & ~m)
+        im = _OUTLINE[spr] = Image.fromarray(grown & ~m)
     return im
 
 
-_FLIPS: dict[int, Sprite] = {}
+_FLIPS: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
 
 
 def flipped(spr: Sprite) -> Sprite:
-    f = _FLIPS.get(id(spr))
+    f = _FLIPS.get(spr)
     if f is None:
-        f = _FLIPS[id(spr)] = spr.flip()
+        f = _FLIPS[spr] = spr.flip()
     return f
 
 
@@ -96,17 +96,19 @@ def stretch(spr: Sprite, sx: float = 1.0, sy: float = 1.0) -> Sprite:
     sx, sy = round(sx, 1), round(sy, 1)
     if sx == 1 and sy == 1:
         return spr
-    key = (id(spr), sx, sy)
-    s = _STRETCH.get(key)
+    per = _STRETCH.get(spr)
+    if per is None:
+        per = _STRETCH[spr] = {}
+    s = per.get((sx, sy))
     if s is None:
         w, h = max(1, int(round(spr.w * sx))), max(1, int(round(spr.h * sy)))
         on = np.array(Image.fromarray(spr.on).resize((w, h), Image.NEAREST))
         mk = np.array(Image.fromarray(spr.mask).resize((w, h), Image.NEAREST))
-        s = _STRETCH[key] = Sprite(on=on, mask=mk)
+        s = per[(sx, sy)] = Sprite(on=on, mask=mk)
     return s
 
 
-_STRETCH: dict = {}
+_STRETCH: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
 
 # ---------------------------------------------------------------- 网点与线
 
@@ -183,7 +185,8 @@ class Puffs:
             elif k > hollow_after:  # 快散时变成空心圈，再变成几个点
                 if k > 0.85:
                     for a in range(0, 360, 90):
-                        g.px(ix + round(math.cos(math.radians(a + age * 90)) * r), iy + round(math.sin(math.radians(a)) * r))
+                        g.px(ix + round(math.cos(math.radians(a + age * 90)) * r),
+                             iy + round(math.sin(math.radians(a + age * 90)) * r))
                 else:
                     g.d.ellipse((ix - r, iy - r, ix + r, iy + r), outline=1)
             else:

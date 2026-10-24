@@ -1,283 +1,377 @@
-"""鸣钟：钟架上一口大钟，左边绳吊撞木，一下一下撞钟，声波一圈圈荡开；“紧十八、慢十八、不紧不慢又十八”，
-两遍一百零八响。
+"""鸣钟：钟楼里一口铜钟，吊着的撞木由小道士拉绳撞钟；“紧十八，慢十八，不紧不慢又十八”，两遍一百零八响。
 
-依据：宫观殿堂“金钟玉磬”，“鸣钟以集众、动神”（daoinfo《Bells》引《太真科》）；丛林晨钟暮鼓通行
-一百零八杵之法：“紧十八，慢十八，不紧不慢又十八”，两遍凑成一百零八。道观以钟板“开静”“止静”。
+依据：宫观“金钟玉磬”，钟用来集众、动神（daoinfo《Bells》引《太真科》）；寺观撞钟通行一百零八下，
+口诀“紧十八，慢十八，不紧不慢又十八”，两遍合成一百零八；道观以钟板“开静”“止静”。
+圆满句“琳琅振响”出自《度人经》“琳琅振响，十方肃清”。
 
-入场：大钟从上落到钟架上晃两下，撞木被拉开。
-持续：一轮 600 秒 = 两遍（紧 3 秒 / 慢 8 秒 / 不紧不慢 5 秒 各十八杵）共一百零八响，撞时间完全由 e 决定。
-      撞上那一刻钟身一震、声波荡开、点阵一闪；右侧竖写响数。百零八响后余音二十余秒，撞木慢慢拉满，
-      下一轮第一杵（“续”）。
-中断：撞木停在钟边，余音散尽，“止静”。
-恢复：“开静”，撞木荡开撞一杵，接上节奏。
-圆满：连撞三记重杵，声波满屏，“琳琅振响 / 十方肃清”（《度人经》）。
+入场：大钟从梁上落下晃两下，撞木荡进来；小道士走来拉住绳，牌子“起钟”。
+持续：一轮 600 秒：开头 6 秒“起钟”（拱手、拉满），随后两遍（紧杵 3 秒 / 慢杵 8 秒 / 平杵 5 秒，各十八杵）
+      共一百零八响，每一杵的时刻完全由 e 算出。小道士拉绳把撞木往后拽（身子后仰），一松手撞木荡回去，
+      “咚”——钟身一震、往后一晃，声波弧一圈圈荡开，屏幕一震，点阵一闪；梁上的小鸟每响都被吓得一跳。
+      牌子写当前节奏与响数。一百零八响后十几秒余音：钟慢慢停摆，小道士拱手。
+      续：下一轮开头“起钟”——作揖，再把撞木拉满。
+中断：小道士抱住撞木，钟声渐歇，牌子“止静”。  恢复：“开静”，拉开一撞，接上原来的节奏。
+圆满：连撞三记重杵，声波满屏、钟身发亮，小道士跪拜，闪白，“琳琅振响”。
 """
 from __future__ import annotations
 
-import bisect
 import math
 
-from ..engine.anim import blink, clamp, ease_in, ease_in_out, ease_out, ease_out_back, ease_out_bounce, lerp, span
+from ..engine import pix
+from ..engine.anim import ease_in, ease_in_out, ease_out, ease_out_bounce, lerp, span
+from ..engine.chars import Part, daoshi
 from ..engine.cn import cn_num
 from ..engine.gfx import Gfx
 from ..engine.scene import Ritual, register
-from .r1_common import arc_dots, mx_ring, vreveal
+from .r1_common import FLOOR, Clock, badge, floor, hit, mx_art, mx_burst, pose_arm, ring_dots, title
 
-BX, BY0, BY1 = 72, 9, 51       # 钟：中心 x，钟顶、钟口
-SEC = (("紧十八", 3.0), ("慢十八", 8.0), ("不紧不慢", 5.0))
-FIRST = 2.0                    # 一轮第一杵在第几秒
+BX, BY = 101, 13           # 钟：顶部挂钩中心
+LOG_Y = 35                # 撞木静止高度
+LOG_X = 60                # 撞木静止时左端
+DX = 38                   # 小道士
+BEAM_Y = 8
+START = 6.0               # 每轮开头“起钟”的秒数
+TEMPO = (("紧杵", 3.0), ("慢杵", 8.0), ("平杵", 5.0))
 
 
-def _schedule():
-    times, labels = [], []
-    s = FIRST
-    for rep in range(2):
-        for lab, iv in SEC:
+def _times():
+    out, t = [], START
+    for _ in range(2):
+        for name, iv in TEMPO:
             for _ in range(18):
-                times.append(s)
-                labels.append(lab)
-                s += iv
-    return times, labels
+                out.append((t, name, iv))
+                t += iv
+    return out
 
 
-STRIKES, LABELS = _schedule()          # 108 杵（本轮内的秒数）
+STRIKES = _times()        # 108 杵：(时刻, 节奏名, 间隔)
+END = STRIKES[-1][0]
+
+BIRD = pix.frames("""
+ .##.
+.####.##
+ .####.
+  #  #
+---
+ .##.
+.####.##
+.#####
+  #  #
+""")
+
+BIRD_FLY = pix.sprite("""
+#.  .#
+.#..#.
+.####.##
+ .####.
+""")
 
 
-def bell_hw(y: float) -> float:
-    k = clamp((y - BY0) / (BY1 - BY0))
-    return 13 + 2 * k + 5 * k ** 4
+def _bell():
+    """铜钟 27×30：蒲牢钮、钟肩、乳钉三排、两道弦纹、撞座（莲花）、波浪钟口；右侧背光网点"""
+    p = Part(27, 31)
+    p.shape("ellipse", (10, 0, 16, 5), fill=1)          # 钮
+    p.d.ellipse((12, 1, 14, 3), fill=0)
+    p.shape("polygon", [(6, 6), (20, 6), (22, 9), (22, 24), (25, 28), (1, 28), (4, 24), (4, 9)], fill=1)
+    p.shape("ellipse", (4, 4, 22, 11), fill=1)          # 钟肩
+    p.d.line((5, 11, 21, 11), fill=0)
+    p.d.line((5, 13, 21, 13), fill=0)
+    for r, y in enumerate((15, 18, 21)):               # 乳钉
+        for x in range(7 if r % 2 == 0 else 8, 20, 3):
+            p.px(x, y, 0)
+    p.d.line((4, 23, 22, 23), fill=0)
+    p.d.ellipse((6, 24, 10, 27), outline=0)            # 撞座
+    p.px(8, 25, 0)
+    for x in range(1, 26, 3):                          # 波浪钟口
+        p.shape("ellipse", (x - 1, 27, x + 1, 29), fill=1)
+    p.dither([(17, 8), (22, 9), (22, 24), (25, 28), (17, 28)], 0.5, 0)
+    p.px(7, 8, 0), p.px(6, 9, 0)                        # 高光边
+    return p.sprite()
 
 
-def bell(g: Gfx, dx: float = 0.0, dy: float = 0.0, glow: float = 0.0):
-    d = g.d
-    cx = BX + dx
-    y0, y1 = BY0 + dy, BY1 + dy
-    top = y0 + 6
-    left, right = [], []
-    for i in range(15):
-        y = top + (y1 - top) * i / 14
-        hw = bell_hw(y - dy)
-        left.append((cx - hw, y))
-        right.append((cx + hw, y))
-    d.pieslice((cx - 13, y0, cx + 13, top + 6), 180, 360, fill=0, outline=1)   # 圆顶
-    d.polygon(left + right[::-1], fill=0)
-    d.line(left, fill=1)
-    d.line(right, fill=1)
-    d.line((cx - 13, top, cx + 13, top), fill=1)
-    w1 = bell_hw(BY1)
-    d.rectangle((cx - w1 - 1, y1 - 2, cx + w1 + 1, y1), fill=0, outline=1)  # 钟唇
-    # 纽（蒲牢）
-    d.arc((cx - 5, y0 - 7, cx + 5, y0 + 3), 180, 360, fill=1)
-    d.line((cx - 5, y0 - 2, cx - 5, y0), fill=1)
-    d.line((cx + 5, y0 - 2, cx + 5, y0), fill=1)
-    # 上半：四道纵带，带间三排乳钉；中间腰带；下半撞座莲花
-    for yy in (top + 3, top + 18):
-        hw = bell_hw(yy - dy) - 1
-        d.line((cx - hw, yy, cx + hw, yy), fill=1)
-    hw = bell_hw(top + 20 - dy) - 1
-    d.line((cx - hw, top + 20, cx + hw, top + 20), fill=1)
-    for x in (-7, 0, 7):
-        d.line((cx + x, top + 3, cx + x, top + 18), fill=1)
-    for row in range(3):
-        for x in (-11, -4, 3, 10):
-            g.px(cx + x + 1, top + 6 + row * 4)
-    lx = cx - 9
-    d.ellipse((lx - 3, top + 27, lx + 3, top + 33), outline=1)
-    g.px(lx, top + 30)
-    rx = cx + 9  # 右边也一个撞座
-    d.ellipse((rx - 3, top + 27, rx + 3, top + 33), outline=1)
-    g.px(rx, top + 30)
-    if glow > 0:
-        g.shade((int(cx - 15), int(top + 22), int(cx + 2), int(y1 - 3)), 0.25 * glow)
+def _log():
+    """撞木 28×6：圆木、两道铁箍、木纹、钝头"""
+    p = Part(28, 6)
+    p.shape("rectangle", (1, 0, 25, 5), fill=1)
+    p.shape("ellipse", (23, 0, 27, 5), fill=1)
+    p.shape("ellipse", (0, 0, 3, 5), fill=1)
+    for x in (6, 19):
+        p.d.line((x, 0, x, 5), fill=0)
+        p.d.line((x + 2, 0, x + 2, 5), fill=0)
+    p.d.line((9, 2, 16, 2), fill=0)
+    p.d.line((11, 3, 14, 3), fill=0)
+    p.dither((1, 4, 26, 5), 0.5, 0)
+    return p.sprite()
 
 
-def frame(g: Gfx):
-    d = g.d
-    d.rectangle((14, 0, 104, 2), fill=1)          # 横梁
-    d.line((14, 3, 104, 3), fill=0)
-    d.rectangle((BX - 1, 2, BX + 1, BY0 - 6), fill=1)  # 吊钩
+_P: dict = {}
 
 
-def log(g: Gfx, off: float):
-    """撞木：两根绳吊着；off = 离接触位置的偏移（负 = 拉开）"""
-    lift = off * off / 70
-    rest1 = BX - bell_hw(31) - 1      # 静止时木头右端
-    x1 = rest1 + off
-    x0 = x1 - 30
-    y = 31 - lift
-    for ax in (rest1 - 25, rest1 - 7):  # 吊绳，从梁上吊下
-        g.d.line((ax, 2, ax + off, y - 2), fill=1)
-    g.d.rectangle((x0, y - 2, x1, y + 2), fill=0, outline=1)
-    g.d.line((x0 + 2, y, x1 - 4, y), fill=1)
-    g.d.rectangle((x1 - 2, y - 2, x1, y + 2), fill=1)
-    g.d.rectangle((x0, y - 1, x0 + 1, y + 1), fill=1)
+def P(name):
+    if name not in _P:
+        _P[name] = {"bell": _bell, "log": _log}[name]()
+    return _P[name]
 
+
+def tower(g: Gfx):
+    """钟楼：横梁（梁头云纹）、两根立柱、柱础、地面"""
+    floor(g)
+    g.d.rectangle((60, BEAM_Y, 125, BEAM_Y + 2), fill=1)
+    g.d.line((61, BEAM_Y + 1, 124, BEAM_Y + 1), fill=0)
+    g.d.arc((56, BEAM_Y - 1, 62, BEAM_Y + 5), 90, 270, fill=1)
+    for x in (74, 122):
+        g.d.rectangle((x - 1, BEAM_Y + 3, x + 1, FLOOR - 3), fill=1)
+        g.px(x, BEAM_Y + 6, 0)
+        g.d.rectangle((x - 3, FLOOR - 2, x + 3, FLOOR - 1), fill=1)
+        pix.checker(g, (x - 2, FLOOR - 2, x + 4, FLOOR), 0.5, fill=0)
+
+
+def bell(g: Gfx, sway: float, glow: bool = False):
+    """钟 + 挂钩；sway：钟身摆动像素"""
+    spr = P("bell")
+    x = BX - 13 + round(sway)
+    g.d.line((BX, BEAM_Y + 3, BX + round(sway * 0.3), BY), fill=1)
+    pix.blit(g, spr, x, BY, invert=glow)
+
+
+def log_and_ropes(g: Gfx, d: float):
+    """撞木（d：离静止位置的水平位移，负 = 往后拉）+ 两根吊绳"""
+    lift = d * d / 70
+    x = LOG_X + d
+    y = LOG_Y - lift
+    for ax in (LOG_X + 5, LOG_X + 22):
+        g.d.line((ax, BEAM_Y + 3, ax + d, y), fill=1)
+    pix.blit(g, P("log"), x, y - 2)
+    return (x, y)
+
+
+def waves(g: Gfx, age: float, power: float = 1.0):
+    """声波：两侧一圈圈往外荡的点状弧"""
+    if age < 0 or age > 2.0:
+        return
+    cx, cy = BX, BY + 18
+    for j in range(3):
+        r = 16 + (age * 26 + j * 7) * power
+        if r > 70:
+            continue
+        step = 2 if age < 0.8 else 3
+        ring_dots(g, cx, cy, r, step, a0=-0.6, a1=0.6, sy=0.9)
+        if r < 34:
+            ring_dots(g, cx, cy, r, step, a0=math.pi - 0.5, a1=math.pi + 0.5, sy=0.9)
+
+
+def mx_bell(g: Gfx, hit_age: float, t: float):
+    off = 0
+    if 0 <= hit_age < 0.4:
+        off = (1 if int(hit_age * 20) % 2 else -1)
+    mx_art(g, """
+...##...
+..####..
+.######.
+.######.
+.######.
+########
+""", off, 0)
+    if 0 <= hit_age < 0.8:
+        r = int(hit_age * 5)
+        g.mx[7, max(0, 3 - r):min(8, 5 + r)] = True
+    if 0 <= hit_age < 0.15:
+        g.mx_level = 7
+
+
+# ---------------------------------------------------------------- 场景
 
 @register
-class TempleBell(Ritual):
+class BellRing(Ritual):
     id = "r1.bell"
     name = "鸣钟"
-    desc = "撞木撞大钟，紧十八慢十八不紧不慢又十八，两遍一百零八响，声波荡开"
-    T = {"enter": 3.6, "interrupt": 1.6, "resume": 2.0, "complete": 5.5}
+    desc = "小道士拉绳撞钟：紧十八、慢十八、不紧不慢又十八，两遍一百零八响，钟身一震声波荡开，梁上小鸟吓一跳"
+    T = {"enter": 5.0, "interrupt": 1.8, "resume": 2.4, "complete": 6.0}
     CYCLE = 600.0
 
-    # ------------------------------------------------------------ 状态（e 的函数）
+    def setup(self):
+        self.clock = Clock()
+        self.sparks = pix.Sparks(self.seed)
 
     def state(self, e: float):
-        """→ (本轮已撞几杵, 上一杵的绝对时间, 下一杵的绝对时间, 段名)"""
-        base = e - e % self.CYCLE
-        k = e - base
-        i = bisect.bisect_right(STRIKES, k)  # 已撞几杵
-        if i == 0:
-            prev = base - self.CYCLE + STRIKES[-1] if e >= self.CYCLE else base + FIRST - 3.0
-            label = LABELS[-1] if e >= self.CYCLE else "起钟"
+        """(撞木位移 d, 上一杵后的秒数, 已撞几杵, 节奏名)"""
+        k = e % self.CYCLE
+        if k < START:
+            if k < START - 0.5:
+                d = -16 * ease_in_out(span(k, 3.0, START - 0.5))
+            else:
+                d = -16 + 16 * ease_in(span(k, START - 0.5, START))
+            return d, 99.0, 0, "起钟"
+        if k >= END:
+            age = k - END
+            d = -2 * math.exp(-age) * math.sin(age * 6)
+            return d, age, 108, "余音"
+        lo, hi = 0, len(STRIKES) - 1
+        while lo < hi:   # 最后一个 ≤ k 的杵
+            mid = (lo + hi + 1) // 2
+            if STRIKES[mid][0] <= k:
+                lo = mid
+            else:
+                hi = mid - 1
+        ts, name, iv = STRIKES[lo]
+        tau = k - ts
+        A = 7 + iv * 1.6
+        p = tau / iv
+        if p < 0.12:
+            d = 2.5 * math.sin(p / 0.12 * math.pi)       # 撞上后反弹一下
+        elif p < 0.78:
+            d = -A * ease_in_out(span(p, 0.15, 0.78))    # 往后拉
         else:
-            prev = base + STRIKES[i - 1]
-            label = LABELS[i - 1]
-        nxt = base + STRIKES[i] if i < len(STRIKES) else base + self.CYCLE + FIRST
-        if i >= len(STRIKES):
-            label = "余音"
-        return i, prev, nxt, label
+            d = -A * (1 - ease_in(span(p, 0.78, 1.0)))   # 松手荡回去
+        return d, tau, lo + 1, name
 
-    def offset(self, e: float) -> float:
-        _, prev, nxt, _ = self.state(e)
-        L = nxt - prev
-        u = (e - prev) / L
-        amp = clamp(L * 1.6, 5, 13)
-        return -amp * math.sin(math.pi * clamp(u)) ** 0.8
+    def counter(self, g: Gfx, e: float, label: str | None = None):
+        if label is None:
+            d, age, n, name = self.state(e)
+            label = name if n == 0 or name == "余音" else f"{name} {cn_num(n)}"
+        badge(g, 4, 4, label)
 
-    # ------------------------------------------------------------ 零件
+    def puller(self, g: Gfx, t: float, d: float, log_xy, face: str = "normal"):
+        """小道士拉绳：撞木越往后，身子越往后仰（往左挪），手攥绳"""
+        x = DX + d * 0.35
+        ang = 0 if d < -6 else -30
+        h = pose_arm(g, x, FLOOR, t, ang, face=face)
+        hx, hy = h["hand"]
+        lx, ly = log_xy
+        g.d.line((hx, hy, lx, ly + 1), fill=1)
+        g.d.rectangle((hx - 1, hy - 1, hx + 1, hy + 1), fill=1)
 
-    def waves(self, g: Gfx, since: float, strong: float = 1.0):
-        """声波：撞后 since 秒，弧从钟两侧荡开"""
-        if since < 0 or since > 3.2:
-            return
-        for j in range(3):
-            r = 24 + (since - j * 0.25) * 34
-            if r < 24 or since - j * 0.25 > 2.6:
-                continue
-            step = 2 if since < 1.2 else 3
-            arc_dots(g, BX, 30, r, -0.75, 0.75, step=step)
-            if strong > 1:
-                arc_dots(g, BX, 30, r, math.pi - 0.45, math.pi + 0.2, step=step + 1)
+    def bird(self, g: Gfx, age: float, t: float):
+        bx, by = 108, BEAM_Y - 4
+        if 0 <= age < 0.7:
+            hop = math.sin(age / 0.7 * math.pi) * 6
+            pix.blit(g, BIRD_FLY, bx - 1, by - hop)
+        else:
+            pix.blit(g, BIRD[int(t * 0.7) % 2], bx, by)
 
-    def texts(self, g: Gfx, n: int, label: str, a: float = 1.0):
-        s = cn_num(n) if n else ""
-        if s:
-            g.d.rectangle((112, 0, 127, min(63, len(s) * 12 + 4)), fill=0)
-            vreveal(g, 114, 2, s, a)
-        short = {"紧十八": "紧杵", "慢十八": "慢杵", "不紧不慢": "平杵", "起钟": "起钟", "余音": "余音"}
-        g.d.rectangle((0, 38, 14, 63), fill=0)
-        vreveal(g, 2, 39, short.get(label, label), a)
+    def frame(self, g: Gfx, t: float, d: float, age: float, dt: float, power: float = 1.0, face: str = "normal",
+              glow: bool = False):
+        tower(g)
+        sway = 0.0
+        if 0 <= age < 3:
+            sway = 1.6 * power * math.exp(-age * 1.5) * math.sin(age * 9)
+        bell(g, sway, glow)
+        lx = log_and_ropes(g, d)
+        self.puller(g, t, d, lx, face=face)
+        waves(g, age, power)
+        self.bird(g, age, t)
+        if 0 <= age < 0.25:
+            pix.shake(g, t, 1.0 * power)
+        if 0 <= age < dt * 1.5:
+            self.sparks.burst(BX - 12, BY + 25, int(6 * power), 22, up=4, life=0.4, gravity=40)
+        self.sparks.step(dt)
+        self.sparks.draw(g)
 
-    def mx(self, g: Gfx, since: float, t: float):
-        g.mx_rows([0b00011000, 0b00111100, 0b00111100, 0b01111110, 0b01111110, 0b11111111, 0, 0b00011000])
-        if 0 <= since < 0.6:
-            g.mx_level = 6 if since < 0.12 else 2
-            r = 4 + since * 8
-            g.mx[6, :] = False
-            for x in range(8):
-                if abs(abs(x - 3.5) - r * 0.6) < 0.8:
-                    g.mx[6, x] = True
-        if 0 <= since < 0.25 and int(since * 30) % 2:  # 钟一震
-            g.mx[:, 1:] = g.mx[:, :-1].copy()
-            g.mx[:, 0] = False
-
-    # ------------------------------------------------------------ 阶段
+    # ------------------------------------------------------------ 入场 / 持续
 
     def enter(self, g: Gfx, t: float):
-        frame(g)
-        drop = ease_out_bounce(span(t, 0, 1.1))
-        sway = math.sin(t * 9) * 1.5 * (1 - span(t, 1.1, 2.2)) if t > 1.1 else 0
-        bell(g, dx=sway, dy=lerp(-70, 0, drop))
-        # 撞木从左边荡进来，再被拉到持续阶段 e=0 的位置
-        off0 = self.offset(0.0)
-        if t < 1.6:
-            off = lerp(-60, off0 - 4, ease_out(span(t, 0.4, 1.6)))
+        dt = self.clock(t)
+        tower(g)
+        drop = ease_out_bounce(span(t, 0.1, 1.0))
+        y_off = lerp(-40, 0, drop)
+        spr = P("bell")
+        sway = 2 * math.exp(-max(t - 1.0, 0) * 2) * math.sin(t * 8) if t > 1.0 else 0
+        g.d.line((BX, BEAM_Y + 3, BX, BY + y_off), fill=1)
+        pix.blit(g, spr, BX - 13 + round(sway), BY + y_off)
+        if hit(t, 0.48, dt):
+            pix.shake(g, t, 1.5)
+        swing = ease_out(span(t, 0.8, 2.2))
+        d = lerp(-34, 0, swing) + (3 * math.sin((t - 2.2) * 5) * math.exp(-(t - 2.2) * 2) if t > 2.2 else 0)
+        lx = log_and_ropes(g, d)
+        if t < 3.2:
+            x = lerp(-14, DX, ease_out(span(t, 1.4, 3.2)))
+            daoshi(g, x, FLOOR, "walk", t)
         else:
-            off = lerp(off0 - 4, off0, ease_in_out(span(t, 1.6, 3.0)))
-        log(g, off)
-        self.texts(g, 0, "起钟", a=span(t, 2.4, 3.4))
-        self.mx(g, -1, t)
-        if t < 1.1:
-            n = int(span(t, 0, 1.1) * 8)
-            g.mx[n:, :] = False
+            self.puller(g, t, 0, lx)
+        self.bird(g, 99, t)
+        self.sparks.step(dt)
+        self.sparks.draw(g)
+        if t > 3.2:
+            self.counter(g, 0.0, "起钟")
+        mx_bell(g, 99, t)
 
     def hold(self, g: Gfx, t: float, e: float):
-        n, prev, nxt, label = self.state(e)
-        since = e - prev if (n or e >= self.CYCLE) else 99.0  # 第一杵之前没有“上一杵”
-        off = self.offset(e)
-        shake = math.sin(since * 70) * 1.2 * (1 - span(since, 0, 0.5)) if 0 <= since < 0.5 else 0
-        frame(g)
-        self.waves(g, since)
-        bell(g, dx=shake)
-        log(g, off)
-        if n == 0 and e >= self.CYCLE:
-            n_show, lab = 108, "余音"
+        dt = self.clock(t)
+        k = e % self.CYCLE
+        d, age, n, name = self.state(e)
+        face = "happy" if 0.2 < age < 0.8 and name in ("慢杵", "平杵") else "normal"
+        if k < 3.0:      # 起钟：拱手、作揖
+            tower(g)
+            bell(g, 0)
+            lx = log_and_ropes(g, 0)
+            daoshi(g, DX, FLOOR, "gongshou" if k < 1.6 else "bow", t)
+            self.bird(g, 99, t)
+        elif name == "余音":
+            if age > 6:   # 余音里拱手
+                tower(g)
+                bell(g, 0)
+                log_and_ropes(g, d)
+                daoshi(g, DX, FLOOR, "gongshou" if (age % 8) < 5 else "idle", t, face="happy")
+                self.bird(g, 99, t)
+            else:
+                self.frame(g, t, d, age, dt, face="happy")
         else:
-            n_show, lab = n, label
-        if n == 0 and since > 1.0 and e >= self.CYCLE:  # 新一轮：起钟
-            lab = "起钟"
-        self.texts(g, n_show, lab)
-        self.mx(g, since, t)
+            self.frame(g, t, d, age, dt, face=face)
+        self.counter(g, e)
+        mx_bell(g, age, t)
+
+    # ------------------------------------------------------------ 中断 / 恢复 / 圆满
 
     def interrupt(self, g: Gfx, t: float, e: float):
-        n, prev, nxt, label = self.state(e)
-        since = e - prev if (n or e >= self.CYCLE) else 99.0
-        off0 = self.offset(e)
-        off = lerp(off0, -1.5, ease_in_out(span(t, 0, 1.0)))
-        frame(g)
-        self.waves(g, since + t * 1.5)
-        bell(g)
-        log(g, off)
-        self.texts(g, n, "止静" if t > 0.7 else label)
-        self.mx(g, -1, t)
-        g.mx[7, :] = False
+        dt = self.clock(t)
+        d0, age, n, name = self.state(e)
+        d = lerp(d0, 0, ease_out(span(t, 0.0, 0.8)))
+        self.frame(g, t, d, age + t if age < 50 else 99, dt)
+        self.counter(g, e, "止静" if t > 0.5 else None)
+        mx_bell(g, 99, t)
 
     def resume(self, g: Gfx, t: float, e: float):
-        n, prev, nxt, label = self.state(e)
-        frame(g)
-        # 拉开 → 撞一杵（t=1.0）→ 荡到 hold(e) 的位置
-        off_h = self.offset(e)
-        if t < 1.0:
-            off = -1.5 - 10 * math.sin(math.pi * span(t, 0, 1.0)) ** 0.8
-            since = -1
+        dt = self.clock(t)
+        d1, age1, n, name = self.state(e)
+        if t < 1.4:       # 开静：拉开一撞
+            d = -18 * ease_in_out(span(t, 0.1, 1.1)) * (1 - ease_in(span(t, 1.1, 1.4)))
+            age = 99
         else:
-            since = t - 1.0
-            off = lerp(0, off_h, ease_in_out(span(t, 1.0, 2.0)))
-        shake = math.sin(since * 70) * 1.2 * (1 - span(since, 0, 0.5)) if 0 <= since < 0.5 else 0
-        self.waves(g, since)
-        bell(g, dx=shake)
-        log(g, off)
-        self.texts(g, n, "开静" if t < 1.6 else label)
-        self.mx(g, since, t)
+            age = t - 1.4
+            d = lerp(2.5 * math.sin(min(age / 0.3, 1) * math.pi), d1, span(t, 1.7, 2.4))
+        self.frame(g, t, d, age, dt)
+        self.counter(g, e, "开静" if t < 1.8 else None)
+        mx_bell(g, age, t)
 
     def complete(self, g: Gfx, t: float, e: float):
-        hits = (0.5, 1.5, 2.5)
-        last = max([h for h in hits if t >= h] + [-9])
-        since = t - last
-        # 撞木：每记之间拉开再撞
-        if t < hits[0]:
-            off = lerp(self.offset(e), -12, ease_in_out(span(t, 0, hits[0])))
-            if t > hits[0] - 0.2:
-                off = lerp(-12, 0, span(t, hits[0] - 0.2, hits[0]))
-        elif t < hits[-1]:
-            u = (t - last) / 1.0
-            off = -12 * math.sin(math.pi * u) ** 0.8
+        dt = self.clock(t)
+        hits = (1.0, 2.1, 3.2)
+        prev = max([h for h in hits if h <= t], default=None)
+        nxt = min([h for h in hits if h > t], default=None)
+        if nxt is not None:
+            start = prev if prev is not None else 0.0
+            p = span(t, start + 0.1, nxt)
+            d = -22 * ease_in_out(span(p, 0, 0.75)) * (1 - ease_in(span(p, 0.75, 1.0)))
         else:
-            off = -3 * math.sin(math.pi * clamp((t - hits[-1]) / 1.6))
-        frame(g)
+            d = 2 * math.exp(-(t - 3.2)) * math.sin((t - 3.2) * 6)
+        age = t - prev if prev is not None else 99
+        if t < 3.6:
+            self.frame(g, t, d, age, dt, power=1.6, glow=0 <= age < 0.12)
+        else:
+            tower(g)
+            bell(g, 1.2 * math.exp(-(t - 3.2) * 1.5) * math.sin((t - 3.2) * 9))
+            log_and_ropes(g, d)
+            daoshi(g, DX, FLOOR, "kneel" if t < 5.4 else "idle", t, face="happy" if t > 5.4 else "normal")
+            waves(g, age, 1.6)
+            self.bird(g, age, t)
+            self.sparks.step(dt)
+            self.sparks.draw(g)
         for h in hits:
-            s = t - h
-            if 0 <= s < 3.2:
-                self.waves(g, s, strong=2)
-        shake = math.sin(since * 70) * 1.6 * (1 - span(since, 0, 0.6)) if 0 <= since < 0.6 else 0
-        bell(g, dx=shake, glow=ease_out(span(t, 2.5, 3.2)) * (1 - span(t, 4.5, 5.5)))
-        log(g, off)
-        g.d.rectangle((0, 38, 14, 63), fill=0)
-        g.d.rectangle((112, 0, 127, 63), fill=0)
-        vreveal(g, 114, 2, "琳琅振响", span(t, 2.6, 3.6))
-        vreveal(g, 2, 14, "十方肃清", span(t, 3.6, 4.6))
-        self.mx(g, since, t)
-        if t > 2.6:
-            mx_ring(g, (t - 2.6) * 3 % 5, 3.5, 3.5)
+            if hit(t, h, dt):
+                self.sparks.burst(BX, BY + 15, 14, 34, life=0.7, gravity=20)
+        if hit(t, 3.2, dt):
+            pix.flash(g)
+        if t > 3.5:
+            title(g, 31, 4, "琳琅振响", t, 3.5)
+        mx_bell(g, age, t)
+        mx_burst(g, t, 3.2)

@@ -1,299 +1,328 @@
-"""补衲：夜里一盏油灯，小道士盘腿坐着补道袍（近景，人放大）。一针下去、一针上来，线拉得老长；
-补丁四周的针脚一针针多起来。补完：低头咬断线头，把道袍举起来对着灯照一照，满意。再换一处破洞，
-先眯着眼对着灯穿针——线头戳偏两次才穿进去。飞蛾绕着灯打转。窗外一弯月。
-右侧竖写“大成若缺”（《道德经》四十五章：大成若缺，其用不弊）。
+"""补衲（像素风）：夜里，窗格外一弯月，灯台上一盏油灯，光晕一圈圈；一只飞蛾绕着灯打转。
+小道士盘坐蒲团，道袍搭在膝上，当中一块补丁。一大轮 40 秒：先把针举到灯前眯眼穿线——线头戳偏两次才穿进（一闪）；
+然后一针一针：针扎下去、从下一针冒出来、拉着线划一道长弧再落回，补丁四周的针脚一针针多起来；
+缝完低头咬断线头，双手把道袍举起来对着灯照一照（补丁边一闪），满意地眯眼一笑，放下，换一处再补。
+彩蛋：约每 29 秒飞蛾一头扑向灯火，火苗猛地一跳，飞蛾晕乎乎地绕开。
+左侧竖写“大成若缺”（《道德经》四十五章：大成若缺，其用不弊）。
 """
 from __future__ import annotations
 
 import math
 
-from ..engine.anim import clamp, ease_in, ease_in_out, ease_out, lerp, noise, rand, span
-from ..engine.fx import flame, ring
-from ..engine.gfx import Gfx
+from ..engine import pix
+from ..engine.anim import ease_in_out, ease_out, lerp, span
+from ..engine.gfx import Gfx, Sprite
 from ..engine.scene import Rest, register
-from .x5_common import daoshi, dpoly, fade_box, near_arm, phase
+from .x5_common import Clock, cyc, event, fade_out, keys, scroll, worker
 
-S = 1.6          # 人放大
-X = 30
-SEAT = 61
-LAMP = (96, 38)  # 灯盏
-STITCH = 2.0
-NST = 14         # 一块补丁几针
-THREAD_T = 6.0   # 穿针
-SHOW_T = 6.0     # 咬线、举起来看
-BIG = THREAD_T + NST * STITCH + SHOW_T
+FLOOR = 56
+TEXT_X = 3
+DX = 46
+LAMP = (84, 33)          # 灯芯
+BIG = 40.0
+NST = 13
+ST0, ST = 6.0, 2.0       # 第一针开始、每针
+
+FLAME = pix.frames("""
+  #
+ ###
+ ###
+#.#.#
+ #.#
+---
+  #
+  ##
+ ###
+ #.##
+ #.#
+---
+ #
+ ##
+ ###
+##.#
+ #.#
+""")
+BIG_FLAME = pix.frames("""
+   #
+  ##
+  ###
+ ####
+ ##.##
+##..##
+ #..#
+---
+  #
+  ##
+ ###
+ ####
+##.##
+#..##
+ #..#
+""")
+
+LAMPSTAND = Sprite("""
+#.......#
+ #######
+   ###
+    #
+    #
+    #
+   #.#
+    #
+    #
+    #
+    #
+   ###
+ #######
+#########
+""")
+
+MOTH = pix.frames("""
+#.#
+ #
+---
+.#.
+###
+""")
+
+CUSHION = Sprite("""
+  ##########
+ #.#.#.#.#.##
+##############
+ ############
+""")
+
+
+def patch_points():
+    """补丁一圈针脚的位置（相对补丁左上角，补丁 9×5）"""
+    pts = []
+    for x in range(0, 9, 2):
+        pts.append((x, -1))
+    for y in range(1, 5, 2):
+        pts.append((9, y))
+    for x in range(8, -1, -2):
+        pts.append((x, 5))
+    for y in range(3, 0, -2):
+        pts.append((-1, y))
+    return pts[:NST]
+
+
+PTS = patch_points()
 
 
 @register
 class Mend(Rest):
     id = "x5.mend"
     name = "补衲"
-    desc = "油灯下补道袍：穿针、一针针缝、咬断线头举起来照——大成若缺"
-    T = {"enter": 3.0, "exit": 1.4}
+    desc = "夜里油灯下盘坐补衲衣：眯眼穿针、一针一针拉长线，咬断线头举起来对灯一照——大成若缺"
+    T = {"enter": 3.0, "exit": 1.2}
 
     def setup(self):
-        self.s = self.rng.randrange(1000)
-        self._ht = 0.0
+        self.clock = Clock()
 
-    # ------------------------------------------------------------ 景
+    # ------------------------------------------------ 屋里
 
-    def window(self, g: Gfx):
-        x0, y0, x1, y1 = 52, 4, 80, 26
-        g.d.rectangle((x0, y0, x1, y1), outline=1)
-        g.d.rectangle((x0 + 1, y0 + 1, x1 - 1, y1 - 1), outline=1)
-        # 一弯月（大圆减小圆）
-        g.d.ellipse((66, 8, 75, 17), fill=1)
-        g.d.ellipse((63, 6, 72, 15), fill=0)
-        for x in range(x0 + 7, x1, 7):   # 窗棂
-            g.d.line((x, y0 + 1, x, y1 - 1), fill=1)
-        g.d.line((x0 + 1, (y0 + y1) // 2, x1 - 1, (y0 + y1) // 2), fill=1)
+    def room(self, g: Gfx, t: float, flare: float = 0.0, light: float = 1.0):
+        # 窗：格子窗，窗外一弯月、两颗星
+        wx0, wy0, wx1, wy1 = 100, 6, 124, 30
+        g.d.rectangle((wx0, wy0, wx1, wy1), outline=1)
+        g.d.ellipse((108, 10, 118, 20), fill=1)
+        g.d.ellipse((111, 8, 121, 18), fill=0)
+        for x, y in ((104, 24), (120, 25)):
+            if int(t * 1.3 + x) % 4:
+                g.px(x, y)
+        for x in (108, 116):
+            g.d.line((x, wy0, x, wy1), fill=1)
+        g.d.line((wx0, 18, wx1, 18), fill=1)
+        g.d.rectangle((wx0 - 2, wy1 + 1, wx1 + 2, wy1 + 2), fill=1)
+        # 地面：一道线、几块砖
+        g.d.line((19, FLOOR, 127, FLOOR), fill=1)
+        for x in range(23, 128, 12):
+            g.d.line((x, FLOOR + 1, x - 2, 63), fill=1)
+        # 灯台与灯火、光晕
+        lx, ly = LAMP
+        pix.blit(g, LAMPSTAND, lx - 4, ly + 2)
+        fr = pix.anim(BIG_FLAME if flare > 0 else FLAME, t, 7)
+        pix.blit(g, fr, lx - fr.w // 2, ly - fr.h + 2, outline=False)
+        if light > 0:
+            r = 11 + math.sin(t * 2.3) * 1 + flare * 4
+            for a in range(0, 360, 20):  # 光晕：一圈点，慢慢转
+                rad = math.radians(a + t * 15)
+                g.px(lx + math.cos(rad) * r, ly - 2 + math.sin(rad) * r * 0.9)
+            if light > 0.5:
+                r2 = r + 5
+                for a in range(10, 360, 30):
+                    rad = math.radians(a - t * 10)
+                    g.px(lx + math.cos(rad) * r2, ly - 2 + math.sin(rad) * r2 * 0.9)
 
-    def lamp(self, g: Gfx, t: float, lit: float = 1.0, flick: float = 0.0):
-        x, y = LAMP
-        d = g.d
-        d.line((x, y + 2, x, SEAT - 1), fill=1)
-        d.line((x + 1, y + 2, x + 1, SEAT - 1), fill=1)
-        d.polygon([(x - 5, SEAT), (x + 6, SEAT), (x + 3, SEAT - 3), (x - 2, SEAT - 3)], fill=1)
-        d.chord((x - 6, y - 2, x + 7, y + 4), 0, 180, fill=0, outline=1)
-        d.line((x - 6, y + 1, x + 7, y + 1), fill=1)
-        if lit > 0:
-            h = (7 + flick * 3) * lit
-            flame(g, x + 1, y, 4 * lit + 1, h, t * (1 + flick * 3), 7)
-            for r, dens in ((13, 3), (18, 4)):
-                rr = r + noise(t * 2, 3) * 1.5
-                ring(g, x + 1, y - 4, rr * lit, dens, t * 0.2)
+    def lap(self, g: Gfx, x: int, raise_k: float = 0.0, done: int = 0, flash: bool = False):
+        """膝上的道袍：一块布从膝上垂到地，当中补丁 + 一圈针脚"""
+        dy = -int(raise_k * 16)
+        x0, y0 = x - 4 + int(raise_k * 8), FLOOR - 9 + dy
+        bot = FLOOR - 1 + dy if raise_k else FLOOR - 1
+        g.d.polygon([(x0, y0 + 1), (x0 + 5, y0), (x0 + 11, y0 + 1), (x0 + 17, y0), (x0 + 20, y0 + 1),
+                     (x0 + 21, bot), (x0 - 2, bot)], fill=1)
+        g.d.polygon([(x0 + 17, y0 + 1), (x0 + 23, y0 + 3), (x0 + 27, bot + 1), (x0 + 19, bot + 1)], fill=1)  # 垂下的袖子
+        g.d.line((x0 + 20, bot - 1, x0 + 26, bot - 1), fill=0)      # 袖口镶边
+        pix.checker(g, (x0 + 21, y0 + 4, x0 + 27, bot - 1), 0.5, fill=0)
+        g.d.line((x0 + 1, y0 + 2, x0 + 4, bot - 1), fill=0)         # 交领
+        g.d.line((x0 + 17, y0 + 2, x0 + 18, bot - 1), fill=0)       # 衣褶
+        px, py = x0 + 7, y0 + 2
+        g.d.rectangle((px, py, px + 8, py + 4), fill=0, outline=1)  # 补丁
+        g.d.line((px + 2, py + 2, px + 6, py + 2), fill=1)
+        for i in range(done):
+            sx, sy = PTS[i]
+            g.px(px + sx, py + sy, 0 if not flash else 1)
+        if flash:
+            g.d.rectangle((px - 1, py - 1, px + 9, py + 5), outline=1)
+        return px, py
 
-    def moth(self, g: Gfx, t: float):
-        a = t * 1.7
-        r = 9 + 4 * math.sin(t * 0.43)
-        x = LAMP[0] + 1 + math.cos(a) * r
-        y = LAMP[1] - 6 + math.sin(a) * r * 0.6 + math.sin(t * 5) * 1
-        wing = int(t * 14) % 2
-        g.px(x, y)
-        g.px(x - 1, y - wing)
-        g.px(x + 1, y - wing)
-        return math.hypot(x - LAMP[0], y - LAMP[1] + 6) < 7
+    # ------------------------------------------------ 主循环
 
-    def floor(self, g: Gfx):
-        g.d.line((0, SEAT + 1, 127, SEAT + 1), fill=1)
-        g.d.ellipse((X - 18, SEAT - 3, X + 22, SEAT + 4), outline=1)   # 蒲团
+    def frame(self, g: Gfx, t: float, text_k: float = 1.0):
+        self.clock.tick(t)
+        n, k = cyc(t, BIG)
+        moth = event(t, 29.0, 4.0, 77)
+        flare = 1.0 if moth and 1.2 < moth[1] < 2.0 else 0.0
+        self.room(g, t, flare)
+        pix.blit(g, CUSHION, DX - 7, FLOOR - 4)
+        hand, face, head, needle, thread, done, raise_k = self.state(k)
+        flash = 34.6 < k < 35.2
+        px, py = 0, 0
 
-    # ------------------------------------------------------------ 衣与针
+        def tool(gg, h1, h2):
+            nonlocal px, py
+            px, py = self.lap(gg, DX + 6, raise_k, done, flash)
+            if needle and h1:
+                gg.d.line((h1[0], h1[1], h1[0] + 3, h1[1] - 3), fill=1)   # 针
+            if thread and h1 and done < NST + 1:
+                i = min(done, NST - 1)
+                sx, sy = PTS[i if done < NST else NST - 1]
+                tx, ty = px + sx, py + sy
+                mx, my = (tx + h1[0]) / 2, min(ty, h1[1]) - 4
+                pts = [(lerp(lerp(tx, mx, q), lerp(mx, h1[0], q), q), lerp(lerp(ty, my, q), lerp(my, h1[1], q), q))
+                       for q in (i / 6 for i in range(7))]
+                pix.dotted(gg, pts[0][0], pts[0][1], pts[3][0], pts[3][1], step=1)
+                pix.dotted(gg, pts[3][0], pts[3][1], pts[6][0], pts[6][1], step=1)
 
-    def robe(self, g, lift: float, patch: int, stitches: int, hold_pts):
-        """膝上摊着的道袍（从腰前一直垂到地上）：lift 0..1 双手举起来"""
-        (ax, ay), (bx, by) = hold_pts
-        base = SEAT - 1
-        # 摊着时：上沿搭在膝上，前沿垂地，下摆有几道褶
-        p0 = (lerp(X + 4, ax - 2, lift), lerp(SEAT - 17, ay, lift))
-        p1 = (lerp(X + 33, bx + 2, lift), lerp(SEAT - 18, by - 1, lift))
-        p2 = (lerp(X + 42, bx + 5, lift), lerp(base, by + 22, lift))
-        p3 = (lerp(X + 8, ax - 5, lift), lerp(base, ay + 24, lift))
-        hem = []
-        for j in range(5):  # 下沿起伏
-            u = j / 4
-            hem.append((lerp(p2[0], p3[0], u), lerp(p2[1], p3[1], u) - (1.5 if j % 2 else 0)))
-        pts = [p0, p1] + hem
-        cx = lerp((p0[0] + p1[0]) / 2, (p2[0] + p3[0]) / 2, 0.42) + (patch % 3 - 1) * 2
-        cy = lerp((p0[1] + p1[1]) / 2, (p2[1] + p3[1]) / 2, 0.42)
-        w, h = 6, 4
-        per = self.stitch_points(cx, cy, w, h)
-        if g is None:
-            return per
-        dpoly(g, pts, 0.25)
-        for j in (1, 3):  # 褶
-            u = j / 4
-            x0, y0 = lerp(p0[0], p1[0], u), lerp(p0[1], p1[1], u)
-            x1, y1 = hem[4 - j]
-            g.d.line((lerp(x0, x1, 0.55), lerp(y0, y1, 0.55), x1, y1), fill=0)
-        g.d.rectangle((cx - w, cy - h, cx + w, cy + h), fill=0, outline=1)
-        g.d.line((cx - w + 2, cy - h + 2, cx + w - 2, cy - h + 2), fill=1)   # 补丁布纹
-        for i in range(min(stitches, NST)):
-            px, py = per[i]
-            g.px(px, py)
-            g.px(px + (1 if i < 4 or 7 <= i < 11 else 0), py + (0 if i < 4 or 7 <= i < 11 else 1))
-        return per
+        worker(g, DX, FLOOR, t, hand=hand, hand2=(hand[0] - 2, hand[1]) if raise_k > 0 else None, legs="sit",
+               face=face, head=head, tool=tool, behind_head=False)
+        if k < ST0:  # 穿针：线头凑近针眼，戳偏两下才进
+            self.threading(g, k, hand)
+        if moth:
+            self.moth(g, moth[1], t)
+        else:
+            self.moth(g, None, t)
+        self.matrix(g, t, k, done, raise_k)
+        scroll(g, TEXT_X, "大成若缺", k=text_k, side="left")
 
-    @staticmethod
-    def stitch_points(cx, cy, w, h):
-        pts = []
-        for i in range(NST):
-            u = i / NST * 4
-            side, k = int(u), u - int(u)
-            if side == 0:
-                pts.append((cx - w + 2 * w * k, cy - h - 2))
-            elif side == 1:
-                pts.append((cx + w + 2, cy - h + 2 * h * k))
-            elif side == 2:
-                pts.append((cx + w - 2 * w * k, cy + h + 2))
+    def state(self, k: float):
+        """→ (手, 表情, 头, 拿针, 有线, 已缝针数, 举起)"""
+        rest = (DX + 10, FLOOR - 12)
+        if k < ST0:  # 举针到灯前
+            hand = keys(k, [(0, rest), (0.8, (DX + 14, FLOOR - 24)), (5.2, (DX + 14, FLOOR - 24)), (6.0, rest)])
+            return hand, ("sleep" if 1.0 < k < 5.0 else "normal"), "up", True, k > 4.6, 0, 0.0
+        if k < ST0 + NST * ST:
+            i = int((k - ST0) / ST)
+            q = ((k - ST0) % ST) / ST
+            sx, sy = PTS[i]
+            tx, ty = DX + 2 + 7 + sx, FLOOR - 9 + 2 + sy
+            if q < 0.3:   # 扎下去
+                hand = keys(q, [(0, (tx + 2, ty - 5)), (0.3, (tx + 1, ty - 1))])
+            elif q < 0.75:  # 拉线：一道长弧
+                hand = keys(q, [(0.3, (tx + 1, ty - 1)), (0.55, (tx + 10, ty - 14)), (0.75, (tx + 13, ty - 10))],
+                            ease=ease_out)
             else:
-                pts.append((cx - w - 2, cy + h - 2 * h * k))
-        return pts
+                nx, ny = PTS[min(i + 1, NST - 1)]
+                hand = keys(q, [(0.75, (tx + 13, ty - 10)), (1.0, (DX + 2 + 7 + nx + 2, FLOOR - 9 + 2 + ny - 5))])
+            return hand, "normal", "bow" if q < 0.3 else "up", True, True, i + (q > 0.3), 0.0
+        k2 = k - (ST0 + NST * ST)
+        if k2 < 2.0:  # 低头咬断线头
+            return (DX + 7, FLOOR - 18), "normal", "bow" if 0.5 < k2 < 1.6 else "up", True, k2 < 1.0, NST, 0.0
+        if k2 < 6.0:  # 举起来对着灯照
+            r = span(k2, 2.0, 2.6) - span(k2, 5.4, 6.0)
+            return (DX + 12 + int(r * 8), FLOOR - 12 - int(r * 16)), ("happy" if 3.0 < k2 < 5.4 else "normal"), "up", False, \
+                False, NST, ease_in_out(r)
+        return rest, "normal", "up", False, False, NST if k2 < 7.0 else 0, 0.0
 
-    # ------------------------------------------------------------ 主画面
+    def threading(self, g: Gfx, k: float, hand):
+        """针眼前一根线头：戳偏两次，第三次穿过（一闪）"""
+        hx, hy = hand
+        ex, ey = hx + 3, hy - 3
+        if k < 1.0:
+            return
+        tries = [(1.2, 2.2, -2), (2.4, 3.4, 2), (3.6, 4.6, 0)]
+        for a, b, off in tries:
+            if a <= k < b:
+                q = span(k, a, b)
+                d = 6 * (1 - math.sin(q * math.pi))
+                g.d.line((ex + 2 + d, ey + off * math.sin(q * math.pi), ex + 7 + d, ey + 1), fill=1)
+                if off and 0.45 < q < 0.6:  # 戳偏了
+                    g.px(ex + 1, ey + off - 1)
+        if 4.6 <= k < 4.9:  # 穿进去了：一闪
+            for dx, dy in ((0, -2), (0, 2), (-2, 0), (2, 0)):
+                g.px(ex + dx, ey + dy)
 
-    def draw(self, g: Gfx, t: float, lit: float = 1.0):
-        big, k = phase(t, BIG)
-        self.window(g)
-        self.floor(g)
-        near_moth = self.moth(g, t) if lit > 0.5 else False
-        self.lamp(g, t, lit, 1.0 if near_moth else 0.0)
-        far_hand = (X + 13, SEAT - 13)
-        lift = 0.0
-        stitches = 0
-        hand = (X + 18, SEAT - 14)
-        eye = "closed" if (t % 4.6) < 0.14 else "open"
-        look = 1.0
-        lean = 2.0
-        needle_at = None
-        thread_from = None
-        if k < THREAD_T:  # 穿针：举到灯前，眯眼
-            stitches = 0
-            q = ease_in_out(span(k, 0, 1.0)) * (1 - ease_in_out(span(k, 5.2, 6.0)))
-            hand = (lerp(X + 18, X + 27, q), lerp(SEAT - 14, SEAT - 32, q))
-            far_hand = (lerp(X + 13, X + 22, q), lerp(SEAT - 13, SEAT - 30, q))
-            look = -0.5 * q
-            eye = "closed" if 1.0 < k < 4.6 else eye
-            lean = 2 + q * 2
-        elif k < THREAD_T + NST * STITCH:
-            kk = k - THREAD_T
-            i, c = phase(kk, STITCH)
-            stitches = i
-            lift = 0.0
-        else:  # 咬线头，举起来照
-            stitches = NST
-            kk = k - THREAD_T - NST * STITCH
-            if kk < 1.6:  # 低头咬
-                q = math.sin(span(kk, 0, 1.6) * math.pi)
-                lean = 2 + q * 4
-                look = 1 + q * 1.5
-                hand = (X + 18 - q * 3, SEAT - 14 - q * 4)
-            else:
-                q = ease_in_out(span(kk, 1.6, 2.6)) * (1 - ease_in_out(span(kk, 5.0, 6.0)))
-                lift = q
-                hand = (lerp(X + 18, X + 30, q), lerp(SEAT - 14, SEAT - 38, q))
-                far_hand = (lerp(X + 13, X + 14, q), lerp(SEAT - 13, SEAT - 38, q))
-                look = 1 - q * 2.5
-                eye = "closed" if 3.0 < kk < 4.8 else eye
-                lean = 2 - q * 2
-        # 衣服的位置（先算出针脚，好知道手在哪）
-        hold_pts = (far_hand, hand)
-        per = self.robe(None, lift, big, stitches, hold_pts)
-        if THREAD_T <= k < THREAD_T + NST * STITCH:
-            kk = k - THREAD_T
-            i, c = phase(kk, STITCH)
-            sp = per[min(i, NST - 1)]
-            nxt = per[min(i + 1, NST - 1)]
-            if c < 0.5:  # 针扎下去
-                q = ease_in(c / 0.5)
-                needle_at = (lerp(sp[0] + 3, sp[0], q), lerp(sp[1] - 4, sp[1], q))
-            elif c < 0.7:  # 从下一针的位置冒出来
-                needle_at = (nxt[0], nxt[1])
-            else:  # 拉线：一条长弧，再落回来
-                q = ease_out(span(c, 0.7, 1.5))
-                back = ease_in_out(span(c, 1.5, STITCH))
-                top = (X + 42, SEAT - 46)
-                needle_at = (lerp(lerp(nxt[0], top[0], q), nxt[0] + 3, back),
-                             lerp(lerp(nxt[1], top[1], q), nxt[1] - 4, back))
-            hand = (needle_at[0] + 1, needle_at[1] - 1)
-            thread_from = sp if c < 0.5 else nxt
-        # 人（先画，近手臂留到最后），再画搭在膝上的衣服，再画近手臂
-        pz = daoshi(g, X, SEAT, 1, hands=[hand, far_hand], lean=lean, crouch=0.75, s=S, sit=True, eye=eye,
-                    look=look, draw_near=False)
-        self.robe(g, lift, big, stitches, hold_pts)
-        pz.near = near_arm(g, pz, hand)
-        if k < THREAD_T:
-            # 穿针：针竖着，线头一点点凑近针眼，偏了两次
-            nx, ny = hand[0] + 1, hand[1] - 3
-            g.d.line((nx, ny, nx, ny - 6), fill=1)
-            g.px(nx, ny - 5)  # 针眼
-            g.d.point((nx, ny - 5))
-            tx_, ty_ = far_hand[0] + 2, far_hand[1] - 4
-            tries = [(1.2, 2.2, 3), (2.4, 3.4, -3), (3.6, 4.6, 0)]
-            ex, ey = tx_, ty_
-            for a, b, miss in tries:
-                if k >= a:
-                    q = ease_in_out(span(k, a, b - 0.3))
-                    back = ease_in(span(k, b - 0.25, b)) if miss else 0
-                    ex = lerp(tx_, nx + miss * 0.7, q * (1 - back))
-                    ey = lerp(ty_, ny - 5 + miss * 0.3, q * (1 - back))
-            g.d.line((far_hand[0], far_hand[1], ex, ey), fill=1)
-            if 4.4 < k < 5.0:  # 穿过去了：一闪
-                g.px(nx + 3, ny - 8)
-                g.px(nx - 3, ny - 8)
-                g.px(nx, ny - 10)
-        if needle_at:
-            nx, ny = needle_at
-            g.d.line((nx, ny, nx + 2, ny - 4), fill=1)
-            if thread_from:
-                # 线：从布上的针脚到针尾，稍微下垂
-                mx_, my_ = (thread_from[0] + nx) / 2, max(thread_from[1], ny) + 3
-                g.d.line((thread_from[0], thread_from[1], mx_, my_ - 2, nx + 2, ny - 4), fill=1)
-        if not (THREAD_T <= k < THREAD_T + NST * STITCH) and k >= THREAD_T:
-            kk = k - THREAD_T - NST * STITCH
-            if 0.6 < kk < 1.0:  # 咬断：一点线头飞走
-                g.px(pz.head[0] + 6 + (kk - 0.6) * 15, pz.head[1] + 4 - (kk - 0.6) * 10)
-            if 3.0 < kk < 4.8:  # 举起来照灯：补丁边闪一下
-                for j in range(4):
-                    a = kk * 3 + j * 1.57
-                    g.px(X + 26 + math.cos(a) * 12, SEAT - 26 + math.sin(a) * 8)
-        self.text(g)
-        self.mx(g, t, k, stitches)
+    def moth(self, g: Gfx, q, t: float):
+        lx, ly = LAMP
+        if q is not None and q < 3.0:
+            if q < 1.2:  # 一头扑向火
+                a = t * 3
+                r = lerp(14, 2, q / 1.2)
+            else:  # 晕乎乎地绕开
+                a = t * 7
+                r = lerp(3, 14, span(q, 1.2, 3.0))
+            x, y = lx + math.cos(a) * r, ly - 4 + math.sin(a) * r * 0.6
+        else:
+            a = t * 2.1
+            x, y = lx + math.cos(a) * 14, ly - 6 + math.sin(a * 1.7) * 6
+        pix.blit(g, pix.anim(MOTH, t, 10), x - 1, y - 1)
 
-    def text(self, g: Gfx, a: float = 1.0):
-        s = "大成若缺"
-        g.vtext(115, 2, s[:int(round(len(s) * clamp(a)))])
-
-    def mx(self, g: Gfx, t: float, k: float, stitches: int):
-        # 补丁一圈针脚：随针数一格格亮起（隔一格一针）
-        cells = [(x, 0) for x in range(8)] + [(7, y) for y in range(1, 8)] + [(x, 7) for x in range(6, -1, -1)] + \
-                [(0, y) for y in range(6, 0, -1)]
-        n = int(len(cells) * stitches / NST)
-        for i in range(min(n, len(cells))):
+    def matrix(self, g: Gfx, t: float, k: float, done: int, raise_k: float):
+        """点阵：补丁一圈针脚随针数一格格亮起，中间一上一下的针；举起来照时整块亮"""
+        ring = [(x, 0) for x in range(1, 7)] + [(7, y) for y in range(1, 7)] + [(x, 7) for x in range(6, 0, -1)] + \
+               [(0, y) for y in range(6, 0, -1)]
+        for i in range(min(done * 2, len(ring))):
             if i % 2 == 0:
-                g.mx_set(*cells[i])
-        # 中间：针一上一下
-        y = 2 + int(abs(math.sin(t * math.pi / STITCH)) * 3)
-        g.mx_set(4, y)
-        g.mx_set(4, y + 1)
-        g.mx_set(3, y + 2)
-        if stitches >= NST and THREAD_T + NST * STITCH + 3 < k < THREAD_T + NST * STITCH + 4.8:
+                g.mx_set(*ring[i])
+        if raise_k > 0.3:
+            for y in range(2, 6):
+                for x in range(2, 6):
+                    g.mx_set(x, y)
             g.mx_level = 3
-
-    # ------------------------------------------------------------ 阶段
+            return
+        ny = 2 + int(abs(math.sin(t * math.pi / ST)) * 3)
+        g.mx_set(4, ny), g.mx_set(4, ny + 1)
+        g.mx_set(3, 3), g.mx_set(3, 4)
 
     def enter(self, g: Gfx, t: float):
-        """黑暗里划着火柴点灯，屋里亮起来"""
-        T = self.T["enter"]
-        lit = ease_out(span(t, 1.0, 1.6))
-        self.draw(g, 0.0, lit)
-        fade_box(g, 0.15 + 0.85 * ease_in_out(span(t, 1.0, 2.6)))
-        if t < 1.3:  # 火柴
-            x, y = LAMP[0] + 8 - span(t, 0.3, 1.0) * 6, LAMP[1] - 6 + span(t, 0.3, 1.0) * 4
-            g.d.line((x, y, x + 8, y + 6), fill=1)
-            if t > 0.3:
-                flame(g, x, y, 3, 5, t, 2)
-        g.d.rectangle((113, 0, 127, 63), fill=0)
-        self.text(g, span(t, 1.8, T - 0.2))
+        """黑屋里一根火柴凑近油灯，灯亮，屋里渐渐亮起来"""
+        self.clock.tick(t)
+        lit = t > 1.4
+        self.room(g, t, 0.0, light=span(t, 1.4, 2.6) if lit else 0)
+        if not lit:  # 灯还没点：盖掉火苗
+            lx, ly = LAMP
+            g.d.rectangle((lx - 3, ly - 6, lx + 3, ly + 1), fill=0)
+            g.px(lx, ly)
+        pix.blit(g, CUSHION, DX - 7, FLOOR - 4)
+        hand = keys(t, [(0, (DX + 10, FLOOR - 12)), (0.8, (LAMP[0] - 5, LAMP[1] + 1)), (1.6, (LAMP[0] - 5, LAMP[1] + 1)),
+                        (2.4, (DX + 10, FLOOR - 12))])
+
+        def tool(gg, h1, h2):
+            self.lap(gg, DX + 6)
+            if 0.4 < t < 1.8 and h1:
+                gg.d.line((h1[0], h1[1], h1[0] + 4, h1[1] - 1), fill=1)
+                if int(t * 12) % 2:
+                    gg.px(h1[0] + 5, h1[1] - 2)
+        worker(g, DX, FLOOR, t, hand=hand, legs="sit", tool=tool, face="happy" if t > 2.0 else "normal")
+        if not lit:
+            g.fade(0.35 + span(t, 0, 1.4) * 0.3)
+        self.matrix(g, t, 0, 0, 0)
+        scroll(g, TEXT_X, "大成若缺", k=span(t, 1.0, 2.8), side="left")
 
     def hold(self, g: Gfx, t: float):
-        self._ht = t
-        self.draw(g, t)
+        self.frame(g, t)
 
     def exit(self, g: Gfx, t: float):
-        """吹灯：火苗一歪就灭，屋里暗下去"""
-        T = self.T["exit"]
-        lit = 1 - ease_in(span(t, 0.2, 0.6))
-        self.draw(g, self._ht, lit)
-        if 0.1 < t < 0.6:  # 吹的一口气
-            for j in range(3):
-                y = LAMP[1] - 6 + j * 3
-                x0 = LAMP[0] - 16 + span(t, 0.1, 0.6) * 14
-                g.d.line((x0, y, x0 + 5, y), fill=1)
-        if 0.6 < t < 1.1:  # 一缕青烟
-            from ..engine.fx import smoke_wisp
-            smoke_wisp(g, LAMP[0] + 1, LAMP[1] - 1, 10 * span(t, 0.6, 1.0), t, 3)
-        fade_box(g, 1 - ease_in(span(t, 0.5, T)))
-        if t > 0.6:
-            g.mx[:] = False
-            g.mx_set(4, 7)
+        self.frame(g, self.hold_t + t)
+        fade_out(g, span(t, 0.1, self.T["exit"]))

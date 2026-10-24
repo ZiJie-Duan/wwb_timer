@@ -1,472 +1,601 @@
-"""劈柴：木墩上立一段圆木，小道士抡斧——预备、举过头顶、一顿、劈下，木头一分为二飞开。
-左边那半落在脚边，他捡起来扔上右边的柴垛；再转身从身后的木堆搬下一段。
-五段劈完：喝口葫芦里的水、擦汗，抱起整垛柴走出画面，扛着新木头回来。
-右侧竖写“依乎天理”（《庄子·养生主》庖丁解牛：依乎天理，批大郤，导大窾，因其固然）。
+"""劈柴（像素风）：后院木墩，小道士从圆木堆搬一段立上木墩，双手抡斧——举过头顶、一顿、劈下：
+震屏、木屑四溅，两半飞开，一半落上柴垛，另一半他弯腰捡起来扔上去。
+六段劈完歇一歇：袖子擦汗、解葫芦喝水、伸个懒腰；抱走整垛柴，再抱一摞新圆木回来。
+彩蛋：偶尔一斧卡在木头里，连斧带木举起来再砸一次（闪白）；一只麻雀落在柴垛上啄来啄去，劈的时候吓得飞走。
+右侧竖写“依乎天理”，歇的时候换成“因其固然”（《庄子·养生主》庖丁解牛：依乎天理，批大郤，导大窾，因其固然）。
 """
 from __future__ import annotations
 
 import math
 
-from ..engine.anim import clamp, ease_in, ease_in_out, ease_out, ease_out_bounce, lerp, rand, span
+from ..engine import pix
+from ..engine.anim import ease_in, ease_in_out, ease_out, lerp, rand, span
 from ..engine.gfx import Gfx, Sprite
 from ..engine.scene import Rest, register
-from .x5_common import daoshi, dpoly, fade_box, note, phase, sweat
+from .x5_common import (NOTE, SWEAT, Clock, arc_pt, blit_rot, cyc, event, fade_out, keys, mark, scroll, tip,
+                        worker)
 
-GY = 58
-X0 = 44              # 道士劈柴的站位
-FETCH = 36           # 去木堆拿木头的站位
-SX = 68              # 木墩中心
-STUMP_TOP = 49
-LOG_H = 11
-CP = 7.0             # 劈一段
-NCH = 5              # 一垛劈几段
-BR = 15.0            # 歇息 + 搬柴
-BIG = NCH * CP + BR
-L_AXE = 14
+FLOOR = 57
+DX = 40                 # 小道士站位
+BX = 62                 # 木墩中心
+BLOCK_TOP = FLOOR - 10
+LOG_TOP = BLOCK_TOP + 3 - 14 + 1
+CP = 6.0                # 劈一段
+NCH = 6
+REST = 22.0
+BIG = NCH * CP + REST
+TEXT_X = 114
 
-SUPPLY = [(12, 54), (19, 54), (26, 54), (15.5, 47.5), (22.5, 47.5)]   # 圆木堆（后放的在上面）
-HEAP = [(89, 55.5), (96, 55.5), (103, 55.5), (110, 55.5), (92.5, 51.5), (99.5, 51.5), (106.5, 51.5), (96, 47.5),
-        (103, 47.5), (99.5, 43.5)]
+# 圆木堆（端面朝外，精灵左上角）：先拿上面的
+SUPPLY = [(3, 48), (12, 48), (21, 48), (7, 40), (16, 40), (12, 32)]
+# 柴垛：劈开的半爿，从下往上码（精灵左上角）
+RICK = [(x, y) for y in (52, 47, 42) for x in (76, 84, 92, 100)]
 
-# 斧子关键帧：握点、柄的角度（握点 → 斧头）
-STUCK = ((57.2, 37.0), 0.6)
-IMPACT = ((54.0, 32.0), 0.0)
-RAISED = ((40.0, 21.0), -2.5)
-GOURD = Sprite("""
- .#.
- ###
- .#.
- ###
-#.##
-####
-.##.
+# ---------------------------------------------------------------- 精灵（逐像素）
+
+BLOCK = Sprite("""
+     ############
+   ##............##
+  #..############..#
+ #..##....##....##..#
+ #...############...#
+ ##................##
+ ####################
+ ##.###.####.###.##.#
+ #.###.##.##.###.#..#
+ ##.##.##.###.##.#.##
+##.###.###.##.##.#.###
 """)
 
+LOG = Sprite("""
+  ########
+ #........#
+#.########.#
+#.###..###.#
+#.########.#
+##........##
+############
+###.###.##.#
+###.##..#..#
+##.###.#.#.#
+##.###..##.#
+##.####.##.#
+###.###.##.#
+ ##########
+""")
 
-def axe(g: Gfx, gx: float, gy: float, b: float):
-    """斧：握点 (gx, gy)，柄朝 b 方向伸出 L_AXE，斧刃在柄的“下侧”（劈的方向）"""
-    ux, uy = math.cos(b), math.sin(b)
-    nx, ny = -uy, ux
-    hx, hy = gx + ux * L_AXE, gy + uy * L_AXE
-    g.d.line((gx - ux * 4, gy - uy * 4, hx, hy), fill=1)
-    blade = [(hx - ux * 1.5 - nx * 2, hy - uy * 1.5 - ny * 2), (hx + ux * 1.5 - nx * 2, hy + uy * 1.5 - ny * 2),
-             (hx + ux * 3 + nx * 5, hy + uy * 3 + ny * 5), (hx - ux * 2.5 + nx * 5, hy - uy * 2.5 + ny * 5)]
-    g.d.polygon(blade, fill=1)
-    g.d.line((hx - ux * 2.5 + nx * 5, hy - uy * 2.5 + ny * 5, hx + ux * 3 + nx * 5, hy + uy * 3 + ny * 5), fill=1)
-    return hx + nx * 5, hy + ny * 5
+HALF_L = Sprite("""
+  ####
+ #....
+#.####
+#.###.
+#.####
+##....
+######
+###.##
+###.##
+##.###
+##.###
+##.###
+###.##
+ #####
+""")
+HALF_R = HALF_L.flip()
+HALVES = (HALF_L, HALF_R)
+# 翻跟头的帧（预先转好：pix 的描边 / 翻转缓存按对象 id 存，不能每帧新建精灵）
+SPIN_R = [HALF_R, HALF_R.rot90(-1), HALF_R.rot90(2), HALF_R.rot90(1)]
+SPIN_L = [HALF_L, HALF_L.rot90(1), HALF_L.rot90(2), HALF_L.rot90(3)]
+
+END = Sprite("""
+  #####
+ #.....#
+#..###..#
+#.#...#.#
+#.#.#.#.#
+#.#...#.#
+#..###..#
+ #.....#
+  #####
+""")
+
+PIECE = Sprite("""
+  ####
+ #....#
+#..##..#
+#.#..#.#
+########
+""")
+
+AXE = Sprite("""
+            ####
+           ######
+################.#
+#.##############.#
+           #######
+           ########
+          #########
+          #.......#
+          #########
+""")
+AXE_GRIP = (2, 2)       # 握点（柄尾往里一点）
+
+GOURD = Sprite("""
+  .#.
+  ###
+ #####
+ ##.##
+  ###
+ #####
+######.
+###.###
+ #####
+""")
+
+SPARROW = pix.frames("""
+  ##
+ #.##
+####.#
+ #####
+  ###
+  # #
+---
+  ##
+ #.##
+ ##.##
+ #####
+  ###.
+  # #
+---
+#     #
+##   ##
+ #.##.
+ ####
+  ##
+""")
+
+HAT = Sprite("""
+     #
+    ###
+   #.#.#
+  ##.#.##
+ #.#.#.#.#
+###########
+ .........
+""")
+
+CHIPS = [Sprite("##"), Sprite("#\n#"), Sprite("#.\n.#"), Sprite("#")]
+
+AXE_REST = ((51, 42), 105)            # 斧靠在木墩左边：握点、角度
+AXE_HIGH = ((DX - 3, FLOOR - 37), -160)
+AXE_HIT = ((49, 29), 10)
+AXE_STUCK = ((49, 31), 10)
+AXE_BITE = ((49, 40), 10)
+AXE_SHOULDER = ((DX + 9, FLOOR - 15), -75)   # 入场时提在手里
+MX_AXE = [0x00, 0x0E, 0x1F, 0x3F, 0x26, 0x40, 0x80, 0x00]
 
 
-def axe_at(k: float):
-    """一段内（劈的部分）斧子位置：(握点, 角)"""
-    def mix(a, b, q):
-        return ((lerp(a[0][0], b[0][0], q), lerp(a[0][1], b[0][1], q)), lerp(a[1], b[1], q))
-    if k < 4.0:
-        return STUCK
-    if k < 5.0:
-        return mix(STUCK, RAISED, ease_in_out(span(k, 4.0, 5.0)))
-    if k < 5.25:
-        return RAISED
-    if k < 5.4:
-        return mix(RAISED, IMPACT, ease_in(span(k, 5.25, 5.4)))
-    return mix(IMPACT, STUCK, ease_out(span(k, 5.4, 5.48)))
+def axe(g: Gfx, x, y, deg):
+    blit_rot(g, AXE, x, y, deg, *AXE_GRIP)
 
 
-def rround(g: Gfx, x: float, y: float, r: float = 3.5):
-    """圆木端面：年轮"""
-    g.d.ellipse((x - r, y - r, x + r, y + r), fill=0, outline=1)
-    g.d.ellipse((x - r + 2, y - r + 2, x + r - 2, y + r - 2), outline=1)
+def edge(x, y, deg):
+    """斧刃中点"""
+    return tip(x, y, deg, 14, 6.5)
 
 
-def piece(g: Gfx, x: float, y: float, ang: float = 0.0, w: float = 7, h: float = 4):
-    """一块劈好的柴（半圆木）：中心 (x, y)，ang=0 时躺着、弧面朝上"""
-    c, s = math.cos(ang), math.sin(ang)
-    pts = []
-    for i in range(7):  # 弧面
-        a = math.pi + i / 6 * math.pi
-        px, py = math.cos(a) * w / 2, h / 2 + math.sin(a) * h
-        pts.append((x + px * c - py * s, y + px * s + py * c))
-    g.d.polygon(pts, fill=0, outline=1)
-    g.px(x + (-0.5 * s), y + 0.5 * c)
-
-
-def half_log(g: Gfx, x: float, y: float, ang: float, side: int):
-    """飞出去的半段立木：中心 (x, y)，side=-1 左半 / 1 右半，劈开的平面朝里"""
-    c, s = math.cos(ang), math.sin(ang)
-    w, h = 5, LOG_H
-    pts = []
-    for px, py in ((0, -h / 2), (side * w, -h / 2 + 1), (side * (w + 0.5), 0), (side * w, h / 2 - 1), (0, h / 2)):
-        px -= side * w / 2
-        pts.append((x + px * c - py * s, y + px * s + py * c))
-    g.d.polygon(pts, fill=0, outline=1)
-    g.d.line((x - side * w / 2 * c, y - side * w / 2 * s, x + side * 1 * c, y + side * 1 * s), fill=1)
-
-
-def arc_pos(a, b, u, height):
-    return lerp(a[0], b[0], u), lerp(a[1], b[1], u) - math.sin(math.pi * clamp(u)) * height
-
+# ---------------------------------------------------------------- 场景
 
 @register
 class Chop(Rest):
     id = "x5.chop"
     name = "劈柴"
-    desc = "抡斧劈柴、码柴垛，劈完一垛喝口水，抱走柴再扛新木头回来"
-    T = {"enter": 3.2, "exit": 1.3}
+    desc = "后院劈柴：搬木、抡斧、一顿、劈下，木屑飞溅、两半飞上柴垛；劈完擦汗喝水，再扛一捆回来"
+    T = {"enter": 3.0, "exit": 1.2}
 
     def setup(self):
-        self.s = self.rng.randrange(1000)
-        self._ht = 0.0
+        self.clock = Clock()
+        self.sparks = pix.Sparks(self.seed)
+        self.puffs = pix.Puffs(self.seed + 1)
+        self.s = self.seed * 7 + 3
 
-    # ------------------------------------------------------------ 场景零件
+    # ------------------------------------------------ 背景与堆
 
-    def stump(self, g: Gfx):
-        d = g.d
-        d.polygon([(SX - 7, STUMP_TOP), (SX + 7, STUMP_TOP), (SX + 8, GY - 1), (SX + 10, GY), (SX - 10, GY),
-                   (SX - 8, GY - 1)], fill=0, outline=1)
-        d.ellipse((SX - 7, STUMP_TOP - 2, SX + 7, STUMP_TOP + 2), fill=0, outline=1)
-        d.arc((SX - 4, STUMP_TOP - 1, SX + 4, STUMP_TOP + 1), 0, 360, fill=1)
-        for x in (SX - 4, SX + 1, SX + 5):
-            d.line((x, STUMP_TOP + 4, x, GY - 2), fill=1)
+    def yard(self, g: Gfx):
+        # 院墙：瓦檐一排筒瓦，墙面几道砖缝，墙根石条
+        g.d.line((0, 12, 109, 12), fill=1)
+        for x in range(0, 110, 5):
+            g.d.rectangle((x, 13, x + 3, 15), fill=1)
+            g.px(x + 1, 14, 0)
+        g.d.line((0, 17, 109, 17), fill=1)
+        # 墙上一扇小格窗、木钉上挂着斗笠
+        g.d.rectangle((8, 22, 25, 35), outline=1)
+        g.d.rectangle((10, 24, 23, 33), outline=1)
+        for x in (14, 19):
+            g.d.line((x, 24, x, 33), fill=1)
+        g.d.line((10, 28, 23, 28), fill=1)
+        g.d.line((8, 36, 25, 36), fill=1)
+        pix.blit(g, HAT, 82, 22)
+        g.d.line((0, FLOOR - 5, 109, FLOOR - 5), fill=1)
+        pix.checker(g, (0, FLOOR - 4, 110, FLOOR), 0.125)
+        g.d.line((0, FLOOR, 109, FLOOR), fill=1)
+        for x in range(-6, 110, 11):  # 地上散的木屑
+            g.d.line((x, FLOOR + 3, x + 2, FLOOR + 3), fill=1)
+            g.px(x + 6, FLOOR + 5)
+        g.d.rectangle((74, 38, 75, FLOOR - 1), fill=1)   # 柴垛两头的木桩
+        g.d.rectangle((108, 38, 109, FLOOR - 1), fill=1)
 
-    def log(self, g: Gfx, x: float, bottom: float):
-        """立着的圆木，底在 bottom"""
-        top = bottom - LOG_H
-        g.d.rectangle((x - 5, top, x + 5, bottom), fill=0, outline=1)
-        g.d.ellipse((x - 5, top - 2, x + 5, top + 2), fill=0, outline=1)
-        g.px(x, top)
-        g.d.line((x - 3, top + 4, x - 3, bottom - 2), fill=1)
-        g.d.line((x + 2, top + 6, x + 2, bottom - 1), fill=1)
+    def supply(self, g: Gfx, n: int, drop: float = 1.0):
+        for i, (x, y) in enumerate(SUPPLY[:n]):
+            pix.blit(g, END, x, y - (1 - drop) * (8 + i * 3))
 
-    def ground(self, g: Gfx):
-        g.d.line((0, GY, 127, GY), fill=1)
-        for i in range(9):
-            x = rand(i, 41) * 120
-            g.d.line((x, GY + 2 + (i % 3), x + 2, GY + 2 + (i % 3)), fill=1)
-        # 木屑
-        for i in range(7):
-            g.px(SX - 14 + rand(i, 43) * 28, GY - 1)
+    def rick(self, g: Gfx, n: int):
+        for x, y in RICK[:n]:
+            pix.blit(g, PIECE, x, y)
 
-    def text(self, g: Gfx, a: float = 1.0):
-        s = "依乎天理"
-        n = int(round(len(s) * clamp(a)))
-        g.vtext(115, 2, s[:n])
+    # ------------------------------------------------ 一段劈柴
 
-    # ------------------------------------------------------------ 状态（全是 t 的函数）
+    def chop_state(self, k: float, idx: int, stuck: bool) -> dict:
+        st = dict(hand=None, hand2=None, legs="stand", flip=False, head="up", face="normal", axe=AXE_REST,
+                  held=False, log=False, carry=False, halves=None, swing=None, hit=None, up=False, pick=None)
+        take = SUPPLY[-1 - idx]
+        if k < 1.5:  # 转身蹲下拿木头，起身立到木墩上
+            if k < 0.8:
+                st.update(flip=True, legs="kneel" if 0.12 < k else "stand")
+                st["hand"] = keys(k, [(0.12, (DX - 6, FLOOR - 8)), (0.5, (take[0] + 5, take[1] + 4))])
+                st["carry"] = k > 0.55
+            else:
+                st["hand"] = keys(k, [(0.8, (DX + 9, FLOOR - 15)), (1.15, (DX + 13, FLOOR - 17)),
+                                      (1.42, (BX - 6, LOG_TOP + 5))])
+                st["carry"] = k < 1.42
+                st["log"] = not st["carry"]
+            return st
+        st["log"] = True
+        if k < 1.9:  # 弯腰握住斧柄
+            st["hand"] = keys(span(k, 1.5, 1.9), [(0, (DX + 10, FLOOR - 15)), (1, AXE_REST[0])])
+            st["head"] = "bow" if k > 1.7 else "up"
+            return st
+        hit1 = 3.12
+        if k < 3.0:  # 举过头顶，一顿
+            q = ease_in_out(span(k, 1.9, 2.75))
+            (x0, y0), a0 = AXE_REST
+            (x1, y1), a1 = AXE_HIGH
+            st["axe"] = ((lerp(x0, x1, q), lerp(y0, y1, q)), lerp(a0, a1 + 360, q))
+            st["up"] = q > 0.55
+            return self._grip(st)
+        if k < hit1:  # 劈下
+            q = ease_in(span(k, 3.0, hit1))
+            st["axe"] = self._swing(q, AXE_STUCK if stuck else AXE_HIT)
+            st["swing"] = q
+            st["up"] = q < 0.4
+            return self._grip(st)
+        hit = hit1
+        if stuck:  # 卡住：连斧带木举起来再砸一次
+            hit = 3.7
+            if k < 3.55:
+                q = ease_in_out(span(k, hit1 + 0.1, 3.55))
+                (x0, y0), a0 = AXE_STUCK
+                (x1, y1), a1 = AXE_HIGH
+                st["axe"] = ((lerp(x0, x1 + 3, q), lerp(y0, y1 + 4, q)), lerp(a0, a1 + 20, q))
+                st["log"] = "axe"
+                st["face"] = "wow" if k < 3.4 else "normal"
+                st["up"] = q > 0.55
+                return self._grip(st)
+            if k < hit:
+                q = ease_in(span(k, 3.55, hit))
+                st["axe"] = self._swing(q, AXE_HIT, start=((AXE_HIGH[0][0] + 3, AXE_HIGH[0][1] + 4), AXE_HIGH[1] + 20))
+                st["log"] = "axe"
+                st["swing"] = q
+                st["up"] = q < 0.4
+                return self._grip(st)
+        st["log"] = False
+        st["hit"] = k - hit
+        st["halves"] = k - hit
+        if k < hit + 0.5:  # 斧刃咬在木墩上
+            st["axe"] = AXE_BITE
+            return self._grip(st)
+        if k < hit + 1.1:  # 晃两下拔出来，靠回木墩
+            q = span(k, hit + 0.5, hit + 1.1)
+            (x0, y0), a0 = AXE_BITE
+            (x1, y1), a1 = AXE_REST
+            if q < 0.45:
+                st["axe"] = ((x0, y0 - 1), a0 + math.sin(q * 40) * 8)
+                return self._grip(st)
+            qq = ease_in_out(span(q, 0.45, 1))
+            st["axe"] = ((lerp(x0, x1, qq), lerp(y0, y1, qq) - math.sin(qq * math.pi) * 4), lerp(a0, a1, qq))
+            return self._grip(st, two=False)
+        q = k - (hit + 1.1)   # 弯腰捡起左半爿，扔上柴垛
+        st["pick"] = q
+        left = (BX - 13, FLOOR - 4)
+        if q < 0.45:
+            st["head"] = "bow" if q > 0.15 else "up"
+            st["hand"] = keys(q, [(0, (DX + 10, FLOOR - 15)), (0.4, left)])
+        elif q < 0.95:
+            st["hand"] = keys(q, [(0.45, left), (0.7, (DX + 6, FLOOR - 24)), (0.82, (DX + 10, FLOOR - 34)),
+                                  (0.95, (DX + 13, FLOOR - 28))], ease=ease_out)
+        else:
+            st["face"] = "happy" if q < 1.5 else "normal"
+        return st
 
-    def state(self, t: float):
-        big, k = phase(t, BIG)
+    @staticmethod
+    def _grip(st, two=True):
+        (gx, gy), deg = st["axe"]
+        st["held"] = True
+        st["hand"] = (gx, gy)
+        if two:
+            st["hand2"] = tip(gx, gy, deg, 4)
+        return st
+
+    @staticmethod
+    def _swing(q, end, start=AXE_HIGH):
+        (x0, y0), a0 = start
+        (x1, y1), a1 = end
+        return ((lerp(x0, x1, q), lerp(y0, y1, q) - math.sin(q * math.pi) * 4), lerp(a0, a1, q))
+
+    def draw_chop(self, g: Gfx, t: float, k: float, idx: int, stuck: bool):
+        st = self.chop_state(k, idx, stuck)
+        hv = st["halves"]
+        pick = st["pick"]
+        n = idx * 2 + (hv is not None and hv > 0.45) + (pick is not None and pick > 1.4)
+        self.rick(g, n)
+        self.supply(g, len(SUPPLY) - idx - (1 if k > 0.55 else 0))
+        pix.blit(g, BLOCK, BX - 11, BLOCK_TOP)
+        if st["log"] is True:
+            pix.blit(g, LOG, BX - 6, LOG_TOP - (1 - span(k, 1.42, 1.5)) * 2)
+        if hv is not None:
+            self.draw_halves(g, hv, pick, idx)
+        if not st["held"]:
+            axe(g, *st["axe"][0], st["axe"][1])
+
+        def tool(gg, h1, h2):
+            if st["held"] and h1:
+                deg = st["axe"][1]
+                if st["swing"] is not None and st["swing"] > 0.15:  # 挥动的残影：两道弧线
+                    for j, back in ((1, 0.18), (2, 0.36)):
+                        pg, pa = self._swing(max(st["swing"] - back, 0), AXE_HIT)
+                        e0, e1 = edge(pg[0], pg[1], pa), edge(h1[0], h1[1], deg)
+                        pix.dotted(gg, e0[0], e0[1], e1[0], e1[1], step=2, phase=j)
+                axe(gg, h1[0], h1[1], deg)
+                if st["log"] == "axe":  # 木头卡在斧刃上
+                    ex, ey = edge(h1[0], h1[1], deg)
+                    pix.blit(gg, LOG, ex - 6, ey - 3)
+            if st["carry"] and h1:
+                pix.blit(gg, LOG, h1[0] - 5, h1[1] - 9)
+            if pick is not None and 0.42 < pick < 0.8 and h1:
+                pix.blit(gg, HALF_L, h1[0] - 3, h1[1] - 10)
+
+        worker(g, DX, FLOOR, t, hand=st["hand"], hand2=st["hand2"], legs=st["legs"], flip=st["flip"],
+               head=st["head"], face=st["face"], tool=tool, bob=st["legs"] == "stand" and not st["held"],
+               behind_head=st["up"], fist=st["held"])
+        # 打击：木屑、尘土、震屏
+        t0 = t - k
+        hit = 3.7 if stuck else 3.12
+        if self.clock.crossed(t, t0 + hit):
+            self.sparks.burst(BX, LOG_TOP + 2, 22 if stuck else 14, 40, up=26, life=0.9, gravity=110)
+            for sx in (-1, 1):
+                self.puffs.emit(BX + sx * 10, FLOOR - 2, vx=sx * 9, vy=-4, life=0.7, rmax=2.2, spread=2)
+        if stuck and self.clock.crossed(t, t0 + 3.12):
+            self.sparks.burst(BX, LOG_TOP + 2, 4, 14, up=8, life=0.4, gravity=80)
+        if self.clock.crossed(t, t0 + 1.45):
+            self.puffs.emit(BX - 4, BLOCK_TOP + 2, vx=-4, vy=-2, life=0.5, rmax=1.5, spread=1)
+            self.puffs.emit(BX + 4, BLOCK_TOP + 2, vx=4, vy=-2, life=0.5, rmax=1.5, spread=1)
+        if st["hit"] is not None and st["hit"] < 0.22:
+            pix.shake(g, t, 2.0 if stuck else 1.3, seed=3)
+            if stuck and st["hit"] < 0.07:
+                pix.flash(g)
+        if stuck and 3.12 < k < 3.3:
+            pix.shake(g, t, 0.8, seed=4)
+        if (not stuck and 2.75 < k < 3.0) or (stuck and 3.15 < k < 3.45):  # 一顿：一滴汗
+            q = span(k, 2.75, 3.0) if not stuck else span(k, 3.15, 3.45)
+            pix.blit(g, SWEAT, DX + 8, FLOOR - 36 + int(q * 4))
+        return st, hit
+
+    def draw_halves(self, g: Gfx, hv: float, pick, idx: int):
+        if hv < 0.45:  # 右半：翻着跟头飞上柴垛
+            dst = RICK[min(idx * 2, len(RICK) - 1)]
+            q = hv / 0.45
+            x, y = arc_pt((BX + 1, LOG_TOP), (dst[0], dst[1] - 9), ease_out(q), 14)
+            spr = SPIN_R[int(q * 6) % 4]
+            pix.blit(g, spr, x, y)
+        if pick is None or pick < 0.42:  # 左半：倒在木墩左边，弹一下
+            q = min(hv / 0.3, 1)
+            lying = SPIN_L[1]
+            if q < 1:
+                x, y = arc_pt((BX - 7, LOG_TOP), (BX - 17, FLOOR - 6), q, 4)
+                pix.blit(g, HALF_L if q < 0.5 else lying, x, y)
+            else:
+                b = abs(math.sin(min((hv - 0.3) * 9, math.pi))) * 2
+                pix.blit(g, lying, BX - 17, FLOOR - 6 - b)
+        elif 0.8 < pick < 1.4:  # 扔出去，在空中翻转
+            q = span(pick, 0.8, 1.4)
+            dst = RICK[min(idx * 2 + 1, len(RICK) - 1)]
+            x, y = arc_pt((DX + 12, FLOOR - 38), (dst[0], dst[1] - 9), q, 9)
+            pix.blit(g, SPIN_L[int(q * 8) % 4], x, y)
+
+    # ------------------------------------------------ 歇一歇、换柴
+
+    def draw_rest(self, g: Gfx, t: float, k: float):
+        """k ∈ [0, REST)：擦汗 → 喝水 → 伸懒腰 → 抱走柴垛 → 扛新木回来"""
+        x, legs, flip, hand, hand2, face, head, up = DX, "stand", False, None, None, "normal", "up", False
+        rick_n, sup_n, sup_drop, armful, bundle = len(RICK), 0, 1.0, False, False
+        if k < 2.0:  # 袖子擦汗
+            hand = keys(k, [(0, (DX + 9, FLOOR - 15)), (0.4, (DX + 9, FLOOR - 29)), (0.8, (DX + 3, FLOOR - 31)),
+                            (1.2, (DX + 9, FLOOR - 29)), (1.6, (DX + 3, FLOOR - 31)), (2.0, (DX + 9, FLOOR - 15))])
+            face = "sleep"
+        elif k < 6.0:  # 解下葫芦喝水
+            q = k - 2.0
+            hand = keys(q, [(0, (DX + 9, FLOOR - 15)), (0.6, (DX + 10, FLOOR - 24)), (3.4, (DX + 10, FLOOR - 24)),
+                            (4.0, (DX + 9, FLOOR - 15))])
+            face = "sleep" if 0.7 < q < 3.3 else "happy" if q >= 3.3 else "normal"
+        elif k < 7.5:  # 伸懒腰
+            q = k - 6.0
+            hand = keys(q, [(0, (DX + 9, FLOOR - 15)), (0.45, (DX + 3, FLOOR - 40)), (1.05, (DX + 3, FLOOR - 40)),
+                            (1.5, (DX + 9, FLOOR - 15))])
+            hand2 = keys(q, [(0, (DX - 3, FLOOR - 12)), (0.45, (DX - 5, FLOOR - 39)), (1.05, (DX - 5, FLOOR - 39)),
+                             (1.5, (DX - 3, FLOOR - 12))])
+            up = 0.2 < q < 1.3
+            face = "happy"
+        elif k < 15.0:  # 去柴垛抱柴，往左走出去
+            q = k - 7.5
+            if q < 1.6:
+                x, legs = lerp(DX, 72, ease_in_out(q / 1.6)), "walk"
+            elif q < 2.6:
+                x, legs = 72, "kneel"
+                hand = (84, FLOOR - 7)
+                rick_n = len(RICK) - int(span(q, 1.7, 2.5) * len(RICK))
+            else:
+                rick_n = 0
+                x, legs, flip = lerp(72, -24, (q - 2.6) / 4.9), "walk", True
+                armful = True
+                hand = (x - 9, FLOOR - 19)
+        else:  # 抱着一摞新圆木从左边回来，卸到木堆上
+            q = k - 15.0
+            rick_n = 0
+            if q < 4.0:
+                x, legs, bundle = lerp(-24, 32, ease_out(q / 4.0)), "walk", True
+                hand = (x + 12, FLOOR - 12)
+            elif q < 4.6:
+                x, bundle, flip = 32, q < 4.3, q >= 4.3
+                hand = (x + 12, FLOOR - 12) if q < 4.3 else (x - 12, FLOOR - 18)
+                sup_n, sup_drop = len(SUPPLY), span(q, 4.3, 4.6)
+                if q < 4.3:
+                    sup_n = 0
+            else:
+                x = lerp(32, DX, ease_in_out(span(q, 4.6, 5.6)))
+                legs = "walk" if q < 5.6 else "stand"
+                sup_n = len(SUPPLY)
+                face = "happy" if q > 5.6 else "normal"
+            if 4.6 <= q < 4.85:
+                pix.shake(g, t, 1.0, seed=5)
+        self.rick(g, rick_n)
+        self.supply(g, sup_n, ease_out(sup_drop))
+        pix.blit(g, BLOCK, BX - 11, BLOCK_TOP)
+        axe(g, *AXE_REST[0], AXE_REST[1])
+
+        def tool(gg, h1, h2):
+            if 2.0 <= k < 6.0 and h1:
+                pix.blit(gg, GOURD, h1[0] - 3, h1[1] - 7)
+            if bundle and h1:  # 怀里抱着一摞圆木
+                for ox, oy in ((-8, -8), (-1, -8), (-4, -15)):
+                    pix.blit(gg, END, h1[0] + ox, h1[1] + oy)
+            if armful and h1:
+                for ox, oy in ((-6, -4), (-4, -8), (-7, -12)):
+                    pix.blit(gg, PIECE, h1[0] + ox, h1[1] + oy)
+
+        worker(g, x, FLOOR, t, hand=hand, hand2=hand2, legs=legs, flip=flip, face=face, head=head, tool=tool,
+               bob=legs == "stand", behind_head=up)
+        if k < 2.0:  # 甩出的汗珠
+            for j in range(3):
+                q = (k * 1.4 + j * 0.33) % 1
+                pix.blit(g, SWEAT, DX + 10 + q * 12, FLOOR - 38 + q * q * 20)
+        if 2.8 < k < 5.3 and int(k * 3) % 2 == 0:  # 咕咚咕咚
+            g.d.ellipse((DX + 14, FLOOR - 33, DX + 16, FLOOR - 31), outline=1)
+        if self.ctx.finished and 5.6 < k < 7.6:  # 上一场圆满：哼个小曲
+            mark(g, NOTE, DX + 11, FLOOR - 46 + math.sin(k * 5) * 2)
+
+    # ------------------------------------------------ 主循环
+
+    def frame(self, g: Gfx, t: float, text_k: float = 1.0):
+        dt = self.clock.tick(t)
+        self.yard(g)
+        n, k = cyc(t, BIG)
+        hitinfo = None
         if k < NCH * CP:
-            i, c = phase(k, CP)
-            return "chop", big, i, c
-        return "break", big, NCH, k - NCH * CP
-
-    def draw(self, g: Gfx, t: float, hold_pose: bool = True, freeze: float | None = None):
-        mode, big, i, c = self.state(t)
-        self.ground(g)
-        self.stump(g)
-        self.text(g)
-        if mode == "chop":
-            self.chop(g, t, i, c)
+            idx, kk = int(k // CP), k % CP
+            stuck = rand(n * 10 + idx, self.s) < 0.2
+            st, hit = self.draw_chop(g, t, kk, idx, stuck)
+            hitinfo = (kk, hit, stuck)
+            rick_top = RICK[idx * 2 - 1][1] if idx else FLOOR
         else:
-            self.rest_break(g, t, c)
+            self.draw_rest(g, t, k - NCH * CP)
+            rick_top = RICK[-1][1] if k - NCH * CP < 9.2 else FLOOR
+        bird = event(t, 43.0, 8.5, self.s + 1)
+        if bird and rick_top < FLOOR:
+            scared = hitinfo is not None and 0 < hitinfo[0] - hitinfo[1] < 2.0
+            self.sparrow(g, bird[1], rick_top, hitinfo if scared else None)
+        self.sparks.step(dt)
+        self.puffs.step(dt)
+        for x, y, vx, vy, age, life, grav in self.sparks.p:   # 木屑：小片翻飞
+            pix.blit(g, CHIPS[int(age * 12 + x) % 4], x, y, outline=False)
+        self.puffs.draw(g)
+        self.matrix(g, hitinfo)
+        rest = k >= NCH * CP + 7.5
+        scroll(g, TEXT_X, "因其固然" if rest else "依乎天理", k=text_k, side="right")
 
-    def supply_left(self, i: int, c: float) -> int:
-        """木堆里还剩几段（第 i 段在 1.9 秒被拿走）"""
-        return NCH - i - (1 if c >= 1.9 else 0)
-
-    def heap_count(self, i: int, c: float) -> int:
-        n = 2 * i
-        if c >= 6.1:
-            n += 1          # 右半落到垛上
-        return n
-
-    def chop(self, g: Gfx, t: float, i: int, c: float):
-        n_sup = self.supply_left(i, c)
-        for j in range(n_sup):
-            rround(g, *SUPPLY[j])
-        n_heap = self.heap_count(i, c)
-        for j in range(n_heap):
-            piece(g, *HEAP[j])
-        blink = "closed" if (t % 3.7) < 0.14 else "open"
-        mxs = "log"
-        # ---------------- 人与手
-        hold = None    # 手里拿的东西：("log", x, y) / ("half", x, y, ang)
-        f, X, crouch, lean, step = 1, X0, 0.0, 0.0, None
-        hands = [None, None]
-        axe_in_hand = False
-        log_on_stump = c >= 3.6 and c < 5.4
-        if c < 0.5 and i > 0:  # 刚扔完柴，站直
-            crouch = lerp(0.6, 0, ease_out(span(c, 0, 0.5)))
-            lean = lerp(3, 0, ease_out(span(c, 0, 0.5)))
-        elif c < 1.2:  # 转身走到木堆
-            f = -1
-            X = lerp(X0, FETCH, ease_in_out(span(c, 0.5, 1.2)))
-            step = c * 12
-        elif c < 1.9:  # 蹲下够木头
-            f, X = -1, FETCH
-            q = ease_in_out(span(c, 1.2, 1.9))
-            crouch, lean = 0.8 * q, 4 * q
-            tgt = SUPPLY[n_sup - 1] if n_sup > 0 else SUPPLY[0]
-            hands = [(lerp(FETCH - 4, tgt[0] + 2, q), lerp(48, tgt[1], q)), (lerp(FETCH - 2, tgt[0] - 1, q), lerp(48, tgt[1], q))]
-        elif c < 2.4:  # 抱起
-            f, X = -1, FETCH
-            q = ease_in_out(span(c, 1.9, 2.4))
-            crouch, lean = 0.8 * (1 - q), 4 * (1 - q)
-            tgt = SUPPLY[n_sup]
-            hx, hy = lerp(tgt[0] + 1, FETCH - 5, q), lerp(tgt[1], 44, q)
-            hands = [(hx + 2, hy), (hx - 2, hy)]
-            hold = ("round", hx, hy)
-        elif c < 3.1:  # 转回来走向木墩
-            X = lerp(FETCH, X0, ease_in_out(span(c, 2.4, 3.1)))
-            step = c * 12
-            hands = [(X + 7, 44), (X + 4, 45)]
-            hold = ("round", X + 6, 44)
-        elif c < 3.6:  # 俯身把木头立到木墩上
-            q = ease_in_out(span(c, 3.1, 3.6))
-            lean = 3 * math.sin(q * math.pi)
-            lx, ly = lerp(X0 + 6, SX, q), lerp(44, STUMP_TOP - 6, q) - math.sin(q * math.pi) * 4
-            hands = [(lx - 4, ly), (lx - 6, ly + 1)]
-            hold = ("log", lx, ly + LOG_H / 2)
-        elif c < 4.0:  # 握住斧柄，拔出来
-            q = ease_in_out(span(c, 3.6, 4.0))
-            gx, gy = STUCK[0]
-            hands = [(lerp(X0 + 6, gx, q), lerp(46, gy, q)), (lerp(X0 + 4, gx - 3, q), lerp(47, gy + 1, q))]
-            lean = 2 * q
-        elif c < 6.0:  # 举斧、劈
-            axe_in_hand = True
-            lean = 2 if c < 4.6 or c >= 5.3 else lerp(2, -1, span(c, 4.6, 5.0))
-        elif c < 6.4:  # 松手，弯腰捡脚边那半块
-            q = ease_in_out(span(c, 6.0, 6.4))
-            crouch, lean = 0.7 * q, 4 * q
-            hands = [(lerp(STUCK[0][0], 56, q), lerp(STUCK[0][1], 54, q)), None]
-        else:  # 起身往柴垛上一扔
-            q = ease_out(span(c, 6.4, 6.65))
-            crouch, lean = 0.7 * (1 - q * 0.2), 4 - q * 3
-            hands = [(lerp(56, 60, q), lerp(54, 36, q)), None]
-        # ---------------- 画
-        if log_on_stump:
-            self.log(g, SX, STUMP_TOP)
-        pz = daoshi(g, X, GY, f, hands=hands if not axe_in_hand else self._axe_hands(c), lean=lean, crouch=crouch,
-                    step=step, eye=blink if not (5.25 < c < 5.6) else "closed")
-        # 斧
-        if axe_in_hand:
-            (gx, gy), b = axe_at(c)
-            axe(g, gx, gy, b)
-            g.d.rectangle((gx - 1, gy - 1, gx + 1, gy + 1), fill=1)
+    def sparrow(self, g: Gfx, q: float, top: int, scared):
+        x0 = 94
+        y0 = top - 6
+        if scared:  # 吓飞：往右上飞走
+            q2 = scared[0] - scared[1]
+            pix.blit(g, pix.anim([SPARROW[2], SPARROW[1]], q2, 14), x0 + q2 * 40, y0 - q2 * 34)
+            return
+        if q < 1.0:
+            x, y = lerp(130, x0, ease_out(q)), lerp(4, y0, ease_out(q))
+            pix.blit(g, pix.anim([SPARROW[2], SPARROW[1]], q, 12), x, y)
+        elif q < 7.5:
+            hop = int((q - 1) / 1.6)
+            ph = ((q - 1) % 1.6) / 1.6
+            x = x0 - hop * 4 - ease_in_out(span(ph, 0, 0.25)) * 4 + 4
+            y = y0 - math.sin(span(ph, 0, 0.25) * math.pi) * 3
+            peck = 0.4 < ph < 0.55 or 0.7 < ph < 0.85
+            pix.blit(g, SPARROW[1] if peck else SPARROW[0], x, y)
         else:
-            (gx, gy), b = STUCK
-            axe(g, gx, gy, b)
-        if hold:
-            if hold[0] == "round":
-                rround(g, hold[1], hold[2])
-            else:
-                self.log(g, hold[1], hold[2])
-        # 劈开：两半飞出去
-        if c >= 5.4:
-            u = span(c, 5.4, 6.1)
-            if u < 1:  # 右半 → 柴垛
-                x, y = arc_pos((SX + 2.5, STUMP_TOP - 6), HEAP[2 * i], u, 14)
-                if u < 0.92:
-                    half_log(g, x, y, u * 4.2, 1)
-            u2 = span(c, 5.4, 5.85)
-            lx, ly = arc_pos((SX - 2.5, STUMP_TOP - 6), (57, 55.5), u2, 6)
-            if c < 6.2:  # 左半 → 脚边（躺下）
-                if u2 < 1:
-                    half_log(g, lx, ly, -u2 * math.pi / 2, -1)
-                else:
-                    piece(g, 57, 55.5)
-            elif c < 6.45:  # 在手里
-                piece(g, *pz.near, ang=-0.3)
-            else:  # 扔上柴垛
-                u3 = span(c, 6.45, 7.0)
-                if u3 < 1:
-                    x, y = arc_pos(pz.near if c < 6.5 else (60, 36), HEAP[2 * i + 1], ease_in_out(u3) * 0.3 + u3 * 0.7,
-                                   10)
-                    piece(g, x, y, ang=u3 * 7)
-            # 木屑、闪光
-            if c < 5.9:
-                q = span(c, 5.4, 5.9)
-                for j in range(8):
-                    a = -math.pi * rand(j, self.s) - 0.2
-                    r = 4 + q * (10 + rand(j + 9, self.s) * 12)
-                    g.px(SX + math.cos(a) * r, STUMP_TOP - 8 + math.sin(a) * r * 0.8 + q * q * 14)
-            if c < 5.5:
-                for a in range(0, 360, 45):
-                    rr = 3 + (c - 5.4) * 60
-                    g.px(SX + math.cos(math.radians(a)) * rr, STUMP_TOP - 10 + math.sin(math.radians(a)) * rr * 0.6)
-            mxs = "split"
-        if 4.95 < c < 5.25:  # 举到顶，一顿
-            g.px(pz.head[0] + 7, pz.head[1] - 6)
-        if 5.0 < c < 5.25 or 5.85 < c < 6.0:
-            sweat(g, pz.head[0] - 2, pz.head[1] - 2, span(c, 5.85, 6.0))
-        self.mx(g, t, mxs, span(c, 5.4, 5.9), c)
+            q2 = q - 7.5
+            pix.blit(g, pix.anim([SPARROW[2], SPARROW[1]], q2, 12), x0 - 12 + q2 * 50, y0 - q2 * 40)
 
-    def _axe_hands(self, c: float):
-        (gx, gy), b = axe_at(c)
-        return [(gx, gy), (gx - math.cos(b) * 3, gy - math.sin(b) * 3)]
-
-    def rest_break(self, g: Gfx, t: float, c: float):
-        """劈完一垛：喝水、擦汗，抱走柴，扛新木头回来"""
-        n_heap = 2 * NCH
-        n_sup = 0
-        f, X, crouch, lean, step = 1, X0, 0.0, 0.0, None
-        hands = [None, None]
-        eye, look = "open", 0.0
-        carry = None
-        if c < 4.5:  # 解下葫芦喝一口，擦汗
-            if c < 0.6:
-                q = ease_in_out(span(c, 0, 0.6))
-                hands = [(lerp(STUCK[0][0], X0 + 3, q), lerp(STUCK[0][1], 46, q)), None]
-            elif c < 2.6:
-                q = ease_in_out(span(c, 0.6, 1.1)) * (1 - ease_in_out(span(c, 2.2, 2.6)))
-                hands = [(X0 + 3 + q * 3, lerp(46, 29, q)), None]
-                look = -2 * q
-                eye = "closed" if q > 0.5 else "open"
-            else:  # 袖子擦汗
-                q = math.sin(span(c, 2.6, 3.8) * math.pi)
-                hands = [(X0 + 3 + q * 4, lerp(46, 28, q)), None]
-                eye = "closed" if 0.2 < q else "open"
-            pz = daoshi(g, X, GY, f, hands=hands, look=look, eye=eye)
-            hx, hy = pz.near
-            if 0.6 <= c < 2.6:
-                g.blit(GOURD, hx - 1, hy - 5)
-            elif c < 0.6 or c > 3.8:
-                pass
-            if 3.6 < c < 4.4:
-                sweat(g, pz.head[0] - 4, pz.head[1] - 2, span(c, 3.6, 4.2))
-            if c > 1.4 and (self.ctx.finished or c > 3.9):
-                note(g, X + 9, 20 - (c % 1.5) * 3)
-            for j in range(n_heap):
-                piece(g, *HEAP[j])
-            (gx, gy), b = STUCK
-            axe(g, gx, gy, b)
-            self.mx(g, t, "gourd", 0, c)
+    def matrix(self, g: Gfx, s):
+        """点阵：没立木头时是斧；立上木头是端面年轮；劈下一道亮缝、两半分开；歇的时候是葫芦"""
+        if s is None:
+            g.mx_rows([0x18, 0x18, 0x3C, 0x24, 0x18, 0x3C, 0x7E, 0x3C])
             return
-        if c < 6.0:  # 走到柴垛前，蹲下抱柴
-            q = span(c, 4.5, 5.4)
-            X = lerp(X0, 92, ease_in_out(q))
-            step = c * 12 if q < 1 else None
-            q2 = ease_in_out(span(c, 5.4, 6.0))
-            crouch, lean = 0.6 * math.sin(q2 * math.pi), 3 * math.sin(q2 * math.pi)
-            if c >= 5.7:
-                n_heap = 0
-                carry = 1
-            hands = [(X + 7, lerp(44, 52, math.sin(q2 * math.pi))), (X + 4, lerp(45, 52, math.sin(q2 * math.pi)))]
-        elif c < 8.0:  # 抱着走出画面
-            X = lerp(92, 150, ease_in(span(c, 6.0, 8.0)))
-            step = c * 12
-            n_heap, carry = 0, 1
-            hands = [(X + 7, 44), (X + 4, 45)]
-        elif c < 9.0:
-            n_heap = 0
-            X = 999
-        elif c < 12.0:  # 扛着新木头从右边走回来，走到木堆
-            n_heap = 0
-            f = -1
-            X = lerp(150, FETCH, ease_out(span(c, 9.0, 12.0)))
-            step = c * 12 if c < 11.8 else None
-            carry = 2
-            hands = [(X - 3, 33), (X + 1, 34)]
-        elif c < 13.0:  # 卸下：木头滚进木堆
-            n_heap = 0
-            f, X = -1, FETCH
-            q = span(c, 12.0, 12.6)
-            crouch, lean = 0.4 * math.sin(q * math.pi), 2 * math.sin(q * math.pi)
-            n_sup = NCH
-        else:  # 转身回位
-            n_heap, n_sup = 0, NCH
-            X = lerp(FETCH, X0, ease_in_out(span(c, 13.0, 14.2)))
-            step = c * 12 if c < 14.2 else None
-        # 木堆（新木头落下）
-        for j in range(n_sup):
-            if c < 13.0:
-                u = span(c, 12.0 + j * 0.08, 12.5 + j * 0.08)
-                x0, y0 = X - 4 + j * 2, 30
-                x, y = SUPPLY[j]
-                rround(g, lerp(x0, x, u), lerp(y0, y, ease_out_bounce(u)))
-            else:
-                rround(g, *SUPPLY[j])
-        for j in range(n_heap):
-            piece(g, *HEAP[j])
-        (gx, gy), b = STUCK
-        axe(g, gx, gy, b)
-        if X < 140:
-            pz = daoshi(g, X, GY, f, hands=hands, crouch=crouch, lean=lean, step=step,
-                        eye="closed" if (t % 3.7) < 0.14 else "open")
-            if carry == 1:  # 一抱柴
-                hx, hy = pz.near
-                for j in range(6):
-                    piece(g, hx - 2 + (j % 3) * 4, hy - 1 - (j // 3) * 4)
-            elif carry == 2:  # 肩上一捆圆木
-                hx, hy = pz.near
-                for j in range(NCH):
-                    rround(g, hx + 1 + (j % 3) * 6 - 6, hy - 4 - (j // 3) * 6)
-        self.mx(g, t, "log", 0, c)
-
-    def mx(self, g: Gfx, t: float, kind: str, u: float, c: float):
-        if kind == "gourd":
-            g.mx_blit(GOURD, 2, 1)
+        kk, hit, stuck = s
+        rings = [0x3C, 0x42, 0x99, 0xA5, 0xA5, 0x99, 0x42, 0x3C]
+        if kk < hit:
+            g.mx_rows(MX_AXE if kk < 1.45 else rings)
+            if 2.75 < kk:
+                g.mx_level = 2
             return
-        # 圆木端面，劈开时裂成两半向两边分开
-        sep = int(round(ease_out(u) * 2)) if kind == "split" else 0
-        for y in range(8):
-            for x in range(8):
-                r = math.hypot(x - 3.5, y - 3.5)
-                ring = abs(r - 3.3) < 0.6 or abs(r - 1.4) < 0.5
-                if not ring:
-                    continue
-                xx = x - sep if x < 4 else x + sep
-                g.mx_set(xx, y)
-        if kind == "split" and u < 0.3:
-            g.mx_level = 6
-            for y in range(8):
-                g.mx_set(3, y)
-                g.mx_set(4, y)
-
-    # ------------------------------------------------------------ 阶段
+        q = kk - hit
+        if q < 0.12:  # 一道亮缝
+            g.mx_rows(rings)
+            g.mx[:, 3:5] = True
+        else:         # 两半分开
+            g.mx_rows([0x66, 0xA5, 0xA5, 0xA5, 0xA5, 0xA5, 0xA5, 0x66] if q < 1.2 else MX_AXE)
+        if q < 0.3:
+            g.mx_level = 7 if stuck else 4
 
     def enter(self, g: Gfx, t: float):
-        """扛着斧头走进来，把斧头劈进木墩（落在 hold(0) 的样子：斧在墩上，人站直）"""
-        T = self.T["enter"]
-        self.ground(g)
-        self.stump(g)
-        for j in range(NCH):
-            rround(g, *SUPPLY[j])
-        self.text(g, span(t, 1.5, T - 0.3))
-        if t < 1.9:
-            X = lerp(-12, X0, ease_out(span(t, 0, 1.9)))
-            pz = daoshi(g, X, GY, 1, hands=[(X + 4, 30), (X + 1, 32)], step=t * 12 if t < 1.8 else None)
-            axe(g, X + 4, 30, -2.3)
+        """扛着斧子走进来，把斧子靠到木墩上；题字逐字出现"""
+        self.clock.tick(t)
+        self.yard(g)
+        self.supply(g, len(SUPPLY))
+        pix.blit(g, BLOCK, BX - 11, BLOCK_TOP)
+        if t < 2.0:
+            x = lerp(-14, DX, ease_out(t / 2.0))
+            (gx, gy), deg = AXE_SHOULDER
+
+            def tool(gg, h1, h2):
+                axe(gg, h1[0], h1[1], deg)
+            worker(g, x, FLOOR, t, hand=(x + 9, gy), legs="walk", tool=tool, fist=True)
         else:
-            q = span(t, 1.9, 2.8)
-            if q < 0.5:
-                gb = lerp(-2.3, RAISED[1], ease_in_out(q * 2))
-                gp = (lerp(X0 + 4, RAISED[0][0], ease_in_out(q * 2)), lerp(30, RAISED[0][1], ease_in_out(q * 2)))
+            q = ease_in_out(span(t, 2.0, 2.7))
+            if q < 1:
+                (x0, y0), a0 = AXE_SHOULDER
+                (x1, y1), a1 = AXE_REST
+                gp = (lerp(x0, x1, q), lerp(y0, y1, q) - math.sin(q * math.pi) * 3)
+                deg = lerp(a0, a1, q)
+
+                def tool(gg, h1, h2):
+                    axe(gg, h1[0], h1[1], deg)
+                worker(g, DX, FLOOR, t, hand=gp, tool=tool)
             else:
-                qq = ease_in(span(q, 0.5, 0.75)) if q < 0.75 else 1
-                gp = (lerp(RAISED[0][0], STUCK[0][0], qq), lerp(RAISED[0][1], STUCK[0][1], qq))
-                gb = lerp(RAISED[1], STUCK[1], qq)
-            if t > 2.8:
-                r = ease_out(span(t, 2.8, T))
-                hands = [(lerp(STUCK[0][0], X0 + 2.1, r), lerp(STUCK[0][1], 49.6, r)), None]
-                gp, gb = STUCK
-            else:
-                hands = [gp, (gp[0] - math.cos(gb) * 3, gp[1] - math.sin(gb) * 3)]
-            daoshi(g, X0, GY, 1, hands=hands)
-            axe(g, gp[0], gp[1], gb)
-            if 2.3 < t < 2.5:
-                for a in range(0, 360, 60):
-                    g.px(SX + math.cos(math.radians(a)) * 6, STUMP_TOP + math.sin(math.radians(a)) * 3)
-        self.mx(g, t, "log", 0, 0)
-        if 2.3 < t < 2.45:
-            g.mx_level = 4
+                axe(g, *AXE_REST[0], AXE_REST[1])
+                worker(g, DX, FLOOR, t)
+        g.mx_rows(MX_AXE)
+        scroll(g, TEXT_X, "依乎天理", k=span(t, 0.5, 2.5), side="right")
 
     def hold(self, g: Gfx, t: float):
-        self._ht = t
-        self.draw(g, t)
+        self.frame(g, t)
 
     def exit(self, g: Gfx, t: float):
-        self.draw(g, self._ht)
-        fade_box(g, 1 - ease_in(span(t, 0.1, self.T["exit"])))
-        if t > 0.6:
-            g.mx[:] = False
-            g.mx[7, 1:7] = True
+        self.frame(g, self.hold_t + t)
+        fade_out(g, span(t, 0.1, self.T["exit"]))

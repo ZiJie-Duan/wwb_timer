@@ -1,299 +1,393 @@
-"""八段锦：小人在院子里逐式练完八段锦，每式按歌诀做出真实动作。
+"""八段锦：道观院子里，小道士一式一式练健身气功八段锦。
 
-入场：小人从左边走进院子，站定拱手，起势。
-持续：一遍八式（每式 60 秒），每式开头歌诀逐字出现；动作按 e 推进（断线重连能接上）。
-      八式练完：收势、抱腹调息，右侧“第几遍”加一，再从第一式练起。
-中断：放下手，两手叠放丹田“收势”。
-恢复：从收势回到刚才的动作。
-圆满：两手叠于丹田，周身放光，“功行圆满”。
+歌诀：两手托天理三焦、左右开弓似射雕、调理脾胃须单举、五劳七伤往后瞧、摇头摆尾去心火、两手攀足固肾腰、
+攒拳怒目增气力、背后七颠百病消。动作按健身气功八段锦要领：托天提踵、马步开弓（一手八字掌推出、一手拉弦）、
+一手上撑一手下按、转头后瞧、马步俯身摇摆、俯身攀足、马步冲拳瞪目、提踵下颠。
+入场：小道士从左边走进院子，站定拱手，起势（两臂前平举、屈膝下按）。
+持续：一遍八式，每式 60 秒，按 e 推进；每式开头，上方逐字出现歌诀。开弓时手里一张气凝的弓，拉满一放，
+      一道光箭飞出，天上一只雕盘旋；后瞧有目光点线；攒拳出拳带拳风、震屏；七颠落地扬尘。
+      每隔一阵院子里有小事件：飞鸟掠过、松针飘落。续：收势调息，左上“第几遍”加一，从头再练。
+中断：两手落下叠于丹田，“收势”。  恢复：起势，接回当前动作。
+圆满：收势，周身放光一圈圈散开，闪白，“功行圆满”。
+点阵：下排 8 格是八式进度（当前一格闪），上面是当前一式的小图标。
 """
 from __future__ import annotations
 
 import math
 
-from ..engine.anim import blink, clamp, ease_in, ease_in_out, ease_out, lerp, rand, span
+from ..engine import pix
+from ..engine.anim import ease_in, ease_out, lerp, span
+from ..engine.chars import daoshi
 from ..engine.cn import cn_num
-from ..engine.fx import ring, typewriter
 from ..engine.gfx import Gfx
 from ..engine.scene import Ritual, register
-from .r4_kit import blend, figure, mirror, pose, seq
+from .r4_kit import (P, Clock, bird, counter, courtyard, dao, label, leaf_fall, mx_art, mx_ring, pop_title, ring,
+                     seq, star)
 
-GROUND = 60
-CX = 64
-FORM_S = 60.0
-INTRO = 4.0        # 每式开头：从上一式收回、换到本式起手（歌诀出现）
-RENEW = 6.0        # 一遍练完后的收势调息
+FLOOR = 58
+DX = 50
+FORM = 60.0
+VERSES = ["两手托天理三焦", "左右开弓似射雕", "调理脾胃须单举", "五劳七伤往后瞧",
+          "摇头摆尾去心火", "两手攀足固肾腰", "攒拳怒目增气力", "背后七颠百病消"]
 
-N = pose(lua=-12, lfa=-8, rua=12, rfa=8)
-HORSE = dict(lth=-30, lsh=-8, rth=30, rsh=8)
-BELLY = pose(lua=-22, lfa=85, rua=22, rfa=-85)           # 两手叠于腹前（丹田）
-SIDE = dict(shw=2.5, hipw=0.6, face=1, lth=2, lsh=0, rth=-2, rsh=0)
+N = P()                                                     # 自然站立
+HOLD_DT = P(b=(120, 20, "palm"), f=(60, 160, "palm"))       # 两手叠于丹田
+CHEST = P(legs="horse", b=(130, -40, "palm"), f=(50, -140, "palm"))   # 两手交叉胸前
 
-# 每式：关键帧（循环）、一圈秒数、歌诀、简称
-FORMS = [
-    ([N, BELLY, pose(lua=-35, lfa=165, rua=35, rfa=-165),
-      pose(lua=-176, lfa=172, rua=176, rfa=-172, lift=2), pose(lua=-176, lfa=172, rua=176, rfa=-172, lift=2),
-      pose(lua=-95, lfa=-95, rua=95, rfa=95)], 9.0, "两手托天理三焦", "托天"),
-    ([pose(lua=-30, lfa=110, rua=30, rfa=-110, **HORSE),
-      pose(lua=-90, lfa=-90, rua=82, rfa=-75, lh=3, rh=1, face=-1, **HORSE),
-      pose(lua=-90, lfa=-90, rua=82, rfa=-75, lh=3, rh=1, face=-1, **HORSE),
-      pose(lua=-30, lfa=110, rua=30, rfa=-110, **HORSE),
-      pose(lua=-82, lfa=75, rua=90, rfa=90, lh=1, rh=3, face=1, **HORSE),
-      pose(lua=-82, lfa=75, rua=90, rfa=90, lh=1, rh=3, face=1, **HORSE)], 10.0, "左右开弓似射雕", "开弓"),
-    ([N, pose(lua=-178, lfa=-178, rua=18, rfa=75), pose(lua=-178, lfa=-178, rua=18, rfa=75), N,
-      pose(lua=-18, lfa=-75, rua=178, rfa=178), pose(lua=-18, lfa=-75, rua=178, rfa=178)], 9.0, "调理脾胃须单举", "单举"),
-    ([pose(lua=-22, lfa=-28, rua=22, rfa=28), pose(lua=-22, lfa=-28, rua=22, rfa=28, face=-1, tilt=-8),
-      pose(lua=-22, lfa=-28, rua=22, rfa=28, face=-1, tilt=-8), pose(lua=-22, lfa=-28, rua=22, rfa=28),
-      pose(lua=-22, lfa=-28, rua=22, rfa=28, face=1, tilt=8), pose(lua=-22, lfa=-28, rua=22, rfa=28, face=1, tilt=8)],
-     8.0, "五劳七伤往后瞧", "后瞧"),
-    ([pose(lua=-35, lfa=15, rua=35, rfa=-15, **HORSE),
-      pose(tor=-28, tilt=-12, lua=-60, lfa=-5, rua=10, rfa=-20, **HORSE),
-      pose(lua=-35, lfa=15, rua=35, rfa=-15, **HORSE),
-      pose(tor=28, tilt=12, lua=-10, lfa=20, rua=60, rfa=5, **HORSE)], 8.0, "摇头摆尾去心火", "摆尾"),
-    ([pose(lua=-10, lfa=-5, rua=10, rfa=5, **SIDE), pose(lua=178, lfa=178, rua=176, rfa=176, **SIDE),
-      pose(tor=100, tilt=25, lua=-48, lfa=-52, rua=-44, rfa=-50, **SIDE),
-      pose(tor=100, tilt=25, lua=-48, lfa=-52, rua=-44, rfa=-50, **SIDE),
-      pose(tor=40, lua=5, lfa=-5, rua=8, rfa=-3, **SIDE)], 9.0, "两手攀足固肾腰", "攀足"),
-    ([pose(lua=-35, lfa=110, rua=35, rfa=-110, lh=1, rh=1, brow=1, **HORSE),
-      pose(lua=-90, lfa=-90, rua=35, rfa=-110, lh=1, rh=1, brow=1, **HORSE),
-      pose(lua=-35, lfa=110, rua=35, rfa=-110, lh=1, rh=1, brow=1, **HORSE),
-      pose(lua=-35, lfa=110, rua=90, rfa=90, lh=1, rh=1, brow=1, **HORSE)], 5.0, "攒拳怒目增气力", "攒拳"),
-    ([pose(lua=-10, lfa=-18, rua=10, rfa=18), pose(lua=-10, lfa=-18, rua=10, rfa=18, lift=4)], 1.4,
-     "背后七颠百病消", "七颠"),
-]
-CYCLE_S = FORM_S * len(FORMS)
-TITLE_ICON = ["托", "弓", "举", "瞧", "摆", "足", "拳", "颠"]
+F1 = [(0, N), (1.2, P(b=(120, 30, "palm"), f=(60, 150, "palm"))),
+      (2.4, P(b=(150, -80, "palm"), f=(30, -100, "palm"))),
+      (3.4, P(legs="tiptoe", rise=2, b=(-125, -105, "palm"), f=(-55, -75, "palm"))),
+      (4.6, P(legs="tiptoe", rise=2, b=(-125, -105, "palm"), f=(-55, -75, "palm"))),
+      (5.8, P(b=(110, 100, "palm"), f=(70, 80, "palm"))), (6.4, N)]
 
+F2 = [(0, N), (1.0, CHEST), (2.4, P(legs="horse", b=(180, 0, "fist"), f=(0, 0, "sword"))),
+      (3.6, P(legs="horse", b=(180, 0, "fist"), f=(0, 0, "sword"))),
+      (3.9, P(legs="horse", b=(180, 140, "palm"), f=(0, 0, "sword"))), (5.0, N)]
 
-def walk(k: float) -> dict:
-    """走路：k = 步相（弧度）"""
-    s = math.sin(k)
-    return pose(lth=-18 * s, lsh=-18 * s - 6 * max(0, s), rth=18 * s, rsh=18 * s - 6 * max(0, -s),
-                lua=14 * s, lfa=10 * s + 10, rua=-14 * s, rfa=-14 * s + 10, face=1, shw=3.5, hipw=1.2)
+F3 = [(0, N), (1.0, P(b=(120, 20, "palm"), f=(60, 160, "palm"))),
+      (2.4, P(b=(100, 95, "down"), f=(-45, -70, "palm"))), (3.6, P(b=(100, 95, "down"), f=(-45, -70, "palm"))),
+      (4.6, P(b=(120, 20, "palm"), f=(60, 160, "palm"))),
+      (6.0, P(b=(-120, -100, "palm"), f=(80, 85, "down"))), (7.2, P(b=(-120, -100, "palm"), f=(80, 85, "down"))),
+      (8.2, P(b=(120, 20, "palm"), f=(60, 160, "palm"))), (9.0, N)]
+
+F4 = [(0, N), (1.2, P(b=(130, 120, "palm"), f=(50, 60, "palm"))),
+      (2.2, P(b=(130, 120, "palm"), f=(50, 60, "palm"), flip_head=True)),
+      (3.8, P(b=(130, 120, "palm"), f=(50, 60, "palm"), flip_head=True)),
+      (4.6, P(b=(110, 100, "palm"), f=(70, 80, "palm"))), (5.4, N)]
+
+F5 = [(0, P(legs="horse", b=(120, 70, "palm"), f=(60, 80, "palm"))),
+      (1.5, P(legs="horse", lean=24, b=(110, 60, "palm"), f=(50, 70, "palm"), face="sleep")),
+      (3.0, P(legs="horse", lean=-10, b=(130, 80, "palm"), f=(70, 90, "palm"))),
+      (4.5, P(legs="horse", lean=24, b=(110, 60, "palm"), f=(50, 70, "palm"), face="sleep")),
+      (6.0, P(legs="horse", b=(120, 70, "palm"), f=(60, 80, "palm")))]
+
+UP2 = P(b=(-115, -100, "palm"), f=(-65, -80, "palm"))
+F6 = [(0, N), (1.2, UP2), (2.0, UP2), (3.4, P(lean=45, b=(100, 90, "palm"), f=(80, 85, "palm"))),
+      (4.6, P(lean=48, b=(95, 88, "palm"), f=(78, 82, "palm"), face="sleep")),
+      (5.8, UP2), (6.6, UP2), (7.6, N)]
+
+WAIST = P(legs="horse", b=(120, 0, "fist"), f=(110, 0, "fist"), face="angry")
+F7 = [(0, WAIST), (0.6, WAIST), (0.8, P(legs="horse", b=(120, 0, "fist"), f=(0, 0, "fist"), face="angry")),
+      (1.6, P(legs="horse", b=(120, 0, "fist"), f=(0, 0, "fist"), face="angry")), (2.0, WAIST), (2.6, WAIST),
+      (2.8, P(legs="horse", b=(20, 0, "fist"), f=(110, 0, "fist"), face="angry")),
+      (3.6, P(legs="horse", b=(20, 0, "fist"), f=(110, 0, "fist"), face="angry")), (4.0, WAIST)]
+
+F8 = [(0, P(b=(100, 95, "palm"), f=(80, 85, "palm"))),
+      (1.0, P(legs="tiptoe", rise=3, b=(100, 95, "palm"), f=(80, 85, "palm"))),
+      (1.6, P(legs="tiptoe", rise=3, b=(100, 95, "palm"), f=(80, 85, "palm"))),
+      (1.75, P(b=(100, 95, "palm"), f=(80, 85, "palm"), face="happy")),
+      (2.4, P(b=(100, 95, "palm"), f=(80, 85, "palm")))]
+
+FORMS = [F1, F2, F3, F4, F5, F6, F7, F8]
+
+QISHI = [(0, N), (1.2, P(b=(30, 10, "down"), f=(20, 0, "down"))),
+         (2.4, P(legs="wide", b=(60, 30, "down"), f=(50, 20, "down"))), (3.2, HOLD_DT)]
+
+ICONS = ["""
+.#...#.
+..#.#..
+...#...
+..###..
+...#...
+..#.#..
+""", """
+...#...
+.#####.
+#..#..#
+...#...
+..#.#..
+.#...#.
+""", """
+.....#.
+...#.#.
+..####.
+.#.#...
+#..#...
+..#.#..
+""", """
+..#....
+.##....
+..#....
+.###...
+..#....
+.#.#...
+""", """
+.......
+...#...
+.####..
+#.#.#..
+..#.#..
+.#...#.
+""", """
+.......
+..##...
+.#..#..
+#...#..
+#...#..
+..#.#..
+""", """
+...#...
+..####.
+.#.#...
+...#...
+..#.#..
+.#...#.
+""", """
+...#...
+..###..
+.#.#.#.
+...#...
+..#.#..
+..#.#..
+"""]
+
+EAGLE = pix.frames("""
+##     ##
+ ### ###
+   ###
+    #
+---
+   ###
+ #######
+#   #   #
+    #
+""")
 
 
 @register
 class Baduanjin(Ritual):
     id = "r4.baduanjin"
     name = "八段锦"
-    desc = "小人在院中依歌诀逐式练八段锦：托天、开弓、单举、后瞧、摆尾、攀足、攒拳、七颠"
-    T = {"enter": 4.5, "interrupt": 1.5, "resume": 1.8, "complete": 5.0}
-    CYCLE = CYCLE_S + RENEW
+    desc = "道观院子里小道士一式一式练八段锦：托天、开弓射雕、单举、后瞧、摇头摆尾、攀足、攒拳、七颠"
+    T = {"enter": 6.0, "interrupt": 1.6, "resume": 2.0, "complete": 5.5}
+    CYCLE = 480.0
+
+    def setup(self):
+        self.puffs = pix.Puffs(self.seed)
+        self.sparks = pix.Sparks(self.seed + 1)
+        self.clock = Clock()
 
     # ------------------------------------------------------------ 动作
 
-    def where(self, e: float):
-        """→ (遍数 n≥1, 是否在收势调息, 式序号 i, 本式内秒数 u)"""
+    def pose_at(self, k: float):
+        """一遍里第 k 秒：(姿势, 第几式, 式内秒数, 朝向翻转)"""
+        i = min(int(k // FORM), 7)
+        u = k - i * FORM
+        keys = FORMS[i]
+        flip = False
+        if i == 1:  # 开弓：左右交替（右开弓后转身左开弓）
+            L = keys[-1][0]
+            flip = int(u // L) % 2 == 1
+        if u < 0.8 and i > 0:  # 两式之间回到自然站立
+            return seq(keys, 0.0), i, u, flip
+        return seq(keys, u), i, u, flip
+
+    def scene(self, g: Gfx, t: float, e: float):
+        courtyard(g, t)
+        # 小事件：飞鸟掠过 / 松针飘落（按 e）
+        slot, ph = int(e // 23), (e % 23) / 6.0
+        if ph < 1:
+            if slot % 2 == 0:
+                bird(g, lerp(134, -6, ph), 20 + math.sin(ph * 9) * 3, t)
+            else:
+                leaf_fall(g, 108, 26, ph)
+
+    def draw_form(self, g: Gfx, t: float, e: float, dt: float, k: float):
+        pose, i, u, flip = self.pose_at(k)
+        h = dao(g, DX, FLOOR, pose, t, flip=flip)
+        L = FORMS[i][-1][0]
+        uu = u % L
+        if i == 1:
+            self.eagle(g, t)
+            if 2.0 < uu < 3.9:  # 气凝的弓 + 弦
+                hx, hy = h["hf"]
+                bx, by = h["hb"]
+                s = -1 if flip else 1
+                cx = hx - s * 2
+                if s > 0:
+                    g.d.arc((cx - 5, hy - 8, cx + 5, hy + 8), -75, 75, fill=1)
+                else:
+                    g.d.arc((cx - 5, hy - 8, cx + 5, hy + 8), 105, 255, fill=1)
+                tips = [(cx + s * 1, hy - 8), (cx + s * 1, hy + 8)]
+                for tx, ty in tips:
+                    g.px(tx - s, ty + (1 if ty < hy else -1) * 0)
+                pull = (bx, by) if uu < 3.6 else (cx + s, hy)
+                for a in tips:
+                    pix.dotted(g, a[0], a[1], pull[0], pull[1], 1 if uu > 2.4 else 2)
+            if 3.6 < uu < 4.6:  # 放箭：一道光箭飞出
+                q = span(uu, 3.6, 4.4)
+                s = -1 if flip else 1
+                ax = h["hf"][0] + s * q * 70
+                ay = h["hf"][1] - q * 6
+                g.d.line((ax - s * 6, ay, ax, ay), fill=1)
+                g.px(ax + s, ay), g.px(ax - s * 5, ay - 1), g.px(ax - s * 5, ay + 1)
+                if abs(uu - 3.6) < dt:
+                    self.sparks.burst(h["hf"][0], h["hf"][1], 8, 18, life=0.4, gravity=0)
+        elif i == 2 and (abs(uu - 2.4) < dt or abs(uu - 6.0) < dt):
+            hx, hy = h["hf"] if uu < 4 else h["hb"]
+            self.sparks.burst(hx, hy - 3, 6, 14, up=8, life=0.4, gravity=10)
+        elif i == 3 and pose["flip_head"]:  # 目光点线
+            mx_, my = h["nose"]
+            s = 1 if flip else -1
+            pix.dotted(g, mx_ + s * 2, my - 1, mx_ + s * 22, my + 2, 3, int(t * 8))
+        elif i == 4:  # 摇摆的动势线
+            if pose["lean"] > 10:
+                hx, hy = h["head"]
+                g.d.arc((hx - 14, hy - 12, hx + 10, hy + 12), 200, 250, fill=1)
+        elif i == 5 and pose["lean"] > 40:
+            hx, hy = h["hf"]
+            if int(t * 4) % 2:
+                star(g, hx + 2, FLOOR - 3, 1)
+        elif i == 6:
+            for key, at_ in (("hf", 0.8), ("hb", 2.8)):
+                if 0 < uu - at_ < 0.5:  # 拳风
+                    hx, hy = h[key]
+                    q = (uu - at_) / 0.5
+                    s = -1 if flip else 1
+                    for j in (-2, 0, 2):
+                        pix.dotted(g, hx + s * (3 + q * 4), hy + j, hx + s * (8 + q * 10), hy + j, 2, int(q * 6))
+                if abs(uu - at_) < dt:
+                    self.puffs.emit(h[key][0] + 6, h[key][1], vx=20, vy=0, life=0.4, rmax=2, spread=0)
+                if 0 < uu - at_ < 0.12:
+                    pix.shake(g, t, 0.8)
+        elif i == 7 and abs(uu - 1.75) < dt:  # 下颠：落地扬尘
+            for s in (-1, 1):
+                self.puffs.emit(DX + s * 8, FLOOR - 1, vx=s * 10, vy=-3, life=0.6, rmax=1.6, spread=1)
+            self.sparks.burst(DX, FLOOR - 1, 6, 14, up=10, life=0.4, gravity=60)
+        if i == 7 and 1.75 < uu < 1.9:
+            pix.shake(g, t, 1.0)
+        self.puffs.step(dt)
+        self.puffs.draw(g)
+        self.sparks.step(dt)
+        self.sparks.draw(g)
+        return h, i, u
+
+    def eagle(self, g: Gfx, t: float):
+        a = t * 0.5
+        x, y = 64 + math.cos(a) * 46, 14 + math.sin(a) * 5
+        spr = pix.anim(EAGLE, t, 3)
+        pix.blit(g, spr if math.sin(a) < 0 else spr.flip() if False else spr, x - 4, y - 2, flip=math.sin(a) > 0)
+
+    def mx(self, g: Gfx, t: float, i: int, done_all: bool = False):
+        mx_art(g, ICONS[i], 0, 0)
+        for c in range(8):
+            if c < i or done_all:
+                g.mx[7, c] = True
+            elif c == i:
+                g.mx[7, c] = (t * 3) % 1 < 0.6
+
+    def texts(self, g: Gfx, e: float, i: int, u: float):
         n = int(e // self.CYCLE) + 1
-        k = e % self.CYCLE
-        if e >= self.CYCLE and k < RENEW:
-            return n, True, 0, k
-        k -= RENEW if e >= self.CYCLE else 0
-        k = max(0.0, k)
-        i = min(len(FORMS) - 1, int(k // FORM_S))
-        return n, False, i, k - i * FORM_S
-
-    def form_pose(self, i: int, u: float) -> dict:
-        keys, per, _, _ = FORMS[i]
-        if u < INTRO:  # 换式：从上一式的收尾（或站定）过渡到本式第一帧
-            prev = N
-            return blend(prev, keys[0], ease_in_out(span(u, 0.6, INTRO)))
-        return seq(keys, u - INTRO, per)
-
-    def pose_at(self, e: float) -> dict:
-        n, renew, i, u = self.where(e)
-        if renew:
-            return blend(BELLY, N, ease_in_out(span(u, RENEW - 1.5, RENEW)))
-        # 本式末尾 1.2 秒回到站定
-        p = self.form_pose(i, u)
-        return blend(p, N, ease_in_out(span(u, FORM_S - 1.6, FORM_S - 0.2)))
-
-    # ------------------------------------------------------------ 画面零件
-
-    def yard(self, g: Gfx):
-        d = g.d
-        d.line((0, GROUND, 127, GROUND), fill=1)
-        for x in range(4, 128, 9):  # 青石板
-            g.px(x, GROUND + 2)
-            g.px(x + 4, GROUND + 3)
-
-    def bow(self, g: Gfx, b, p: dict, t: float):
-        for hd, pull, ua in ((b.lhand, b.rhand, p["lua"]), (b.rhand, b.lhand, p["rua"])):
-            if abs(ua) < 80:
-                continue
-            sd = 1 if ua > 0 else -1
-            draw = clamp((abs(ua) - 80) / 10)
-            hx, hy = hd
-            # 弓背：竖着的弧，弓弦拉到后手
-            top, bot = (hx - sd * 1, hy - 9), (hx - sd * 1, hy + 9)
-            g.d.arc((hx - 4 - (sd < 0) * 0, hy - 9, hx + 4, hy + 9), 270 if sd > 0 else 90, 90 if sd > 0 else 270,
-                    fill=1)
-            px_ = lerp(hx - sd * 4, pull[0], draw)
-            g.d.line((top, (px_, pull[1]), bot), fill=1)
-        # 雕：在高处盘旋
-        bx = 64 + math.sin(t * 0.4) * 40
-        by = 18 + math.sin(t * 0.9) * 3
-        fl = 2 if int(t * 4) % 2 else -1
-        g.d.line((bx - 4, by + fl, bx, by, bx + 4, by + fl), fill=1)
-
-    def dust(self, g: Gfx, b, amt: float):
-        if amt <= 0:
-            return
-        for fx, fy in (b.lfoot, b.rfoot):
-            for j in range(3):
-                r = 3 + amt * 4 + j
-                g.px(fx - r, GROUND - 1 - j)
-                g.px(fx + r, GROUND - 1 - j)
-
-    def texts(self, g: Gfx, e: float, a: float = 1.0, right: str | None = None):
-        n, renew, i, u = self.where(e)
-        r = right if right is not None else f"第{cn_num(n)}遍"
-        g.vtext(115, 3, r[:int(round(len(r) * a))])
-        if renew:
-            left = "收势"
+        if i == 0 and e >= self.CYCLE:  # 续之后第一式：前 6 秒被收势起势占了，歌诀往后挪
+            u -= 6.0
+        if 0 <= u < 8.0:  # 歌诀逐字出现
+            s = VERSES[i]
+            m = min(len(s), int(u / 0.25) + 1)
+            label(g, 64 - 42, 2, s[:m] + "", 12, "left", box=False, pad=1)
         else:
-            left = FORMS[i][3]
-        g.vtext(2, 3, left[:int(round(len(left) * a))])
-        if not renew and u < INTRO + 3.5 and a >= 1:  # 歌诀逐字出现，然后淡出
-            s = FORMS[i][2]
-            k = 1 - span(u, INTRO + 2.5, INTRO + 3.5)
-            if k > 0:
-                typewriter(g, CX, 1, s, u, cps=4, align="center")
-                if k < 1:
-                    g.fade(k, (20, 0, 108, 13))
-
-    def mx(self, g: Gfx, e: float, t: float):
-        """点阵：下排 8 格 = 八式进度；上面画一个缩小的小人跟着做"""
-        n, renew, i, u = self.where(e)
-        for x in range(8):
-            g.mx[7, x] = x < i or (x == i and blink(t, 0.8, 0.6)) or renew
-        b = self._last
-        if b is None:
-            return
-        # 把小人从 OLED 坐标缩到 8×7
-        ox, oy, sc = CX - 24, GROUND - 47, 7.0
-        def m(pt):
-            return int(round((pt[0] - ox) / sc)), int(round((pt[1] - oy) / sc))
-        segs = [(b.head, b.neck), (b.neck, b.hip), (b.lsho, b.lelb), (b.lelb, b.lhand), (b.rsho, b.relb),
-                (b.relb, b.rhand), (b.hip, b.lknee), (b.lknee, b.lfoot), (b.hip, b.rknee), (b.rknee, b.rfoot)]
-        for a_, b_ in segs:
-            (x0, y0), (x1, y1) = m(a_), m(b_)
-            steps = max(abs(x1 - x0), abs(y1 - y0), 1)
-            for s in range(steps + 1):
-                x = round(x0 + (x1 - x0) * s / steps)
-                y = round(y0 + (y1 - y0) * s / steps)
-                if y < 7:
-                    g.mx_set(x, y)
-
-    def scene(self, g: Gfx, p: dict, t: float, e: float, glow: float = 0.0):
-        self.yard(g)
-        b = figure(g, p, CX, GROUND)
-        self._last = b
-        return b
-
-    _last = None
+            counter(g, f"第{cn_num(n)}遍" if n < 100 else f"{n}遍")
 
     # ------------------------------------------------------------ 阶段
 
+    def qishi(self, g: Gfx, t: float, x=DX):
+        return dao(g, x, FLOOR, seq(QISHI, t, loop=False), t)
+
     def enter(self, g: Gfx, t: float):
-        self.yard(g)
-        if t < 2.2:  # 走进来
-            k = ease_out(span(t, 0, 2.2))
-            x = lerp(-12, CX, k)
-            p = blend(walk(t * 7), N, span(t, 1.9, 2.2))
-        elif t < 3.2:  # 拱手作揖
-            x = CX
-            k = math.sin(span(t, 2.2, 3.2) * math.pi)
-            p = blend(N, pose(lua=-25, lfa=120, rua=25, rfa=-120, lh=1, rh=1, tilt=0), k)
-            p["tor"] = 0
-        else:  # 起势：两臂前平举再按下
-            x = CX
-            k = math.sin(span(t, 3.2, 4.5) * math.pi)
-            p = blend(N, pose(lua=-70, lfa=-80, rua=70, rfa=80), k)
-        b = figure(g, p, x, GROUND)
-        self._last = b
-        if t > 2.2:
-            typewriter(g, CX, 1, "八段锦", t - 2.2, cps=4, align="center")
-            if t > 3.6:
-                g.fade(1 - span(t, 3.6, 4.4), (20, 0, 108, 13))
-        self.texts(g, 0, a=span(t, 3.4, 4.5))
-        self.mx(g, 0, t)
+        dt = self.clock(t)
+        self.scene(g, t, 3.0)
+        if t < 2.0:
+            daoshi(g, lerp(-12, DX, ease_out(span(t, 0, 2.0))), FLOOR, "walk", t)
+        elif t < 2.8:
+            daoshi(g, DX, FLOOR, "bow" if 2.3 < t < 2.7 else "gongshou", t)
+        else:
+            self.qishi(g, t - 2.8)
+            if abs(t - 2.8) < dt:
+                self.sparks.burst(DX, FLOOR - 20, 10, 18, life=0.5, gravity=0)
+        self.sparks.step(dt)
+        self.sparks.draw(g)
+        self.mx(g, t, 0)
+        if t > 3.2:
+            label(g, 64, 4, "八段锦", 12, "center", box=True)
 
     def hold(self, g: Gfx, t: float, e: float):
-        p = self.pose_at(e)
-        b = self.scene(g, p, t, e)
-        n, renew, i, u = self.where(e)
-        if not renew and i == 7 and u > INTRO:  # 七颠：脚跟落地震起尘土
-            ph = ((u - INTRO) % FORMS[7][1]) / FORMS[7][1]
-            self.dust(g, b, 1 - span(ph, 0.0, 0.25) if ph < 0.25 else 0)
-        if not renew and i == 3 and u > INTRO:  # 往后瞧：目光
-            if abs(p["face"]) > 0.7:
-                sd = 1 if p["face"] > 0 else -1
-                hx, hy = b.head
-                for j in range(4):
-                    g.px(hx + sd * (7 + j * 4 + (t * 8) % 4), hy - 1 + j)
-        if not renew and i == 1 and u > INTRO:  # 开弓：虚拟的弓弦 + 天上一只雕
-            self.bow(g, b, p, t)
-        if not renew and i == 6 and u > INTRO:  # 攒拳：出拳的风
-            for hd, ua in ((b.lhand, p["lua"]), (b.rhand, p["rua"])):
-                if abs(ua) > 80:
-                    sd = 1 if ua > 0 else -1
-                    for j in range(3):
-                        g.d.line((hd[0] + sd * (4 + j), hd[1] - 3 + j * 3, hd[0] + sd * (8 + j * 2), hd[1] - 3 + j * 3),
-                                 fill=1)
-        if renew:  # 收势调息：丹田一团气由大到小
-            hx, hy = b.hip[0], b.hip[1] - 4
-            r = 2 + 6 * (1 - span(u, 0.5, RENEW - 1.5))
-            ring(g, hx, hy, r + 3, 2, t)
-        self.texts(g, e)
-        self.mx(g, e, t)
+        dt = self.clock(t)
+        k = e % self.CYCLE
+        self.scene(g, t, e)
+        if e >= self.CYCLE and k < 6.0:  # 续：收势调息 → 起势
+            if k < 2.4:
+                dao(g, DX, FLOOR, seq([(0, N), (1.2, HOLD_DT), (2.4, HOLD_DT)], k, loop=False), t)
+                if 1.2 < k < 2.4:  # 调息：丹田一圈光
+                    ring(g, DX + 1, FLOOR - 9, 3 + (k - 1.2) * 10, dotted=2, ry=(3 + (k - 1.2) * 10) * 0.5)
+            else:
+                self.qishi(g, (k - 2.4) * 3.2 / 3.6)
+            self.sparks.step(dt)
+            self.sparks.draw(g)
+            self.mx(g, t, 0, done_all=k < 2.4)
+            n = int(e // self.CYCLE) + 1
+            pop_title(g, 64, 3, f"第{cn_num(n)}遍" if n < 100 else f"{n}遍", span(k, 0.2, 0.6), t)
+            return
+        h, i, u = self.draw_form(g, t, e, dt, k)
+        self.mx(g, t, i)
+        self.texts(g, e, i, u)
 
     def interrupt(self, g: Gfx, t: float, e: float):
-        k = ease_in_out(span(t, 0, 1.2))
-        p = blend(self.pose_at(e), BELLY, k)
-        self.scene(g, p, t, e)
-        self.texts(g, e, right="收势")
-        self.mx(g, e, t)
+        dt = self.clock(t)
+        k = e % self.CYCLE
+        self.scene(g, t, e)
+        pose, i, u, flip = self.pose_at(k)
+        q = ease_out(span(t, 0, 1.0))
+        dao(g, DX, FLOOR, P(**{**pose}) if q <= 0 else _mix(pose, HOLD_DT, q), t, flip=flip and q < 0.5)
+        if t > 1.0:
+            ring(g, DX + 1, FLOOR - 9, 3 + (t - 1.0) * 8, dotted=2, ry=(3 + (t - 1.0) * 8) * 0.5)
+        self.mx(g, t, i)
+        if t > 0.5:
+            label(g, 64, 4, "收势", 12, "center", box=True)
+        else:
+            self.texts(g, e, i, 99)
 
     def resume(self, g: Gfx, t: float, e: float):
-        k = ease_in_out(span(t, 0.3, 1.8))
-        p = blend(BELLY, self.pose_at(e), k)
-        self.scene(g, p, t, e)
-        if t < 0.6:
-            self.texts(g, e, right="收势")
+        dt = self.clock(t)
+        k = e % self.CYCLE
+        self.scene(g, t, e)
+        pose, i, u, flip = self.pose_at(k)
+        if t < 1.2:
+            self.qishi(g, t * 3.2 / 1.2)
         else:
-            self.texts(g, e)
-        self.mx(g, e, t)
+            q = ease_out(span(t, 1.2, 2.0))
+            dao(g, DX, FLOOR, _mix(HOLD_DT, pose, q), t, flip=flip and q > 0.5)
+        if abs(t - 1.2) < dt:
+            self.sparks.burst(DX, FLOOR - 14, 10, 18, life=0.5, gravity=0)
+        self.sparks.step(dt)
+        self.sparks.draw(g)
+        self.mx(g, t, i)
+        self.texts(g, e, i, 99)
 
     def complete(self, g: Gfx, t: float, e: float):
-        k = ease_in_out(span(t, 0, 1.3))
-        p = blend(self.pose_at(e), BELLY, k)
-        self.yard(g)
-        b = figure(g, p, CX, GROUND)
-        self._last = b
-        if t > 1.3:  # 周身放光
-            gl = ease_out(span(t, 1.3, 2.5))
-            hx, hy = b.hip[0], b.hip[1] - 6
-            for j in range(14):
-                a = j / 14 * 2 * math.pi + t * 0.6
-                r0, r1 = 24, 24 + 8 * gl * (0.7 + 0.3 * math.sin(t * 5 + j))
-                g.d.line((hx + math.cos(a) * r0, hy + math.sin(a) * r0 * 0.9, hx + math.cos(a) * r1,
-                          hy + math.sin(a) * r1 * 0.9), fill=1)
-            for j in range(10):
-                if blink(t + j * 0.17, 0.6, 0.35):
-                    a = rand(j, 3) * 2 * math.pi
-                    r = 12 + rand(j, 4) * 18
-                    g.px(hx + math.cos(a) * r, hy + math.sin(a) * r * 0.8)
-        if t < 1.3:
-            self.texts(g, e, a=1 - span(t, 0.3, 1.3))
+        dt = self.clock(t)
+        self.scene(g, t, e)
+        if t < 1.4:
+            dao(g, DX, FLOOR, seq([(0, N), (1.2, HOLD_DT), (1.4, HOLD_DT)], t, loop=False), t)
         else:
-            g.d.rectangle((0, 0, 127, 13), fill=0)
-            typewriter(g, CX, 1, "功行圆满", t - 1.6, cps=5, align="center")
-        if t < 1.3:
-            self.mx(g, e, t)
-        else:
-            r = (t - 1.3) * 4
-            for y in range(8):
-                for x in range(8):
-                    g.mx[y, x] = abs(math.hypot(x - 3.5, y - 3.5) - r % 6) < 0.8 or y == 7
-            g.mx_level = 1 + int(5 * (1 - span(t, 1.3, 3.0)))
+            dao(g, DX, FLOOR, P(b=(120, 20, "palm"), f=(60, 160, "palm"), face="happy" if t > 2.2 else "sleep"), t)
+        if t > 1.4:  # 周身放光：一圈圈散开
+            for j in range(3):
+                r = ((t - 1.4) * 14 + j * 9) % 30
+                ring(g, DX, FLOOR - 18, r + 4, dotted=2)
+        if abs(t - 1.6) < dt:
+            pix.flash(g)
+            self.sparks.burst(DX, FLOOR - 20, 24, 38, up=10, life=1.0, gravity=20)
+        if 1.6 < t < 1.9:
+            pix.shake(g, t, 1.2)
+        self.sparks.step(dt)
+        self.sparks.draw(g)
+        self.mx(g, t, 7, done_all=True)
+        if t > 1.6:
+            mx_ring(g, (t - 1.6) * 4 % 5)
+            g.mx_level = 1 + int(6 * (1 - span(t, 1.6, 3.0)))
+        if t > 2.0:
+            pop_title(g, 64, 3, "功行圆满", span(t, 2.0, 2.4), t)
+
+
+def _mix(p, q, k):
+    from .r4_kit import mix
+    return mix(p, q, k)

@@ -392,3 +392,6 @@ class Gfx:
 def dissolve(a: np.ndarray, b: np.ndarray, p: float) -> np.ndarray:
     """从画面 a 抖动溶解到 b（p 0..1）"""
     return np.where(BAYER < int(round(p * 16)), b, a)
+
+
+text_image = _text_img  # 公开：字串 → PIL '1' 遮罩（字顶对齐第 0 行），印进道具精灵用

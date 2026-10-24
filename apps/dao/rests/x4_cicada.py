@@ -1,307 +1,472 @@
-"""蝉蜕：树干上一只蝉在唱，下面留着一只空壳；每隔一阵，看一回金蝉脱壳。
+"""蝉蜕：老树干上趴着一只大蝉，一阵一阵地唱；树下小道士盘坐听蝉，听着听着打起瞌睡。
 
-依据：《史记·屈原贾生列传》“蝉蜕于浊秽，以浮游尘埃之外”；道教以“蝉蜕”比喻尸解——
-      脱去旧壳，羽化而去（《抱朴子·论仙》“下士先死后蜕，谓之尸解仙”）。
-入场：树干从下往上显出来，蝉从右上方飞来，落在树干上收翅，开唱。
-持续：蝉一阵一阵地叫（腹部鼓动、两侧声波、点阵上是跳动的声柱），歇一歇再叫。树叶轻摆。
-      每 80 秒演一回脱壳：老蝉振翅飞走 → 旧壳掉落 → 一只若虫从树根慢慢爬上来 → 背上裂开，
-      嫩白的新蝉一点点钻出、翅膀展开变硬 → 新蝉爬到高处接着唱，空壳留在原处。
-收场：蝉振翅飞走，留下空壳与树干，画面收拢。
+依据：《史记·屈原贾生列传》“蝉蜕于浊秽，以浮游尘埃之外”；道教以蝉蜕喻尸解——脱去旧壳，羽化而去
+      （《抱朴子·论仙》“下士先死后蜕，谓之尸解仙”）。
+入场：蝉振翅从右上飞来，落在树干上收翅；左上“蝉蜕于浊秽”。
+持续：背面看的大蝉（凸出的复眼、前胸、帐篷状透明翅与翅脉），一阵一阵地叫：腹部抖动、两侧声波一圈圈荡开，
+      歇一歇再叫；下面挂着一只空蝉蜕；树叶轻摆，地上有草。小道士盘坐，呼吸眨眼。
+      每 100 秒一轮彩蛋：
+        20 秒起 小道士听着听着打瞌睡（头一点一点，冒 z），40 秒一片叶子飘下来落在他头上，他“哇”地惊醒，
+                愣一会儿，抬手把叶子拂掉；
+        60 秒起 金蝉脱壳：老蝉张翅飞走 → 旧壳掉到地上 → 一只若虫从树根慢慢爬上来 → 背上裂开，
+                嫩白的新蝉一点点钻出来、皱翅慢慢伸长、颜色变深 → 爬到高处接着唱，新的空壳留在原处；
+                左上写“金蝉脱壳”。
+收场：蝉张翅飞走。
+点阵：唱歌时是跳动的声柱；不唱时是蝉；脱壳时是空壳 / 新蝉。
 """
 from __future__ import annotations
 
 import math
 
-from ..engine.anim import clamp, ease_in, ease_in_out, ease_out, lerp, noise, rand, span
-from ..engine.fx import typewriter
+import numpy as np
+
+from ..engine import pix
+from ..engine.anim import clamp, ease_in, ease_in_out, ease_out, lerp, noise, span
+from ..engine.chars import daoshi, figure
 from ..engine.gfx import Gfx, Sprite
 from ..engine.scene import Rest, register
-from .x4_common import Bake, mx_sprite, sound_arcs
+from .x4_common import TUFT, ev, label, mx_art, sound_arcs, tuft
 
-CX = 64
-SING_Y = 7           # 蝉（贴图顶）唱歌的位置
-SHELL_Y = 44         # 空壳的位置
-EV0, EV_P = 30.0, 80.0
+FLOOR = 60
+TX0, TX1 = 68, 96          # 树干左右
+CX = 82                    # 蝉的中线
+SING_Y = 9                 # 唱歌时蝉（精灵顶）的位置
+SHELL_Y = 36               # 空壳（精灵顶）
+DAO_X = 36
+PERIOD = 100.0
+DOZE = (20.0, 35.0)        # 打瞌睡 + 落叶
+MOLT = (60.0, 32.0)        # 脱壳
+SING_P = 9.0               # 一阵唱 5.5 秒、歇 3.5 秒
+
+CIC = Sprite("""
+ ##             ##
+#..#############..#
+#..######.######..#
+ ##.###########.##
+   .............
+  ###############
+ #######.#.#######
+ ##.####.#.####.##
+  ###############
+   #.#########.#
+  #..#.#####.#..#
+ #...#..###..#...#
+ #.#..#..#..#..#.#
+ #.#...#.#.#...#.#
+ #..#...###...#..#
+ #..#....#....#..#
+ #...#...#...#...#
+  #..#...#...#..#
+  #...#..#..#...#
+   #..#..#..#..#
+    #..#.#.#..#
+     ##.# #.##
+       #   #
+""")
+
+
+def _variants():
+    """唱歌时腹部抖动的一帧；刚钻出来的新蝉（只有轮廓）；半熟（网点）"""
+    on, mk = CIC.on.copy(), CIC.mask.copy()
+    sing = on.copy()
+    sing[11:20, 7:12] = on[11:20, 7:12] ^ (mk[11:20, 7:12] & (np.arange(9)[:, None] % 2 == 0))  # 腹部抖动
+    # 新蝉：嫩白（整只亮），只留复眼、头胸分界与翅缝；半熟：翅上网点
+    pale = mk.copy()
+    pale[0:5] = on[0:5]
+    pale[9:, 9] = False
+    ys, xs = np.mgrid[0:mk.shape[0], 0:mk.shape[1]]
+    half = on | (mk & ((xs + ys) % 2 == 0) & (ys > 9))
+    return (Sprite(on=sing, mask=mk.copy()), Sprite(on=pale, mask=mk.copy()), Sprite(on=half, mask=mk.copy()))
+
+
+CIC_SING, CIC_PALE, CIC_HALF = _variants()
+
+SHELL = pix.frames("""
+     #####
+    #.###.#
+ #  #######  #
+  #.#######.#
+ ##.##.#.##.##
+#  .#.#.#.#.  #
+  #.#.#.#.#.#
+ #.#.#.#.#.#.#
+#  #.#.#.#.#  #
+   .#.#.#.#.
+    #.#.#.#
+    .#.#.#.
+     #.#.#
+      .#.
+---
+     #####
+    #.###.#
+  # ####### #
+ #.#######.#
+ ##.##.#.##.##
+  #.#.#.#.#.#
+#  #.#.#.#.#  #
+ #.#.#.#.#.#.#
+   #.#.#.#.#
+ #  .#.#.#.  #
+    #.#.#.#
+    .#.#.#.
+     #.#.#
+      .#.
+---
+     #####
+    #.#.#.#
+ #  ##...##  #
+  #.#.....#.#
+ ##.#.....#.##
+#  .#.....#.  #
+  #.#.#.#.#.#
+ #.#.#.#.#.#.#
+#  #.#.#.#.#  #
+   .#.#.#.#.
+    #.#.#.#
+    .#.#.#.
+     #.#.#
+      .#.
+""")
+NYMPH = SHELL[:2]
+EMPTY = SHELL[2]
+
+FLY = pix.frames("""
+ ###           ###
+#####         #####
+######  ###  ######
+ ######.###.######
+  ######...######
+  ###.#######.###
+   ##.##.#.##.##
+       #.#.#
+       .#.#.
+        #.#
+---
+       ##.##
+   ## #######  ##
+ ######.###.######
+#######.#.#.#######
+ ####  .###.  ####
+  ##   #.#.#   ##
+       .#.#.
+        #.#
+""")
+
+LEAF = pix.frames("""
+  ##
+ #.##
+#.###
+ ##.#
+   #
+---
+ ##
+##.#
+#.##
+ #.#
+  #
+""")
+
+ZZZ = pix.sprite("""
+####
+  #
+ #
+####
+""")
+
+MX_CIC = [" #    # ", "########", " ###### ", "  ####  ", " #.##.# ", "#..##..#", " #.##.# ", "  #  #  "]
+MX_SHELL = ["   ##   ", "  ####  ", "## ## ##", " ###### ", "# #### #", " ###### ", "#  ##  #", "   ##   "]
 
 
 def _trunk() -> Sprite:
-    b = Bake(44, 64)
-    b.poly([(2, 63), (5, 40), (4, 20), (7, 0), (37, 0), (40, 22), (39, 44), (42, 63)], 0.0)
+    """老树干：两边起伏的轮廓、竖向树皮纹、一个树疤；底部树根外撇"""
+    w, h = TX1 - TX0 + 13, 64
+    on = np.zeros((h, w), bool)
+    mk = np.zeros((h, w), bool)
     import random
-    r = random.Random(3)
-    for x, y0, y1 in ((8, 2, 22), (34, 8, 30), (9, 40, 60), (35, 44, 62), (12, 28, 36), (31, 52, 58)):   # 树皮纵纹（只在两边）
-        b.line([(x + math.sin(y * 0.2) * 1.0, y) for y in range(y0, y1 + 1, 3)])
-    return b.sprite()
-
-
-def _adult(pale: bool = False, wing: float = 1.0) -> Sprite:
-    """背面看的蝉（头朝上）：宽 23，高 32。pale：刚脱壳的嫩蝉；wing：翅膀展开程度"""
-    b = Bake(23, 32)
-    lvl = 0.25 if pale else 0.0
-    wl = 8 + 15 * wing         # 翅长
-    for s in (-1, 1):          # 两片前翅（帐篷形，覆在腹上）
-        base = (11 + s * 1, 13)
-        pts = [base, (11 + s * 9, 15), (11 + s * 10, 15 + wl * 0.55), (11 + s * 7, 13 + wl), (11 + s * 1, 13 + wl * 0.85)]
-        b.poly(pts, lvl)
-        if wing > 0.6:   # 翅脉
-            b.line([(11 + s * 2, 15), (11 + s * 8, 13 + wl * 0.9)])
-            b.line([(11 + s * 5, 15), (11 + s * 9, 15 + wl * 0.5)])
-            b.line([(11 + s * 3, 13 + wl * 0.55), (11 + s * 9, 13 + wl * 0.6)])
-    b.poly([(3, 7), (19, 7), (17, 13), (5, 13)], lvl)          # 前胸
-    b.line([(7, 9), (11, 11), (15, 9)])
-    b.poly([(6, 12), (16, 12), (14, 17), (8, 17)], 0.5 if not pale else 0.25)   # 中胸（深色）
-    b.ellipse((4, 1, 18, 8), lvl)                             # 头
-    b.ellipse((0, 2, 5, 7), 1.0)                              # 复眼
-    b.ellipse((17, 2, 22, 7), 1.0)
-    b.point(11, 3)
-    b.point(10, 4)
-    b.point(12, 4)
-    return b.sprite()
-
-
-SHELL_ART = """
-##.............##
-.#...#######...#.
-.#..#.......#..#.
-..##.##...##.##..
-....#.......#....
-...#....#....#...
-#.#.....#.....#.#
-.##....#.#....##.
-...#...#.#...#...
-...#....#....#...
-....#.......#....
-#..#.........#..#
-.##.#########.##.
-....#.......#....
-....#########....
-.....#.....#.....
-.....#######.....
-......#...#......
-.......###.......
-"""
-
-
-def _nymph(shell: bool = False) -> Sprite:
-    """若虫 / 蝉蜕（背面，头朝上，大钩状前足）：宽 17，高 19。shell：空壳（背上裂开，透亮）；否则身体是深褐色（抖动）"""
-    rows = []
-    for y, ln in enumerate(SHELL_ART.strip("\n").split("\n")):
-        i0, i1 = ln.find("#"), ln.rfind("#")
-        out = []
-        for x, ch in enumerate(ln):
-            if x < i0 or x > i1:
-                out.append(" ")
-            elif ch == "." and not shell and 2 <= y <= 17 and 4 <= x <= 12 and (x + y) % 2 == 0:
-                out.append("#")
-            else:
-                out.append(ch)
-        rows.append("".join(out))
-    art = "\n".join(rows)
-    if not shell:   # 若虫背上没有裂口
-        art_rows = art.split("\n")
-        for y in (5, 6, 7, 8, 9):
-            r = list(art_rows[y])
-            r[8] = "#" if (8 + y) % 2 == 0 else "."
-            if y in (7, 8):
-                r[7] = "#" if (7 + y) % 2 == 0 else "."
-                r[9] = "#" if (9 + y) % 2 == 0 else "."
-            art_rows[y] = "".join(r)
-        art = "\n".join(art_rows)
-    return Sprite(art)
+    r = random.Random(7)
+    lo = [6 + int(round(math.sin(y * 0.21) * 0.8 + math.sin(y * 0.07 + 1) * 0.6)) for y in range(h)]
+    hi = [6 + (TX1 - TX0) + int(round(math.sin(y * 0.17 + 2) * 0.8)) for y in range(h)]
+    for y in range(52, h):  # 树根外撇
+        k = (y - 52) / 8
+        lo[y] -= int(k * k * 6)
+        hi[y] += int(k * k * 6)
+    for y in range(h):
+        a, b = max(lo[y], 0), min(hi[y], w - 1)
+        mk[y, a:b + 1] = True
+        on[y, a] = on[y, b] = True
+        on[y, a + 1] = y % 5 != 0
+    # 树皮纹：几条竖线，断断续续
+    for i, x in enumerate((9, 12, w - 10, w - 13, 18, w - 19)):
+        y = r.randrange(0, 6)
+        while y < h - 4:
+            ln = r.randrange(3, 9) if i < 4 else r.randrange(2, 4)
+            if y < 44 and (i >= 4 or y < 40):  # 蝉趴、爬、挂壳的上半段留干净，树皮纹只在下半段
+                y += 6
+                continue
+            xx = x + (1 if (y // 9 + i) % 3 == 0 else 0)
+            on[y:min(y + ln, h), xx] = True
+            y += ln + r.randrange(2, 5)
+    # 树疤
+    cx, cy = 14, 48
+    for a in range(0, 360, 20):
+        on[int(cy + math.sin(math.radians(a)) * 2.5), int(cx + math.cos(math.radians(a)) * 2)] = True
+    on[cy, cx] = False
+    on[np.where(~mk)] = False
+    return Sprite(on=on, mask=mk)
 
 
 TRUNK = _trunk()
-ADULT = _adult()
-SHELL = _nymph(True)
-NYMPH = _nymph(False)
-PALE = [_adult(True, w) for w in (0.0, 0.25, 0.5, 0.75, 1.0)]
-
-MX_CICADA = """
-#.####.#
-.######.
-..####..
-.##..##.
-.##..##.
-.##..##.
-..#..#..
-........
-"""
+_CROPS: dict = {}
 
 
-def flying(g: Gfx, x: float, y: float, t: float, face: int = 1):
-    """飞着的蝉（侧上方看）：身体 + 振翅的两对翅（交替两个位置 = 嗡嗡的残影）"""
-    up = int(t * 20) % 2
-    for s in (-1, 1):   # 上下两片翅：振动的两个位置
-        a = (0.35 if up else 0.9)
-        ex, ey = x - 6 * face, y + s * (4 + 9 * math.sin(a))
-        g.d.polygon([(x + 1 * face, y), (ex + 3 * face, ey), (ex - 4 * face, ey + s * 1), (x - 3 * face, y)],
-                    fill=0, outline=1)
-    g.d.ellipse((x - 5, y - 3, x + 5, y + 3), fill=1)
-    g.d.ellipse((x + 3 * face - 2, y - 3, x + 3 * face + 2, y + 3), fill=0, outline=1)   # 头与复眼
-    g.px(x + 5 * face, y - 2)
-    g.px(x + 5 * face, y + 2)
+def _crumple(spr: Sprite, wl: float) -> Sprite:
+    """皱翅：头胸（前 9 行）不变，翅膀那截按 wl 压短"""
+    wl = round(wl, 1)
+    key = ("c", id(spr), wl)
+    c = _CROPS.get(key)
+    if c is None:
+        from PIL import Image
+        n = max(2, int(round((spr.h - 9) * wl)))
+        lo_on = np.array(Image.fromarray(spr.on[9:]).resize((spr.w, n), Image.NEAREST))
+        lo_mk = np.array(Image.fromarray(spr.mask[9:]).resize((spr.w, n), Image.NEAREST))
+        c = _CROPS[key] = Sprite(on=np.vstack([spr.on[:9], lo_on]), mask=np.vstack([spr.mask[:9], lo_mk]))
+    return c
+
+
+def _crop(spr: Sprite, n: int) -> Sprite:
+    """精灵只取上面 n 行（从壳里钻出来的那一截）"""
+    key = (id(spr), n)
+    c = _CROPS.get(key)
+    if c is None:
+        c = _CROPS[key] = Sprite(on=spr.on[:n].copy(), mask=spr.mask[:n].copy())
+    return c
+
+
+def branch(g: Gfx, t: float):
+    """右上一根枝条，挂几片叶子（随风轻摆）"""
+    pts = [(TX1 - 2, 15), (104, 11), (114, 8), (127, 6)]
+    g.d.line(pts, fill=1)
+    g.d.line([(TX1 - 2, 16), (104, 12)], fill=1)
+    g.d.line([(110, 9), (116, 3), (120, 0)], fill=1)
+    for i, (x, y) in enumerate(((104, 12), (112, 9), (119, 7), (126, 6), (116, 3))):
+        k = int(t * 0.9 + i * 0.6) % 2
+        pix.blit(g, LEAF[k], x - 2, y + 1)
 
 
 @register
 class Cicada(Rest):
     id = "x4.cicada"
     name = "蝉蜕"
-    desc = "树上一只蝉一阵阵地叫，下面挂着空壳；每隔一阵演一回金蝉脱壳：若虫爬上来，裂背羽化，新蝉爬高再唱"
+    desc = "老树干上一只大蝉一阵阵鸣唱，树下小道士听着打瞌睡；不时演一回金蝉脱壳"
     T = {"enter": 3.0, "exit": 1.3}
 
     def setup(self):
-        self.sing_p = self.rng.choice((9.0, 11.0, 13.0))
+        self.tufts = [(8, 0), (24, 1), (54, 0), (110, 1), (122, 0)]
 
-    # ------------------------------------------------------------ 零件
+    # ------------------------------------------------------------ 小件
 
-    def leaves(self, g: Gfx, t: float):
-        """右上角伸进来的一枝，几片叶子轻摆"""
-        g.d.line((84, 12, 98, 8, 112, 9), fill=1)
-        for i, (x, y) in enumerate(((92, 9), (100, 8), (108, 9))):
-            sw = math.sin(t * 0.9 + i) * 1.5
-            tip = (x + 3 + sw, y + 11)
-            g.d.polygon([(x, y), (x + 4 + sw * 0.5, y + 5), tip, (x - 1 + sw * 0.5, y + 6)], fill=0, outline=1)
-            g.d.line((x, y + 1, tip[0] - 1, tip[1] - 2), fill=1)
+    def ground(self, g: Gfx, t: float):
+        g.d.line((0, FLOOR, 127, FLOOR), fill=1)
+        pix.checker(g, (0, FLOOR + 1, 128, 64), 0.125)
+        for i, (x, k) in enumerate(self.tufts):
+            tuft(g, x, FLOOR, t, i)
 
-    def singing(self, t: float) -> float:
-        """唱歌的强度（0 = 歇着），一阵一阵"""
-        k = t % self.sing_p
-        on = self.sing_p * 0.6
-        if k > on:
-            return 0.0
-        return span(k, 0, 0.5) * (1 - span(k, on - 0.5, on))
+    def singing(self, t: float) -> float | None:
+        k = t % SING_P
+        return k if k < 5.5 else None
 
-    def sing_fx(self, g: Gfx, t: float, y: float, s: float):
-        if s <= 0:
+    def cicada(self, g: Gfx, y: float, t: float, sing: bool, spr: Sprite | None = None):
+        s = spr or (CIC_SING if sing and int(t * 14) % 2 else CIC)
+        k = t % SING_P
+        shift = 1 if (not sing and 6.6 < k < 7.6) else 0  # 歇口气时往上挪一小步
+        pix.blit(g, s, CX - 9, int(y) - shift)
+
+    def sound(self, g: Gfx, y: float, k: float):
+        """两侧声波（像素弧，一圈圈往外荡）"""
+        cy = y + 13
+        sound_arcs(g, CX - 11, cy, (k * 1.6) % 1, -1)
+        sound_arcs(g, CX + 11, cy, (k * 1.6 + 0.5) % 1, 1)
+
+    def daoshi_draw(self, g: Gfx, t: float, cyc: float):
+        """小道士：平时盘坐；打瞌睡（点头 + z）；叶落头上惊醒，拂掉"""
+        d = ev(cyc, PERIOD, *DOZE)
+        if not d:
+            m = ev(cyc, PERIOD, *MOLT)
+            face = "normal"
+            if m and 13.0 < m[1] < 22.0:
+                face = "wow"
+            elif m and 22.0 <= m[1] < 31.0:
+                face = "happy"
+            daoshi(g, DAO_X, FLOOR, "sit", t, face=face)
+            return None
+        k = d[1]
+        if k < 20.0:
+            nod = (k * 0.5) % 1 > 0.7
+            daoshi(g, DAO_X, FLOOR, "sleep" if nod else "meditate", t)
+            if k > 1.5:  # z 一个个往右上飘
+                for j in range(3):
+                    q = ((k * 0.45) + j / 3) % 1
+                    zx, zy = DAO_X + 9 + q * 12, FLOOR - 36 - q * 14
+                    if q < 0.85:
+                        pix.blit(g, ZZZ, zx, zy)
+            return (DAO_X - 2, FLOOR - 36) if k > 19.0 else None
+        if k < 27.0:
+            face = "wow" if k < 23.0 else "normal"
+            daoshi(g, DAO_X, FLOOR, "sit", t, face=face)
+            return (DAO_X - 2, FLOOR - 36)
+        if k < 29.0:
+            figure(g, DAO_X, FLOOR, t, legs="sit", arm="raise", face="happy")
+            return None
+        daoshi(g, DAO_X, FLOOR, "sit", t, face="happy" if k < 32 else "normal")
+        return None
+
+    def falling_leaf(self, g: Gfx, cyc: float, t: float):
+        d = ev(cyc, PERIOD, *DOZE)
+        if not d:
             return
-        k = (t * 2.2) % 1
-        sound_arcs(g, CX + 13, y + 20, k, n=3, gap=4, right=True, spread=0.7)
-        sound_arcs(g, CX - 13, y + 20, k, n=3, gap=4, right=False, spread=0.7)
-        if int(t * 16) % 2:   # 腹部鼓膜一抖
-            g.d.line((CX - 1, y + 21, CX + 1, y + 21), fill=1)
+        k = d[1]
+        q = span(k, 15.0, 19.0)
+        if 0 < q < 1:  # 从枝头晃晃悠悠飘向小道士头顶
+            x = lerp(112, DAO_X - 2, ease_in_out(q)) + math.sin(q * 14) * 4
+            y = lerp(10, FLOOR - 37, q)
+            pix.blit(g, LEAF[int(q * 10) % 2], x - 2, y - 2)
+        elif 19.0 <= k < 27.4:
+            pix.blit(g, LEAF[0], DAO_X - 4, FLOOR - 39)
+        elif 27.4 <= k < 29.5:  # 拂掉：往左飞落
+            q2 = span(k, 27.4, 29.5)
+            pix.blit(g, LEAF[int(q2 * 8) % 2], DAO_X - 4 - q2 * 18, FLOOR - 39 + ease_in(q2) * 37)
 
-    def mx_sing(self, g: Gfx, t: float, s: float):
-        if s <= 0:
-            mx_sprite(g, MX_CICADA)
-            return
-        for x in range(8):   # 声柱
-            h = int(1 + s * 7 * noise(t * 9 + x * 1.7, self.seed + x))
-            for y in range(8 - h, 8):
-                g.mx[y, x] = True
+    # ------------------------------------------------------------ 主画面
 
-    # ------------------------------------------------------------ 脱壳事件
-
-    def event(self, t: float):
-        if t < EV0:
-            return -1.0, 0
-        return (t - EV0) % EV_P, int((t - EV0) // EV_P)
-
-    def draw(self, g: Gfx, t: float, text_a: float = 1.0):
-        g.blit(TRUNK, CX - 22, 0)
-        self.leaves(g, t)
-        k, n = self.event(t)
-        if text_a > 0:
-            s = "蝉蜕于浊秽"
-            g.vtext(2, 2, s[:int(round(text_a * len(s)))])
-        if k < 0 or k >= 34:      # 平常：上面的蝉唱，下面挂着空壳
-            g.blit(SHELL, CX - 8, SHELL_Y)
-            g.blit(ADULT, CX - 11, SING_Y)
-            s = self.singing(t)
-            self.sing_fx(g, t, SING_Y, s)
-            self.mx_sing(g, t, s)
-            return
-        # ---- 脱壳的一回 ----
-        sing = 0.0
-        if k < 3.0:     # 老蝉振翅飞走（往右上）
-            p = ease_in(k / 3.0)
-            g.blit(SHELL, CX - 8, SHELL_Y)
-            if k < 0.6:
-                g.blit(ADULT, CX - 11, SING_Y)
+    def scene(self, g: Gfx, t: float, cyc: float, arrive: float = 1.0, leave: float = 0.0):
+        """arrive：入场飞来；leave：收场飞走"""
+        self.ground(g, t)
+        pix.blit(g, TRUNK, TX0 - 6, 0, outline=False)
+        branch(g, t)
+        m = ev(cyc, PERIOD, *MOLT)
+        mxk = "sing"
+        text = None
+        k = m[1] if m else None
+        # 空壳（平时挂在下面；脱壳时掉落、换新的）
+        fallen = None
+        if k is None or k < 2.0:
+            pix.blit(g, EMPTY, CX - 7, SHELL_Y)
+        elif k < 3.4:  # 旧壳掉落、弹一下
+            q = span(k, 2.0, 3.0)
+            yy = lerp(SHELL_Y, FLOOR - 13, ease_in(q))
+            if k > 3.0:
+                yy = FLOOR - 13 - math.sin(span(k, 3.0, 3.4) * math.pi) * 3
+            pix.blit(g, EMPTY, CX - 7 - q * 18, yy)
+        else:
+            fallen = 1.0 - span(k, 26.0, 31.0)
+        if fallen:
+            if fallen > 0.5 or int(t * 10) % 2:
+                pix.blit(g, EMPTY, CX - 25, FLOOR - 13)
+        # 蝉
+        if k is None:
+            if leave > 0:  # 收场：张翅飞走
+                q = ease_in(leave)
+                pix.blit(g, FLY[int(t * 16) % 2], CX - 9 + q * 50, SING_Y - q * 40)
+                mxk = "cic"
+            elif arrive < 1:
+                q = ease_out(arrive)
+                if arrive < 0.8:
+                    pix.blit(g, FLY[int(t * 16) % 2], lerp(130, CX - 9, q), lerp(-20, SING_Y, q))
+                else:
+                    self.cicada(g, SING_Y, t, False)
+                mxk = "cic"
             else:
-                flying(g, CX + p * 80, SING_Y + 14 - p * 30 + math.sin(k * 8) * 2, t)
-                sing = 1.0
-        elif k < 5.0:   # 旧壳掉落
-            p = (k - 3.0) / 2.0
-            y = SHELL_Y + ease_in(p) * 30
-            g.blit(SHELL, CX - 8 + p * 6, y)
-        elif k < 15.0:  # 若虫从树根爬上来
-            p = (k - 5.0) / 10.0
-            y = lerp(66, SHELL_Y, ease_out(p))
-            wob = math.sin(k * 6) * 0.6
-            g.blit(NYMPH, CX - 8 + wob, y)
-        elif k < 17.0:  # 停住，背上裂开
-            g.blit(NYMPH, CX - 8, SHELL_Y)
-            split = span(k, 15.5, 16.8)
-            if split > 0:
-                g.d.line((CX, SHELL_Y + 4, CX, SHELL_Y + 4 + split * 6), fill=0)
-                g.d.line((CX - 1, SHELL_Y + 4, CX - 1, SHELL_Y + 4 + split * 6), fill=1)
-                g.d.line((CX + 1, SHELL_Y + 4, CX + 1, SHELL_Y + 4 + split * 6), fill=1)
-        elif k < 26.0:  # 嫩蝉钻出、翅膀展开
-            p = ease_out(span(k, 17.0, 21.0))
-            y = lerp(SHELL_Y + 6, SHELL_Y - 26, p)
-            w = span(k, 20.0, 25.0)
-            spr = PALE[min(4, int(w * 4.99))]
-            g.blit(SHELL, CX - 8, SHELL_Y)
-            # 还没完全钻出来时，下半截被壳遮住
-            g.blit(spr, CX - 11, y)
-            if p < 1:
-                cut = SHELL_Y + 10
-                g.d.rectangle((CX - 11, cut, CX + 11, y + 32), fill=0)
-                g.blit(SHELL, CX - 8, SHELL_Y)
-            if 21.5 < k < 26.0:
-                g.vtext(115, 15, "金蝉脱壳"[:int(clamp((k - 21.5) * 3, 0, 4))])
-        else:           # 翅膀变硬变深，爬到高处
-            p = ease_in_out(span(k, 27.0, 33.0))
-            y = lerp(SHELL_Y - 26, SING_Y, p)
-            g.blit(SHELL, CX - 8, SHELL_Y)
-            g.blit(ADULT if k > 26.6 else PALE[4], CX - 11, y)
-            if k < 30:
-                g.vtext(115, 15, "金蝉脱壳")
-        mx_sprite(g, MX_CICADA)
-        if sing:
-            self.mx_sing(g, t, 1.0)
-
-    # ------------------------------------------------------------ 阶段
-
-    def hold(self, g: Gfx, t: float):
-        self.draw(g, t)
+                s = self.singing(t)
+                self.cicada(g, SING_Y, t, s is not None)
+                if s is not None:
+                    self.sound(g, SING_Y, s)
+                else:
+                    mxk = "cic"
+        else:
+            mxk = "shell"
+            if k < 2.0:  # 老蝉张翅飞走
+                q = ease_in(span(k, 0.4, 2.0))
+                if k < 0.4:
+                    self.cicada(g, SING_Y, t, False)
+                else:
+                    pix.blit(g, FLY[int(t * 16) % 2], CX - 9 + q * 50, SING_Y - q * 40)
+            elif k < 4.0:
+                pass
+            elif k < 12.0:  # 若虫从树根往上爬（一步一停）
+                q = span(k, 4.0, 11.5)
+                step = int(k * 3) % 2
+                y = lerp(FLOOR - 6, SHELL_Y, ease_out(q)) - (0.5 if step else 0)
+                pix.blit(g, NYMPH[step if q < 1 else 0], CX - 7, y)
+            else:
+                text = "金蝉脱壳"
+                if k < 14.0:  # 定住，背上裂开（发光一下）
+                    pix.blit(g, NYMPH[0] if k < 13.0 else EMPTY, CX - 7, SHELL_Y)
+                    if 12.8 < k < 13.4:
+                        for j in range(3):
+                            g.px(CX - 1 + j, SHELL_Y + 1)
+                        for dx, dy in ((-4, -3), (4, -3), (0, -5)):
+                            g.px(CX + dx, SHELL_Y + dy)
+                else:
+                    pix.blit(g, EMPTY, CX - 7, SHELL_Y)
+                    if k < 20.0:  # 新蝉从裂口一点点钻出来（翅还皱着、短）
+                        q = ease_out(span(k, 14.0, 19.5))
+                        crump = _crumple(CIC_PALE, 0.5)
+                        n = int(lerp(3, crump.h, q))
+                        pix.blit(g, _crop(crump, n), CX - 9, SHELL_Y + 5 - n)
+                    elif k < 25.0:  # 翅膀伸长、颜色变深
+                        q = span(k, 20.0, 24.0)
+                        spr = _crumple(CIC_PALE if q < 0.55 else CIC_HALF, lerp(0.5, 1.0, ease_out(q)))
+                        if q >= 1:
+                            spr = CIC
+                        top = SHELL_Y + 5 - _crumple(CIC_PALE, 0.5).h
+                        pix.blit(g, spr, CX - 9, top)
+                        if int(k * 5) % 3 == 0:
+                            g.px(CX - 12, top + 7)
+                            g.px(CX + 12, top + 9)
+                    else:  # 爬到高处，接着唱
+                        q = ease_in_out(span(k, 25.0, 29.5))
+                        y = lerp(SHELL_Y + 5 - _crumple(CIC_PALE, 0.5).h, SING_Y, q)
+                        sing = k > 29.8
+                        self.cicada(g, y, t, sing)
+                        if sing:
+                            self.sound(g, y, k - 29.8)
+                if k > 26.0:
+                    text = None
+            mxk = "cic" if k > 22 else "shell"
+        # 小道士与落叶
+        self.daoshi_draw(g, t, cyc)
+        self.falling_leaf(g, cyc, t)
+        # 点阵
+        if mxk == "sing":
+            s = self.singing(t) or 0
+            for c in range(8):
+                hgt = 1 + int(noise(t * 9 + c * 3.7, 5) * 7 * (0.4 + 0.6 * abs(math.sin(s * 3))))
+                for r in range(8 - hgt, 8):
+                    g.mx[r, c] = True
+        elif mxk == "shell":
+            mx_art(g, MX_SHELL)
+        else:
+            mx_art(g, MX_CIC)
+        return text
 
     def enter(self, g: Gfx, t: float):
-        T = self.T["enter"]
-        reveal = ease_out(span(t, 0, 1.2))
-        g.blit(TRUNK, CX - 22, 64 - reveal * 64)
-        if t > 0.6:
-            self.leaves(g, t)
-            g.blit(SHELL, CX - 8, SHELL_Y + (1 - reveal) * 64)
-        if t < 2.2:   # 从右上飞来
-            p = ease_out(span(t, 0.8, 2.2))
-            if p > 0:
-                flying(g, lerp(140, CX, p), lerp(-6, SING_Y + 14, p), t, -1)
-            mx_sprite(g, MX_CICADA)
-        else:
-            g.blit(ADULT, CX - 11, SING_Y)
-            s = span(t, 2.6, T)
-            self.sing_fx(g, t, SING_Y, s)
-            self.mx_sing(g, t, s * 0.6)
-        g.vtext(2, 2, "蝉蜕于浊秽"[:int(span(t, 1.2, T) * 5 + 0.5)])
+        self.scene(g, t, 0.0 - 20.0, arrive=span(t, 0, 2.6))
+        label(g, 4, 3, "蝉蜕于浊秽")
+
+    def hold(self, g: Gfx, t: float):
+        tt = t + self.T["enter"]
+        text = self.scene(g, tt, tt % PERIOD)
+        if text:
+            label(g, 4, 3, text)
+        elif t < 8.0:
+            label(g, 4, 3, "蝉蜕于浊秽")
 
     def exit(self, g: Gfx, t: float):
-        T = self.T["exit"]
-        t0 = self.hold_t
-        k, n = self.event(t0)
-        g.blit(TRUNK, CX - 22, 0)
-        self.leaves(g, t0 + t)
-        if 3.0 <= k < 5.0:
-            pass
-        elif not (5.0 <= k < 15.0):
-            g.blit(SHELL, CX - 8, SHELL_Y)
-        p = ease_in(span(t, 0.2, T))
-        if 3.0 <= k < 26.0:   # 正在脱壳：画面就这样淡出
-            pass
-        elif t < 0.2:
-            g.blit(ADULT, CX - 11, SING_Y)
-        else:
-            flying(g, CX + p * 80, SING_Y + 14 - p * 30, t0 + t)
-        g.vtext(2, 2, "蝉蜕于浊秽"[:int(round((1 - span(t, 0, 0.8)) * 5))])
-        mx_sprite(g, MX_CICADA)
-        g.fade(1 - span(t, T * 0.55, T))
+        tt = self.hold_t + self.T["enter"] + t
+        cyc = tt % PERIOD
+        m = ev(cyc, PERIOD, *MOLT)
+        if m:  # 正在脱壳：停在那一刻
+            tt0 = self.hold_t + self.T["enter"]
+            self.scene(g, tt0, tt0 % PERIOD)
+            return
+        self.scene(g, tt, cyc, leave=span(t, 0.1, 1.2))

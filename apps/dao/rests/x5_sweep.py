@@ -1,368 +1,382 @@
-"""扫叶：银杏树下，小道士用竹扫帚一下一下把落叶扫成一堆；叶子不停地落。
-约每 72 秒一阵风把整堆叶子卷走——他愣了一下，笑了：“损之又损，以至于无为”（《道德经》四十八章）。
+"""扫叶（像素风）：院里一棵老银杏，扇形的叶子一片片打着旋落下来；小道士握着竹扫帚，一推一收，
+把落在跟前的叶子推进右边的叶堆，叶堆越扫越高，每一推扬起一点尘土。
+一轮约 70 秒：扫满一阵后起一阵风，整堆叶子卷上天——他抬袖挡脸，风过了眯眼一笑：“以至于无为”。
+彩蛋：约每 37 秒一片叶子正落在他发髻上，头上冒个感叹号，他晃晃脑袋甩下来；石灯笼里偶尔爬出一只壁虎。
+左侧竖写“损之又损”（《道德经》四十八章：为学日益，为道日损。损之又损，以至于无为）。
 """
 from __future__ import annotations
 
 import math
 
-from ..engine.anim import clamp, ease_in, ease_in_out, ease_out, lerp, noise, rand, span
+from ..engine import pix
+from ..engine.anim import ease_in_out, ease_out, lerp, rand, span
 from ..engine.gfx import Gfx, Sprite
 from ..engine.scene import Rest, register
-from .x5_common import daoshi, dellipse, dpoly, event, fade_box, phase
+from .x5_common import BANG, Clock, cyc, event, fade_out, mark, scroll, worker
 
-GY = 57            # 地面
-DX = 44            # 道士站位
-P = 2.0            # 一扫的周期
-BX0, BX1 = 60, 80  # 扫帚头推的起止
-PILE = 90          # 叶堆中心
-C = 72.0           # 大轮：扫 60 秒 + 风 12 秒
-SWEEP_END = 60.0
-FALL_DT = 2.7      # 平均几秒落一片
-TRUNK_X = 108
+FLOOR = 57
+DX = 44
+TEXT_X = 3
+P = 1.8                  # 一推一收
+H0, H1 = 58, 76          # 扫帚头推的起止
+PILE = 86                # 叶堆中心
+BIG = 72.0
+SWEEP = 60.0
+FALL = 2.1               # 平均几秒落一片
+TRUNK = 110
 
-LEAVES = [Sprite("#.#\n.#."), Sprite("##.\n.##"), Sprite(".#.\n#.#"), Sprite(".##\n##.")]
-FALLING = [Sprite("#.#\n###\n.#."), Sprite("##.\n###\n..#"), Sprite(".#.\n###\n#.#"), Sprite(".##\n###\n#..")]
-GINKGO = Sprite("#.#\n###\n.#.")
+LEAF = pix.frames("""
+#.#.#
+#####
+ ###
+  #
+---
+ ##
+####
+ ###.
+  ##
+   #
+---
+#####
+  #
+---
+  #
+ ###
+#####
+#.#.#
+---
+ ##
+####
+.###
+ ##
+ #
+""")
+GROUND_LEAF = [Sprite("#.#\n###"), Sprite("##\n.##"), Sprite("###\n.#")]
+
+# 扫帚头（竹枝扎成一把）：推的时候枝梢往后拖，收的时候直着
+BROOM = pix.frames("""
+       ##
+      ####
+     #.##.
+   ##.#.#.#
+  #.#.#.#.##
+ #.#.#.#.#.#
+#.#.#.#.#.#.#
+---
+      ##
+     ####
+    #.##.#
+   #.#.#.#
+  #.#.#.#.#
+ #.#.#.#.#.#
+ # # # # # #
+""")
+
+BROOM_UP = BROOM[1].rot90(1)   # 扛在肩上（预先转好）
+
+LANTERN = Sprite("""
+   ###
+  #####
+#########
+ #.....#
+ #.#.#.#
+ #.....#
+#########
+  #####
+   ###
+   #.#
+   #.#
+  #####
+ #######
+""")
+
+GECKO = pix.frames("""
+#   #
+ ###
+  ##
+  ###
+ #  #
+---
+ #  #
+  ###
+  ##
+ ###
+#   #
+""")
 
 
-def stroke(k: float) -> tuple[float, float]:
-    """一扫：k 0..1 → (扫帚头 x, 抬起高度)。前 45% 贴地推，后面抬起拉回"""
-    if k < 0.45:
-        return lerp(BX0, BX1, ease_in_out(k / 0.45)), 0.0
-    q = (k - 0.45) / 0.55
-    return lerp(BX1, BX0, ease_in_out(q)), math.sin(q * math.pi) * 3
+def stroke(t: float):
+    """→ (扫帚头 x, 抬起高度, 是否在推)"""
+    k = (t % P) / P
+    if k < 0.5:
+        return lerp(H0, H1, ease_in_out(k / 0.5)), 0, True
+    q = (k - 0.5) / 0.5
+    return lerp(H1, H0, ease_in_out(q)), math.sin(q * math.pi) * 3, False
+
+
+def leaf_fall(i: int, n: int, seed: int):
+    """第 n 轮第 i 片叶：(开始落的时刻（轮内秒）, 起点 x, 落地 x, 落多久)"""
+    t0 = i * FALL + rand(i + n * 100, seed) * FALL * 0.8
+    i = i + n * 100
+    x0 = 70 + rand(i, seed + 1) * 50
+    dur = 4.5 + rand(i, seed + 2) * 2.5
+    x1 = x0 - 6 - rand(i, seed + 3) * 34
+    return t0, x0, x1, dur
 
 
 @register
 class Sweep(Rest):
     id = "x5.sweep"
     name = "扫叶"
-    desc = "银杏树下扫落叶，叶子扫成堆又被风卷走——损之又损，以至于无为"
-    T = {"enter": 3.0, "exit": 1.3}
+    desc = "银杏树下扫落叶：竹扫帚一推一收，叶子扫成堆，一阵风又全卷走——损之又损，以至于无为"
+    T = {"enter": 3.0, "exit": 1.2}
 
     def setup(self):
-        self.s = self.rng.randrange(1000)
-        self._ht = 0.0
+        self.clock = Clock()
+        self.puffs = pix.Puffs(self.seed)
+        self.s = self.seed * 13 + 5
 
-    # ------------------------------------------------------------ 叶子（全是 t 的函数）
-
-    def _leaf(self, cyc: int, i: int):
-        """第 cyc 大轮第 i 片：(开始落的时刻, 落多久, 起点 x, 落点 x)"""
-        sd = self.s + cyc * 131
-        t0 = i * FALL_DT + rand(i, sd) * 1.8
-        dur = 4.5 + rand(i + 50, sd) * 2.5
-        x0 = 80 + rand(i + 100, sd) * 44
-        x1 = 52 + rand(i + 200, sd) * 46
-        return t0, dur, x0, x1
-
-    def _broom_at(self, k: float) -> tuple[float, float]:
-        if k >= SWEEP_END:
-            return BX0, 0.0
-        if self._paused(k):
-            return BX0, 0.0
-        return stroke((k % P) / P)
-
-    def _pause_win(self, cyc: int) -> tuple[float, float]:
-        """本大轮里叶子落头上的那段停顿（对齐到扫的周期）"""
-        n = 9 + int(rand(cyc, self.s + 7) * 8)
-        return n * P, n * P + 4 * P
-
-    def _paused(self, k: float, cyc: int | None = None) -> bool:
-        a, b = self._pause_win(self._cyc if cyc is None else cyc)
-        return a <= k < b
-
-    def leaves(self, g: Gfx, t: float, gust: float = -1.0) -> int:
-        """画所有叶子，返回已进堆的片数。gust ≥ 0：风起后的秒数"""
-        cyc, k = phase(t, C)
-        self._cyc = cyc
-        piled = 0
-        bx, lift = self._broom_at(k)
-        pushing = k < SWEEP_END and not self._paused(k) and (k % P) / P < 0.45
-        flying = []
-        for i in range(int(SWEEP_END / FALL_DT) + 1):
-            t0, dur, x0, x1 = self._leaf(cyc, i)
-            if t0 >= SWEEP_END - 2 or k < t0:
-                continue
-            u = (k - t0) / dur
-            if u < 1:  # 正在飘落
-                if gust >= 0:
-                    flying.append((x1, GY - 30 * (1 - u), i))
-                    continue
-                y = lerp(10 + rand(i, cyc) * 8, GY - 1, u)
-                x = lerp(x0, x1, u) + math.sin(k * 2.2 + i) * 4 * (1 - u)
-                g.blit(FALLING[int(k * 5 + i) % 4], x - 1, y - 1)
-                continue
-            # 已落地：在扫帚路线上的会被推进堆里
-            tl = t0 + dur
-            x = x1
-            if x1 <= BX1 + 1:
-                # 落地后第一个“推”经过它的时刻
-                n = math.ceil(tl / P)
-                while self._paused(n * P) and n * P < SWEEP_END:
-                    n += 1
-                ts = n * P
-                if ts < SWEEP_END and k >= ts:
-                    kk = (k - ts) / P
-                    if kk >= 0.45 or k >= ts + P:
-                        piled += 1
-                        continue
-                    hx, _ = stroke(kk)
-                    x = max(x1, hx + 2)
-                    if not pushing:
-                        piled += 1
-                        continue
-            else:
-                piled += 1
-                continue
-            if gust >= 0:
-                flying.append((x, GY - 1, i))
-            else:
-                g.px(x, GY - 1)
-                g.px(x + 1, GY - 1)
-                g.px(x + (i % 2), GY - 2)
-        self._flying = flying
-        return piled
-
-    def pile(self, g: Gfx, n: int, blow: float = 0.0):
-        """叶堆：n 片，blow 0..1 被风削掉"""
-        m = n * (1 - blow)
-        if m < 0.5:
-            return
-        w = 4 + m * 0.5
-        h = 1.5 + m * 0.3
-        cx = PILE + blow * 6
-        dome = [(cx + math.cos(a / 10 * math.pi) * w, GY - math.sin(a / 10 * math.pi) * h) for a in range(11)]
-        dpoly(g, dome, 0.3)
-        g.d.line((cx - w - 1, GY, cx + w + 1, GY), fill=1)
-        for j in range(int(m * 0.8)):  # 堆上露出一片片叶形
-            a = rand(j, self.s + 3)
-            x = cx - w * 0.8 + a * w * 1.6
-            top = GY - h * math.sqrt(max(0.0, 1 - ((x - cx) / w) ** 2))
-            g.blit(FALLING[j % 4], x - 1, top - 1 + rand(j + 9, self.s) * 2)
-
-    # ------------------------------------------------------------ 场景
+    # ------------------------------------------------ 背景
 
     def tree(self, g: Gfx, t: float, wind: float = 0.0):
-        d = g.d
-        d.polygon([(TRUNK_X - 7, GY), (TRUNK_X - 3, GY - 6), (TRUNK_X - 2, 14), (TRUNK_X + 3, 14), (TRUNK_X + 4, GY - 7),
-                   (TRUNK_X + 9, GY)], fill=0, outline=1)
-        for j, y in enumerate(range(20, GY - 4, 6)):  # 树皮
-            xx = TRUNK_X - 1 + (j % 3)
-            d.line((xx, y, xx + 1, y + 3), fill=1)
-        d.line((TRUNK_X - 2, 26, TRUNK_X - 14, 14), fill=1)   # 枝
-        d.line((TRUNK_X - 2, 27, TRUNK_X - 13, 15), fill=1)
-        d.line((TRUNK_X + 3, 22, TRUNK_X + 12, 12), fill=1)
-        # 树冠：底下一层淡淡的抖动，上面一片片扇形银杏叶，随风轻摆
-        dellipse(g, (TRUNK_X - 38, -6, TRUNK_X + 26, 18), 0.12, None)
-        dellipse(g, (TRUNK_X - 26, 2, TRUNK_X + 10, 22), 0.12, None)
-        for j in range(56):
-            a = rand(j, 77) * 2 * math.pi
-            rr = math.sqrt(rand(j + 300, 77))
-            x = TRUNK_X - 6 + math.cos(a) * rr * 30
-            y = 7 + math.sin(a) * rr * 9
-            if y < -1:
-                continue
-            sway = (noise(t * 0.8 + j * 0.3, 5) - 0.5) * 2 + wind * 3 * rr
-            g.blit(GINKGO, x + sway, y)
+        x = TRUNK
+        # 树干：根部外撇，树皮竖裂纹，一个树洞
+        g.d.polygon([(x - 4, FLOOR), (x + 11, FLOOR), (x + 8, FLOOR - 3), (x + 7, 12), (x + 2, 12), (x + 1, FLOOR - 3)],
+                    fill=1)
+        for xx, y0, y1 in ((x + 3, 16, 27), (x + 5, 30, 44), (x + 3, 40, 52), (x + 6, 18, 24)):
+            g.d.line((xx, y0, xx, y1), fill=0)
+        g.d.ellipse((x + 3, 31, x + 5, 35), fill=0)
+        g.d.line((x - 3, FLOOR - 1, x - 1, FLOOR - 1), fill=0)
+        g.d.line((x + 2, 17, x - 10, 9), fill=1, width=2)   # 伸向左边的枝
+        sway = int(round(math.sin(t * 0.9) * 0.6 + wind))
+        for cx, cy, rx, ry in ((96, 6, 13, 7), (113, 4, 15, 7), (123, 11, 7, 6), (104, 11, 9, 5)):
+            g.d.ellipse((cx - rx + sway, cy - ry, cx + rx + sway, cy + ry), fill=1)
+        for j in range(30):                              # 扇形叶纹（挖暗）
+            lx = 84 + int(rand(j, 3) * 44) + sway
+            ly = int(rand(j, 4) * 14)
+            g.px(lx, ly, 0), g.px(lx + 2, ly, 0), g.px(lx + 1, ly + 1, 0)
+        for j, lx in enumerate(range(85, 128, 4)):       # 树冠下沿垂着一把把扇叶
+            ly = 14 + int(rand(j, 6) * 3) - (2 if lx < 92 else 0)
+            g.d.line((lx + sway, ly, lx + 2 + sway, ly), fill=1)
+            g.px(lx + 1 + sway, ly + 1)
+            g.px(lx + 1 + sway, ly - 1, 0)
 
-    def flagstones(self, g: Gfx):
-        g.d.line((0, GY, 127, GY), fill=1)
-        for x in (8, 37, 66, 95, 124):
-            g.d.line((x, GY + 2, x, 63), fill=1)
-        g.d.line((0, 61, 127, 61), fill=0)
-        for x in range(0, 128, 2):
-            g.px(x, 63)
-
-    def figure(self, g: Gfx, k: float, t: float, bx: float, lift: float, look: float = 0.0, eye: str | None = None,
-               shake: float = 0.0, bob: float = 0.0, bow: float = 0.0):
-        """道士 + 扫帚：扫帚头在 (bx, GY-lift)"""
-        hx, hy = bx, GY - lift
-        # 扫帚柄方向：从帚头指向道士肩后上方
-        ang = math.atan2((GY - 30) - hy, (DX - 6) - hx)
-        L = 34
-        tx, ty = hx + math.cos(ang) * L, hy + math.sin(ang) * L
-        lean = 1.5 + (bx - BX0) / (BX1 - BX0) * 2 + bow
-        p_low = (lerp(hx, tx, 0.42), lerp(hy, ty, 0.42))
-        p_up = (lerp(hx, tx, 0.7), lerp(hy, ty, 0.7))
-        if eye is None:
-            eye = "closed" if (t % 4.3) < 0.15 else "open"
-        # 柄在身前：先画人（远手握上面）再画柄，最后近手压在柄上
-        daoshi(g, DX + shake, GY, 1, hands=[p_low, p_up], lean=lean, eye=eye, look=look, head_dy=bob)
-        g.d.line((hx, hy - 2, tx, ty), fill=1)
-        g.d.rectangle((p_low[0] - 1, p_low[1] - 1, p_low[0] + 1, p_low[1] + 1), fill=1)
-        # 帚头：一大把散开的竹枝（扇形），着地时往前拖
-        jx, jy = hx + math.cos(ang) * 10, hy + math.sin(ang) * 10
-        drag = 2 if lift == 0 else -1
-        fan = [(jx, jy), (hx + 7 + drag, hy), (hx - 6 + drag, hy)]
-        dpoly(g, fan, 0.35)
-        for j in range(5):
-            g.d.line((jx, jy, hx - 6 + drag + j * 3.2, hy), fill=1)
-        g.d.line((jx - 1, jy + 1, jx + 2, jy + 1), fill=1)
-
-    def text(self, g: Gfx, s: str, a: float = 1.0):
-        n = int(round(len(s) * clamp(a)))
-        g.d.rectangle((0, 0, 14, 63), fill=0)
-        g.vtext(2, 1, s[:n])
-
-    # ------------------------------------------------------------ 阶段
-
-    def draw(self, g: Gfx, t: float, pose_override=None):
-        cyc, k = phase(t, C)
-        self._cyc = cyc
-        gust = k - (SWEEP_END + 1.0) if k >= SWEEP_END + 1.0 else -1.0
-        wind = 0.0
-        if k >= SWEEP_END:
-            wind = span(k, SWEEP_END + 0.5, SWEEP_END + 1.5) * (1 - span(k, SWEEP_END + 5, SWEEP_END + 7))
-        self.flagstones(g)
+    def yard(self, g: Gfx, t: float, wind: float = 0.0):
+        g.d.line((19, FLOOR, 127, FLOOR), fill=1)
+        for x in range(19, 128, 14):  # 石板缝
+            g.d.line((x, FLOOR + 1, x - 3, 63), fill=1)
+        pix.checker(g, (19, FLOOR + 2, 128, 64), 0.125)
+        pix.blit(g, LANTERN, 22, FLOOR - 13)
+        if int(t * 1.3) % 5:  # 灯笼里一点烛光
+            g.px(26, FLOOR - 9)
         self.tree(g, t, wind)
-        piled = self.leaves(g, t, gust)
-        total_piled = piled
-        blow = 0.0
-        if gust >= 0:
-            blow = ease_in(span(gust, 0.0, 1.6))
-        self.pile(g, total_piled, blow)
-        # 风：几道风线 + 叶子被卷走
-        if k >= SWEEP_END + 0.5 and k < SWEEP_END + 7:
-            w = k - SWEEP_END - 0.5
-            for j in range(4):
-                y = 22 + j * 9
-                x0 = -30 + w * 70 - j * 14
-                if 16 < x0 < 140:
-                    g.d.line((x0, y, x0 + 16, y), fill=1)
-                    g.d.arc((x0 + 12, y - 4, x0 + 20, y + 4), 270, 90, fill=1)
-        if gust >= 0:
-            for j in range(int(total_piled * 0.9) + len(self._flying)):
-                if j < len(self._flying):
-                    sx, sy, sd = self._flying[j]
-                else:
-                    sx, sy, sd = PILE + (rand(j, self.s) - 0.5) * 12, GY - 2, j + 40
-                q = gust - rand(sd, self.s + 1) * 0.8
-                if q < 0:
-                    g.px(sx, sy)
+
+    # ------------------------------------------------ 叶子
+
+    def leaves(self, g: Gfx, t: float, k: float, n: int, hx: float, pushing: bool, gust: float | None):
+        """k = 本轮秒数。落叶确定性计算：落在扫帚路线上的被推进叶堆。返回叶堆里的片数"""
+        base = n * BIG
+        pile = 0
+        i0 = int(max(k - 8, 0) / FALL) - 1
+        imax = int(min(k, SWEEP) / FALL) + 1
+        drawn = 0
+        for i in range(0, imax):
+            t0, x0, x1, dur = leaf_fall(i, n, self.s)
+            if t0 > SWEEP or t0 > k:
+                continue
+            land = t0 + dur
+            if k < land:  # 还在空中：打着旋、左右摆
+                if gust is not None or i < i0:
                     continue
-                x = sx + q * (40 + rand(sd, 3) * 50) + q * q * 10
-                y = sy - math.sin(min(q * 1.6, math.pi)) * (14 + rand(sd, 4) * 22) - q * 4
-                if x < 130:
-                    g.blit(LEAVES[int(q * 8 + sd) % 4], x, y)
-        # 道士
-        if pose_override is not None:
-            pose_override()
-        else:
-            self.dao(g, t, k)
-        # 文字
-        if k >= SWEEP_END + 3.5 and k < C - 0.6:
-            self.text(g, "以至于无为", span(k, SWEEP_END + 3.5, SWEEP_END + 5.0))
-        else:
-            self.text(g, "损之又损")
-        self.mx(g, t, k, total_piled, blow)
+                q = (k - t0) / dur
+                x = lerp(x0, x1, q) + math.sin((k - t0) * 2.2 + i) * 4
+                y = lerp(14, FLOOR - 4, q)
+                pix.blit(g, pix.anim(LEAF, k - t0 + i * 0.3, 5), x - 2, y)
+                drawn += 1
+                continue
+            # 落地了：在扫帚路线上 → 下一推推进叶堆
+            if H0 - 2 <= x1 <= PILE + 6:
+                if x1 >= H1 - 1:
+                    pile += 1
+                    continue
+                # 落地后第一次“推”到它的时刻
+                c = math.floor((base + land) / P)
+                push_t = c * P if ((base + land) % P) / P < 0.5 else (c + 1) * P
+                reach = push_t + P * 0.5 * span(x1, H0, H1) - base
+                if k >= push_t + P * 0.5 - base:
+                    pile += 1
+                    continue
+                x = max(x1, hx + 6) if (k >= reach and pushing) else x1
+                if gust is None:
+                    pix.blit(g, GROUND_LEAF[i % 3], x - 1, FLOOR - 2, outline=False)
+            elif gust is None:
+                pix.blit(g, GROUND_LEAF[i % 3], x1 - 1, FLOOR - 2, outline=False)
+        return pile
 
-    def dao(self, g: Gfx, t: float, k: float):
-        if k >= SWEEP_END:  # 风来：停手、抬头看叶子飞走，然后眯眼笑
-            w = k - SWEEP_END
-            look = -1.5 * span(w, 1.0, 1.6) * (1 - span(w, 4.0, 4.6))
-            eye = "closed" if 4.2 < w < 9.5 else None
-            bob = 0.0
-            if 4.5 < w < 9.5:
-                bob = 0.5 * (math.sin(w * 7) > 0)  # 笑得一抖一抖
-            self.figure(g, k, t, BX0, 0, look=look, eye=eye, bob=bob)
-            if 4.4 < w < 6.0:
-                from .x5_common import note
-                note(g, DX + 8, 22 - (w - 4.4) * 4)
+    def pile(self, g: Gfx, n: int):
+        if n <= 0:
             return
-        a, b = self._pause_win(self._cyc)
-        if a <= k < b:  # 一片叶子落在发髻上：停下，晃晃脑袋
-            w = k - a
-            shake = math.sin(w * 30) * 1.2 if 4.2 < w < 5.0 else 0.0
-            look = -1.0 if w < 4.2 else 0.0
-            self.figure(g, k, t, BX0, 0, look=look, shake=shake)
-            hx, hy = DX + 1.5 + 0.8 + shake, GY - 21 - 4.8 - 4 - 3.2 - 1
-            if w < 2.0:  # 飘下来
-                q = ease_out(w / 2.0)
-                g.blit(FALLING[int(w * 6) % 4], lerp(hx + 14, hx, q) + math.sin(w * 5) * 3 * (1 - q), lerp(-4, hy - 1, q))
-            elif w < 4.6:
-                g.blit(FALLING[0], hx + (shake if w > 4.2 else 0), hy - 1)
-                if 2.0 < w < 3.2:  # 一愣
-                    g.d.line((hx + 8, hy - 6, hx + 8, hy - 3), fill=1)
-                    g.px(hx + 8, hy - 1)
-            elif w < 6.5:  # 甩掉
-                q = (w - 4.6) / 1.9
-                g.blit(LEAVES[int(w * 8) % 4], hx - q * 10, hy + ease_in(q) * (GY - hy - 1))
-            elif w < 8:
-                g.px(hx - 10, GY - 1)
-            return
-        bx, lift = stroke((k % P) / P)
-        self.figure(g, k, t, bx, lift)
+        h = min(2 + n // 2, 9)
+        w = 6 + h * 2
+        g.d.pieslice((PILE - w // 2, FLOOR - h, PILE + w // 2, FLOOR + h), 180, 360, fill=1)
+        for j in range(n):  # 叶堆上的扇叶纹
+            a = rand(j, 9) * math.pi
+            r = rand(j, 10) * (h - 1)
+            px = PILE + math.cos(a) * r * w / (2 * h)
+            py = FLOOR - math.sin(a) * r
+            g.px(px, py - 1, 0), g.px(px + 2, py - 1, 0), g.px(px + 1, py, 0)
+        g.d.line((PILE - w // 2, FLOOR, PILE + w // 2, FLOOR), fill=1)
 
-    def mx(self, g: Gfx, t: float, k: float, piled: int, blow: float):
-        # 一片银杏叶从上往下飘，底下是叶堆
-        h = int(round(clamp(piled / 20) * 3 * (1 - blow)))
-        for r in range(h):
-            w = 2 + r * 2 if r < 2 else 6
+    # ------------------------------------------------ 主循环
+
+    def frame(self, g: Gfx, t: float, text_k: float = 1.0):
+        dt = self.clock.tick(t)
+        n, k = cyc(t, BIG)
+        gust = (k - SWEEP) if k >= SWEEP else None
+        wind = 0.0
+        if gust is not None:
+            wind = math.sin(span(gust, 0, 6) * math.pi) * 3
+        self.yard(g, t, wind)
+        hx, lift, pushing = stroke(t)
+        if gust is not None and gust < 8:  # 起风：停手
+            hx, lift, pushing = H0 + 4, 0, False
+        p = self.leaves(g, t, k, n, hx, pushing, gust)
+        if gust is not None:
+            self.blow(g, gust, p)
+        else:
+            self.pile(g, p)
+        # 小道士与扫帚
+        egg = event(t, 37.0, 5.0, self.s + 2) if gust is None else None
+        shake = 0
+        face = "normal"
+        if egg and 2.6 < egg[1] < 3.6:
+            shake = 1 if int(egg[1] * 14) % 2 else -1
+            face = "sleep"
+        hand2 = None
+        bx, by = hx, FLOOR - 1 - lift
+        hand = (bx - 9, FLOOR - 13 - lift * 0.5)
+        hand2 = (hand[0] - 4, hand[1] - 5)
+        guard = gust is not None and 0.5 < gust < 7.5
+        if guard:  # 抬袖挡风
+            hand = (DX + 8, FLOOR - 27)
+            hand2 = None
+            face = "sleep"
+            bx, by = DX + 13, FLOOR - 1
+        if gust is not None and gust >= 7.5:
+            face = "happy" if gust < 11 else "normal"
+
+        def broom(gg, h1, h2):
+            top = (h2 if h2 else (DX + 4, FLOOR - 30))
+            if guard:
+                top = (DX + 8, FLOOR - 28)
+            # 竹竿：两像素宽，每隔几格一个竹节（竿子画在身后，上半截被身子挡住）
+            gg.d.line((top[0] - 6, top[1] - 8, bx, by - 5), fill=1, width=2)
+            for j in range(1, 4):
+                qx, qy = lerp(top[0], bx, j / 4), lerp(top[1], by - 5, j / 4)
+                gg.px(qx, qy, 0)
+            fr = BROOM[0] if pushing and not guard else BROOM[1]
+            pix.blit(gg, fr, bx - 6, by - 6)
+
+        worker(g, DX + shake, FLOOR, t, hand=hand, hand2=hand2, back_tool=broom, face=face, fist=not guard)
+        if gust is None and self.clock.crossed(t, (t - t % P) + P * 0.48):
+            self.puffs.emit(H1 + 3, FLOOR - 2, vx=6, vy=-2, life=0.5, rmax=1.4, spread=2)
+        self.puffs.step(dt)
+        self.puffs.draw(g)
+        if egg:
+            self.head_leaf(g, egg[1], shake)
+        if gust is not None and gust < 8:
+            for j in range(7):  # 风：一道道点线往右刮
+                y = 16 + j * 6 + (j % 2) * 2
+                x = (gust * 90 + j * 37) % 150 - 20
+                pix.dotted(g, x, y, x + 14, y, step=2, phase=j)
+        gk = event(t, 53.0, 6.0, self.s + 5)
+        if gk and gust is None:  # 石灯笼里爬出一只壁虎，爬上去又溜走
+            q = gk[1]
+            y = FLOOR - 6 - q * 6 if q < 3 else FLOOR - 24 + (q - 3) * 0
+            x = 27 + (0 if q < 3 else (q - 3) * 12)
+            if q < 4.5:
+                pix.blit(g, pix.anim(GECKO, q, 6), x, y)
+        self.matrix(g, t, k, p, gust)
+        txt = "以至于无为" if gust is not None and gust > 6.5 else "损之又损"
+        scroll(g, TEXT_X, txt, y=3 if len(txt) == 4 else 2, k=text_k, side="left")
+
+    def head_leaf(self, g: Gfx, q: float, shake: int):
+        top = (DX + 1, FLOOR - 36)
+        if q < 1.4:
+            x = lerp(DX + 20, top[0], ease_out(q / 1.4)) + math.sin(q * 5) * 3
+            y = lerp(8, top[1], q / 1.4)
+            pix.blit(g, pix.anim(LEAF, q, 5), x - 2, y)
+        elif q < 2.6:
+            pix.blit(g, LEAF[0], top[0] - 2, top[1] - 2)
+            if q > 1.6:
+                mark(g, BANG, DX + 10, FLOOR - 44 - (1 if q < 1.75 else 0))
+        elif q < 3.6:
+            pix.blit(g, LEAF[0], top[0] - 2 + shake * 2, top[1] - 2)
+        elif q < 5.0:
+            qq = (q - 3.6) / 1.4
+            pix.blit(g, pix.anim(LEAF, q, 6), top[0] + 6 + qq * 10, lerp(top[1], FLOOR - 4, ease_out(qq)))
+
+    def blow(self, g: Gfx, gust: float, n: int):
+        """整堆叶子被风卷起来，打着旋飞出右上方"""
+        left = n
+        for j in range(max(n, 6)):
+            d = j * 0.18
+            q = gust - 0.6 - d
+            if q < 0:
+                continue
+            left -= 1
+            x = PILE - 4 + rand(j, 1) * 8 + q * (38 + rand(j, 2) * 20)
+            y = FLOOR - 3 - q * (14 + rand(j, 3) * 10) + math.sin(q * 6 + j) * 4
+            if x < 132 and y > -6:
+                pix.blit(g, pix.anim(LEAF, q + j * 0.2, 9), x, y)
+        self.pile(g, max(left, 0) if gust < 4 else 0)
+
+    def matrix(self, g: Gfx, t: float, k: float, p: int, gust):
+        """点阵：一片银杏叶左右摇着落下，落到底部的叶堆上（叶堆随片数变高）；起风时一行行横扫"""
+        if gust is not None and gust < 8:
+            for y in range(8):
+                x0 = int(gust * 12 + y * 3) % 12 - 2
+                for x in range(x0, x0 + 3):
+                    g.mx_set(x, y)
+            return
+        h = min(1 + p // 6, 3)
+        for y in range(8 - h, 8):
+            w = 2 + (y - (8 - h)) * 2
             for x in range(4 - w // 2, 4 + w // 2):
-                g.mx[7 - r, x] = True
-        if h == 0:
-            g.mx[7, 2:6] = True
-        q = (t % 3.0) / 3.0
-        y = int(q * (7 - max(h, 1)))
-        x = int(3 + math.sin(t * 2.6) * 2.4)
-        g.mx_set(x, y)
-        g.mx_set(x + 1, y)
-        g.mx_set(x, y - 1 if int(t * 3) % 2 else y + 1)
-        if k >= SWEEP_END + 1 and k < SWEEP_END + 3:  # 风：一行行横扫
-            r = int((k - SWEEP_END - 1) * 8) % 8
-            g.mx[r, :] = True
+                g.mx_set(x, y)
+        q = (t % 4.0) / 4.0
+        lx = 3 + int(round(math.sin(t * 2.5) * 2))
+        ly = int(q * (8 - h))
+        if ly < 8 - h:
+            g.mx_set(lx - 1, ly), g.mx_set(lx + 1, ly), g.mx_set(lx, ly), g.mx_set(lx, ly + 1)
 
     def enter(self, g: Gfx, t: float):
-        T = self.T["enter"]
-        if t >= T - 0.8:
-            # 放下扫帚，过渡到 hold(0)
-            q = ease_out(span(t, T - 0.8, T))
+        """扛着扫帚从左边走进来，放下扫帚，题字逐字写出"""
+        dt = self.clock.tick(t)
+        self.yard(g, t)
+        x = lerp(10, DX, ease_out(span(t, 0, 2.0)))
+        if t < 2.0:
+            def broom(gg, h1, h2):
+                gg.d.line((h1[0] + 6, h1[1] - 10, h1[0] - 12, h1[1] + 6), fill=1, width=2)
+                pix.blit(gg, BROOM_UP, h1[0] + 3, h1[1] - 18)
+            worker(g, x, FLOOR, t, hand=(x + 7, FLOOR - 24), legs="walk", tool=broom, fist=True)
+        else:
+            q = ease_in_out(span(t, 2.0, 2.8))
+            bx = lerp(DX + 6, H0, q)
+            by = FLOOR - 1 - (1 - q) * 14
+            hand = (lerp(DX + 7, bx - 9, q), lerp(FLOOR - 24, FLOOR - 13, q))
 
-            def pose():
-                ht = lerp(14, 0, q)
-                self.figure(g, 0, t, lerp(DX + 4, BX0, q), ht)
-            self.draw_static(g, t, pose)
-            self.text(g, "损之又损", span(t, 1.6, T - 0.6))
-            return
-
-        def pose():
-            # 扛着扫帚走进来
-            p = ease_out(span(t, 0, T - 0.8))
-            x = lerp(-14, DX, p)
-            stp = t * 9 if p < 0.98 else None
-            hand = (x + 5, GY - 17)
-            pz = daoshi(g, x, GY, 1, hands=[hand, (x + 2, GY - 20)], step=stp, lean=1)
-            # 扫帚扛在肩上，帚头在身后
-            g.d.line((x + 9, GY - 23, x - 16, GY - 13), fill=1)
-            for j in range(6):
-                g.d.line((x - 16, GY - 13, x - 24, GY - 15 + j * 1.6), fill=1)
-            g.d.rectangle((hand[0] - 1, hand[1] - 1, hand[0] + 1, hand[1] + 1), fill=1)
-        self.draw_static(g, t, pose)
-        self.text(g, "损之又损", span(t, 1.6, T - 0.6))
-
-    def draw_static(self, g: Gfx, t: float, pose):
-        """入场：树和地先在，叶子开始落（hold 从 t=0 接上）"""
-        self.flagstones(g)
-        self.tree(g, t)
-        self.pile(g, 0)
-        pose()
-        self.mx(g, t, 0, 0, 0)
+            def broom(gg, h1, h2):
+                top = (h1[0] - 4, h1[1] - 5)
+                gg.d.line((top[0] - 6, top[1] - 8, bx, by - 5), fill=1, width=2)
+                pix.blit(gg, BROOM[1], bx - 6, by - 6)
+            worker(g, DX, FLOOR, t, hand=hand, hand2=(hand[0] - 4, hand[1] - 5), back_tool=broom, fist=True)
+        self.matrix(g, t, 0, 0, None)
+        scroll(g, TEXT_X, "损之又损", k=span(t, 0.4, 2.6), side="left")
 
     def hold(self, g: Gfx, t: float):
-        self._ht = t
-        self.draw(g, t)
+        self.frame(g, t)
 
     def exit(self, g: Gfx, t: float):
-        T = self.T["exit"]
-        k0 = self._ht % C
-        bx, lift = self._broom_at(k0)
-        q = ease_in_out(span(t, 0, 0.5))
-
-        def pose():  # 扫帚停下，躬身一礼
-            self.figure(g, k0, self._ht, lerp(bx, BX0, q), lerp(lift, 0, q), eye="closed" if t > 0.3 else None,
-                        bob=1.0 * ease_out(span(t, 0.3, 0.7)), bow=2.5 * ease_out(span(t, 0.3, 0.7)))
-        self.draw(g, self._ht, pose)
-        fade_box(g, 1 - ease_in(span(t, 0.4, T)))
-        if t > 0.5:
-            g.mx[:] = False
-            g.mx[7, 2:6] = True
+        self.frame(g, self.hold_t + t)
+        fade_out(g, span(t, 0.1, self.T["exit"]))

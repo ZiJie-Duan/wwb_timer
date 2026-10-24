@@ -1,24 +1,26 @@
-"""读经：竹简从右往左展开，一枚一枚读下去；蠹鱼偷吃字，吃够三回化为“脉望”。
+"""读经：竹简（两道编绳、无标点、分章圆点）。经文：《道德经》第一、六（谷神不死）、八、十六章与第二十五章末句，
+《庄子·逍遥游》藐姑射神人一段。彩蛋：段成式《酉阳杂俎》“蠹鱼三食神仙字，则化为此物，名曰脉望。
+夜以规映当天中星，星使立降，可求还丹”（为了好玩简化成：吃满三回就化）。
 
-经文按竹简原貌不加标点，依次是《道德经》第一、六、八、十六、二十五章（节选）与《庄子·逍遥游》藐姑射神人一段。
-彩蛋出自段成式《酉阳杂俎》：“蠹鱼三食神仙字，则化为此物，名曰脉望。夜以规映当天中星，星使立降，可求还丹。”
-
-入场：左边的简卷从右往左滚过来，竹简一枚枚摊开。
-持续：竹简缓缓向右移（读过的卷进右边的简卷，左边的卷继续放出新简），正读到的那个字反白，
-      从上往下、从右往左一字一字读。两卷随之转动。
-      每 50 秒一条蠹鱼从简下爬上来啃掉一个字（留下一个缺口）再爬走；每第三回它卷成一个发光的圆环——
-      脉望，向上飘去，天上一颗星一闪。
-退场：左卷滚回来，把竹简重新卷起。
+夜读：左上一扇小窗见星，脚边一盏油灯。小道士盘坐，一手扶着左边的简卷，面前竖着展开一册竹简
+（一枚枚竹简、竹节纹、上下两道编绳）。正在读的那枚简上，字一个个反白（从上往下），他一边读一边点头、张嘴；
+读完一枚，竹简往右挪一格，读过的卷进右卷，左卷（他手里那卷）转一下放出新简。近处两枚看得清字，远处的简只见墨痕。
+入场：竹简从左卷里“哗”地一枚枚摊开，灯点亮。
+持续：每 3.6 秒读完一枚简。每 50 秒一条蠹鱼从简底爬上来，把一个字啃出个缺口，再爬下去；
+      每第三回它卷成一个发光的圆环“脉望”飘出窗去，天上一颗星闪下来（小道士看呆了）。
+退场：竹简卷回左卷，收圆。
+点阵：竖简往右滑，读到的字是一个往下走的亮点；化脉望时是一个发亮的圆环。
 """
 from __future__ import annotations
 
 import math
 
-from ..engine.anim import blink, clamp, ease_in, ease_in_out, ease_out, lerp, noise, rand, span
-from ..engine.fx import ring
+from ..engine import pix
+from ..engine.anim import ease_in_out, ease_out, ease_out_back, lerp, rand, span
+from ..engine.chars import Part, figure
 from ..engine.gfx import Gfx, Sprite
 from ..engine.scene import Rest, register
-from .x2_common import win
+from .x2_common import Clock, iris, label, put_arm, win
 
 TEXT = ("道可道非常道名可名非常名无名天地之始有名万物之母故常无欲以观其妙常有欲以观其徼此两者同出而异名同谓之玄玄之又玄众妙之门"
         "〇谷神不死是谓玄牝玄牝之门是谓天地根绵绵若存用之不勤"
@@ -27,237 +29,311 @@ TEXT = ("道可道非常道名可名非常名无名天地之始有名万物之�
         "〇人法地地法天天法道道法自然"
         "〇藐姑射之山有神人居焉肌肤若冰雪淖约若处子不食五谷吸风饮露乘云气御飞龙而游乎四海之外"
         "〇")
-ROWS = 4
-PITCH = 13
-SEC = 4.0                 # 读一枚简的秒数
-ROW_Y = [10, 22, 34, 46]
-LROLL, RROLL = 9, 119     # 两卷的中心 x
-READ_X = 64               # 读到的位置
-EV_P = 50.0
+TEXT = TEXT + "  " * 0
+NS = (len(TEXT) + 2) // 3          # 简的枚数（一枚三字）
+FLOOR = 58
+DX = 18                            # 小道士（盘坐，朝右）
+ROLL_L = 33                        # 左卷
+X0 = 40                            # 正在读的那枚简的左边
+PITCH = 15
+TOP, BOT = 11, 53                  # 简的上下
+ROW_Y = (14, 27, 40)               # 三个字的顶
+CORDS = (26, 39)
+SLIP = 3.6                         # 读一枚简的秒数
+SLIDE = 0.5
+WORM = 50.0
 
-WORM = Sprite("""
-.#...#.
-..#.#..
-.#####.
-#.#.#.#
-.#####.
-#.#.#.#
-.#####.
-#.#.#.#
-..###..
-..#.#..
-.#.#.#.
-#..#..#
+
+def slip_chars(j: int) -> str:
+    j %= NS
+    return TEXT[j * 3:j * 3 + 3]
+
+
+def _scribble(seed: int) -> Sprite:
+    """远处简上的墨痕：一个字大小里几笔短划"""
+    p = Part(10, 10)
+    for i in range(4):
+        x0 = 1 + int(rand(i, seed) * 6)
+        y0 = 1 + int(rand(i + 9, seed) * 7)
+        if rand(i + 3, seed) < 0.5:
+            p.shape("line", (x0, y0, x0 + 2 + int(rand(i + 5, seed) * 3), y0), fill=1)
+        else:
+            p.shape("line", (x0, y0, x0, y0 + 2 + int(rand(i + 7, seed) * 3)), fill=1)
+    return p.sprite()
+
+
+SCRIB = [_scribble(i) for i in range(12)]
+
+WORM_SPR = pix.frames("""
+#   #
+ #.#
+.###.
+ ###
+.###.
+ ###
+ # #
+#   #
+---
+ # #
+ #.#
+#.###
+ ###
+.###.#
+ ###
+ # #
+  #
 """)
-WORM_DN = WORM.flipv()
 
 
-def roll(g: Gfx, cx: float, ang: float, r: float = 8.0):
-    """简卷：竖着的一卷（俯视成椭圆端面 + 螺旋）"""
-    g.d.rectangle((cx - r, 2, cx + r, 62), fill=0)
-    g.d.line((cx - r, 2, cx - r, 62), fill=1)
-    g.d.line((cx + r, 2, cx + r, 62), fill=1)
-    for y in (6, 59):  # 编绳勒出的两道
-        g.d.line((cx - r, y, cx + r, y), fill=1)
-    for k in range(1, 4):  # 卷身上的竹简缝，随转动移动
-        x = cx - r + ((k * 2 * r / 4 + ang * 6) % (2 * r))
-        g.d.line((x, 8, x, 57), fill=1)
-    g.d.ellipse((cx - r, 0, cx + r, 4), fill=0, outline=1)
-    g.d.arc((cx - r + 3, 1, cx + r - 3, 3), 0, 360, fill=1)
+def _lamp():
+    """油灯 7×9：灯盏、灯柱、底座"""
+    p = Part(7, 9)
+    p.shape("polygon", [(0, 0), (6, 0), (5, 2), (1, 2)], fill=1)
+    p.d.line((1, 1, 5, 1), fill=0)
+    p.shape("rectangle", (3, 3, 3, 6), fill=1)
+    p.shape("rectangle", (1, 7, 5, 8), fill=1)
+    p.px(2, 7, 0)
+    return p.sprite()
 
 
-def mx_slips(g: Gfx, s: float, row: int):
-    """点阵：三根竖简向右滑，当前字的位置亮点下移"""
-    off = int((s % 1) * 3)
-    for c in range(8):
-        if (c - off) % 3 == 0:
-            g.mx[1:7, c] = True
-    c = 4
-    g.mx[:, 3] = False
-    g.mx[:, 5] = False
-    g.mx[1:7, c] = True
-    g.mx_set(c, 1 + row * 2 if row < 3 else 7, False)
-    g.mx[0, :] = True
-    g.mx[7, :] = True
+LAMP = _lamp()
+FLAME = pix.frames("""
+ #
+###
+ #
+---
+#
+##
+###
+ #
+---
+  #
+ ##
+###
+ #
+""")
 
 
 @register
 class Slips(Rest):
     id = "x2.slips"
     name = "读经"
-    desc = "竹简展开，一字一字读《道德经》《庄子》；蠹鱼啃字，三食神仙字化为脉望飘去"
-    T = {"enter": 2.8, "exit": 1.3}
+    desc = "夜读竹简：小道士扶着简卷一字一字读《道德经》《庄子》，读完一枚简往右卷一格；蠹鱼啃字，三食神仙字化为脉望飘去"
+    T = {"enter": 3.0, "exit": 1.3}
 
     def setup(self):
         self.ht = 0.0
-        self.base = self.rng.choice([0, 15, 21, 27, 36])  # 从哪一章读起（简号）
+        self.j0 = self.rng.randrange(NS)
+        self.clock = Clock()
+        self.sparks = pix.Sparks(self.seed)
 
     # ------------------------------------------------------------ 简
 
-    def S(self, t: float) -> float:
-        """已读过的简数（连续）"""
-        return self.base + t / SEC
-
-    def slip_x(self, i: int, S: float) -> float:
-        """第 i 枚简的左边 x：S 增大时简向右移，正读的简在 READ_X"""
-        return READ_X - 6 + (S - i) * PITCH
-
-    def char(self, i: int, r: int) -> str:
-        return TEXT[(i * ROWS + r) % len(TEXT)]
-
-    def slips(self, g: Gfx, S: float, lo: float = LROLL + 8, hi: float = RROLL - 8, holes=(), read=True):
-        i0 = int(S - (hi - READ_X + 6) / PITCH) - 1
-        i1 = int(S + (READ_X - 6 - lo) / PITCH) + 2
-        cur = int(math.floor(S))
-        row = int((S - cur) * ROWS)
-        for i in range(i0, i1 + 1):
-            x = self.slip_x(i, S)
-            if x + 12 < lo or x > hi:
+    def slips(self, g: Gfx, t: float, open_k: float = 1.0):
+        """→ (正在读的简号, 读到第几个字 0..2, 滑动量 0..1)"""
+        cur = int(t // SLIP)
+        k = t % SLIP
+        slide = ease_in_out(span(k, SLIP - SLIDE, SLIP))
+        row = min(2, int(k / ((SLIP - SLIDE) / 3)))
+        right = 122
+        n_vis = int(6 * open_k) + 1
+        # 背后：竹简底色区
+        for p in range(-1, n_vis):
+            x = X0 + (p + slide) * PITCH
+            if x > right - 2 or x < ROLL_L + 2:
                 continue
-            xr = round(x)
-            g.d.line((xr, 2, xr + 11, 2), fill=1)
-            g.d.line((xr, 62, xr + 11, 62), fill=1)
-            for y in range(3, 62, 3):  # 竹简边（虚线，像竹纹）
-                g.px(xr + 12, y)
-            for r in range(ROWS):
-                ch = self.char(i, r)
-                if (i, r) in holes:
-                    k = holes[(i, r)]
-                    if k >= 1:
-                        g.d.ellipse((xr + 3, ROW_Y[r] + 2, xr + 9, ROW_Y[r] + 8), outline=1)  # 啃出的缺口
-                        continue
-                if ch == "〇":  # 章末：一个圆点（简上的分章符）
-                    g.d.ellipse((xr + 3, ROW_Y[r] + 3, xr + 8, ROW_Y[r] + 8), fill=1)
+            j = cur - p
+            w = min(PITCH - 2, right - 2 - x)
+            g.d.rectangle((x, TOP, x + w, BOT), outline=1, fill=0)
+            g.px(x + 3, TOP + 1), g.px(x + w - 3, BOT - 1)        # 竹节纹
+            near = p in (0, 1) or (p == -1)
+            for r, y in enumerate(ROW_Y):
+                ch = slip_chars(self.j0 + j)[r:r + 1]
+                if not ch:
                     continue
-                g.text(xr + 1, ROW_Y[r], ch)
-                if (i, r) in holes:  # 正在被啃：一点点缺
-                    k = holes[(i, r)]
-                    for j in range(int(k * 14)):
-                        g.d.rectangle((xr + 2 + rand(j, 3) * 8, ROW_Y[r] + rand(j, 4) * 9,
-                                       xr + 4 + rand(j, 3) * 8, ROW_Y[r] + 2 + rand(j, 4) * 9), fill=0)
-                if read and i == cur and r == row:
-                    g.invert((xr, ROW_Y[r] - 1, xr + 12, ROW_Y[r] + 11))
-        # 编绳：两道横贯
-        for y in (6, 59):
-            g.d.line((lo, y, hi, y), fill=1)
-            g.d.line((lo, y + 1, hi, y + 1), fill=0)
-        # 左右压一点阴影：卷边
-        g.d.rectangle((0, 0, lo - 1, 63), fill=0)
-        g.d.rectangle((hi + 1, 0, 127, 63), fill=0)
-        return row
+                if ch == "〇":                                    # 分章圆点
+                    g.d.ellipse((x + 4, y + 3, x + 8, y + 7), fill=1)
+                    continue
+                if self.bitten(j, r, t):
+                    continue
+                if near and w >= 12:
+                    continue                                      # 近处的字最后再写
+                spr = SCRIB[(j * 3 + r) % len(SCRIB)]
+                pix.blit(g, spr, x + 2, y + 1, outline=False)
+        for y in CORDS:                                           # 编绳（扭成一节一节）
+            g.d.line((ROLL_L + 3, y, right, y), fill=1)
+            for x in range(ROLL_L + 4, right, 3):
+                g.px(x, y, 0)
+        return cur, row, slide
 
-    # ------------------------------------------------------------ 蠹鱼
-
-    def worm_event(self, t: float):
-        """→ (k, n, 目标简, 目标行)；不在事件中 k 为 None"""
-        k, n = win(t, EV_P, 11.0, offset=14.0)
-        if n < 0:
-            return None, n, 0, 0
-        t0 = 14.0 + n * EV_P
-        S0 = self.S(t0)
-        i = int(S0) + 3  # 事件开始时左边第三枚简（够时间留在画面里）
-        r = 1 + int(rand(n, self.seed) * 3)
-        return k, n, i, r
-
-    def holes(self, t: float):
-        """被啃掉的字：{(简, 行): 进度}（最近两次事件）"""
-        out = {}
-        _, n, _, _ = self.worm_event(t)
+    def bitten(self, j: int, r: int, t: float) -> bool:
+        """被蠹鱼啃掉的字（啃完以后就一直缺着，直到卷走）"""
+        n = int((t - 20.0) // WORM)
         for m in range(max(0, n - 1), n + 1):
-            t0 = 14.0 + m * EV_P
-            if t < t0:
-                continue
-            S0 = self.S(t0)
-            i = int(S0) + 3
-            r = 1 + int(rand(m, self.seed) * 3)
-            out[(i, r)] = clamp((t - t0 - 4.0) / 3.0)
-        return out
+            jj, rr = self.worm_target(m)
+            if jj == j and rr == r and t >= 20.0 + m * WORM + 4.5:
+                return True
+        return False
 
-    def worm(self, g: Gfx, t: float, S: float):
-        k, n, i, r = self.worm_event(t)
-        if k is None:
-            return None
-        x = self.slip_x(i, S) + 4
-        ty = ROW_Y[r] + 11
-        mai = n % 3 == 2  # 第三回：化为脉望
+    def worm_target(self, m: int):
+        """第 m 回蠹鱼啃的是哪枚简的哪个字：啃刚读过的第二枚（p=2）"""
+        t0 = 20.0 + m * WORM
+        cur = int(t0 // SLIP)
+        return cur - 2, int(rand(m, self.seed) * 3)
 
-        def bug(spr, bx, by):
-            g.d.rectangle((bx - 1, by - 1, bx + spr.w, by + spr.h), fill=0)
-            g.blit(spr, bx, by)
+    def rolls(self, g: Gfx, t: float, spin: float, right_x: float = 122):
+        """两头的简卷：一捆竖着卷起的竹简，顶上看得见一圈圈卷纹，侧面是一根根简的边，转起来纹路移动"""
+        for x, w in ((ROLL_L - 5, 8), (right_x, 7)):
+            g.d.rectangle((x, TOP, x + w, BOT), fill=1)
+            for i in range(3):                                   # 简边（随转动移动）
+                xx = x + 1 + int((i * 3 + spin * 6) % (w - 1))
+                g.d.line((xx, TOP + 2, xx, BOT - 1), fill=0)
+            g.d.line((x + w, TOP + 1, x + w, BOT), fill=0)
+            for y in CORDS:                                      # 编绳绕过卷
+                g.d.line((x, y, x + w, y), fill=0)
+                g.d.line((x, y + 1, x + w, y + 1), fill=1)
+            cx = x + w / 2                                       # 顶端：卷纹（一圈圈）
+            g.d.ellipse((x - 1, TOP - 3, x + w + 1, TOP + 2), fill=1)
+            g.d.ellipse((cx - 3, TOP - 2, cx + 3, TOP + 1), outline=0)
+            g.px(cx, TOP - 1, 0)
+            g.d.ellipse((x - 1, BOT - 2, x + w + 1, BOT + 2), fill=1)
+            g.d.line((x + 1, BOT + 1, x + w - 1, BOT + 1), fill=0)
 
-        if k < 4.0:  # 从简下爬上来
-            y = lerp(66, ty, ease_out(k / 4.0))
-            wig = int(k * 6) % 2
-            bug(WORM, x + wig - 1, y)
-            return "crawl"
-        if k < 7.0:  # 啃
-            y = ty - 1 + (1 if int(k * 8) % 2 else 0)
-            bug(WORM, x - 1, y)
-            for j in range(3):  # 碎屑
-                g.px(x + rand(int(k * 5) + j, 9) * 6 - 1, y + 4 + rand(int(k * 5) + j, 8) * 4)
-            return "eat"
-        p = (k - 7.0) / 4.0
-        if not mai:  # 吃饱了，慢慢爬走
-            bug(WORM_DN, x - 1, lerp(ty, 66, ease_in(p)))
-            return "crawl"
-        # 脉望：卷成发光的圆环，向上飘去，天中一星一闪
-        cy = lerp(ty + 2, -10, ease_in(span(p, 0.3, 1.0)))
-        rr = lerp(2, 6, ease_out(span(p, 0, 0.3)))
-        g.d.ellipse((x + 1 - rr - 1, cy - rr - 1, x + 1 + rr + 1, cy + rr + 1), fill=0)
-        g.d.ellipse((x + 1 - rr, cy - rr, x + 1 + rr, cy + rr), outline=1)
-        ring(g, x + 1, cy, rr + 3 + math.sin(t * 9), density=3, phase=t * 3)
-        if p > 0.15:
-            g.d.rectangle((x + 10, cy - 7, x + 34, cy + 6), fill=0)
-            g.text(x + 11, cy - 6, "脉望")
-        if p > 0.75:  # 星使立降
-            sx, sy = x + 30, 4
-            ln = 3 + 3 * math.sin((p - 0.75) * 12)
-            g.d.line((sx - ln, sy, sx + ln, sy), fill=1)
-            g.d.line((sx, sy - ln, sx, sy + ln), fill=1)
-        return "mai"
+    def near_text(self, g: Gfx, t: float, cur: int, row: int, slide: float):
+        """正在读的简与刚读过的那枚：真字；正在读的字反白"""
+        for p in (0, 1):
+            x = X0 + (p + slide) * PITCH
+            j = cur - p
+            chars = slip_chars(self.j0 + j)
+            for r, y in enumerate(ROW_Y):
+                ch = chars[r:r + 1]
+                if not ch or ch == "〇" or ch == " " or self.bitten(j, r, t):
+                    continue
+                if p == 0 and r == row and slide == 0:
+                    g.d.rectangle((x + 1, y - 1, x + 12, y + 11), fill=1)
+                    g.text(x + 1, y, ch, fill=0)
+                else:
+                    g.text(x + 1, y, ch)
 
-    # ------------------------------------------------------------ 阶段
+    # ------------------------------------------------------------ 一帧
 
-    def frame(self, g: Gfx, t: float, lo: float = LROLL + 8, read: bool = True):
-        S = self.S(t)
-        row = self.slips(g, S, lo=lo, holes=self.holes(t), read=read)
-        roll(g, lo - 8, -S)
-        roll(g, RROLL, -S)
-        st = self.worm(g, t, S)
-        mx_slips(g, S, row)
-        if st == "mai":
-            g.mx[:] = False
+    def scene(self, g: Gfx, t: float, enter: float = 1.0, close: float = 0.0):
+        dt = self.clock.dt(t)
+        on = enter >= 1
+        e3 = enter * self.T["enter"]
+        # 窗与星
+        g.d.rectangle((2, 2, 24, 18), outline=1)
+        g.d.line((13, 2, 13, 18), fill=1), g.d.line((2, 10, 24, 10), fill=1)
+        for i, (sx, sy) in enumerate(((6, 5), (19, 7), (9, 14), (21, 15))):
+            if (t * 0.7 + i * 0.4) % 3 > 0.3:
+                g.px(sx, sy)
+        g.d.line((0, FLOOR, 127, FLOOR), fill=1)
+        for x in range(-40, 168, 10):
+            g.d.line((x, FLOOR + 1, x - 6, 63), fill=1)
+        pix.checker(g, (0, FLOOR + 2, 128, 64), 0.25)
+        # 灯
+        pix.blit(g, LAMP, 2, FLOOR - 9)
+        if on or e3 > 2.4:
+            pix.blit(g, pix.anim(FLAME, t, 5), 4, FLOOR - 13, outline=False)
+        # 简
+        open_k = 1.0 if on else span(e3, 0.4, 2.2)
+        open_k *= 1 - close
+        tt = t if on else 0.0
+        cur, row, slide = self.slips(g, tt, open_k)
+        right = lerp(ROLL_L + 4, 122, open_k)
+        self.rolls(g, tt, slide + (1 - open_k) * 3, right)
+        if open_k < 1:   # 卷起 / 展开时把右卷外面的简盖掉
+            g.d.rectangle((right + 7, TOP - 3, 127, BOT + 3), fill=0)
+        # 案
+        g.d.rectangle((ROLL_L - 6, BOT + 2, 126, BOT + 3), fill=1)
+        g.d.line((ROLL_L - 5, BOT + 3, 125, BOT + 3), fill=0)
+        for x in (ROLL_L - 4, 122):
+            g.d.rectangle((x, BOT + 4, x + 1, FLOOR - 1), fill=1)
+        # 蠹鱼
+        wk, wn = win(t, WORM, 10.0, 20.0) if on else (None, -1)
+        ring = None
+        if wk is not None and open_k >= 1:
+            j, r = self.worm_target(wn)
+            p = cur - j
+            x = X0 + (p + slide) * PITCH + 4
+            ty = ROW_Y[r] + 4
+            third = wn % 3 == 2
+            if wk < 3.0:                          # 从简底爬上来
+                y = lerp(BOT + 2, ty + 6, ease_out(span(wk, 0, 3.0)))
+                pix.blit(g, WORM_SPR[int(t * 6) % 2], x, y)
+            elif wk < 4.5:                        # 啃
+                y = ty + 5 - (int(t * 8) % 2)
+                g.d.ellipse((x - 1, ty - 1, x + 5, ty + 4), fill=0)
+                pix.blit(g, WORM_SPR[0], x, y)
+                if int(t * 8) % 2 == 0:            # 碎屑
+                    g.px(x - 1, ty + 5), g.px(x + 6, ty + 4)
+            elif not third:                       # 吃饱了爬下去
+                y = lerp(ty + 6, BOT + 4, span(wk, 4.5, 7.5))
+                if wk < 7.5:
+                    pix.blit(g, WORM_SPR[int(t * 6) % 2].flipv(), x, y)
+            else:                                 # 第三回：卷成圆环“脉望”，发光飘出窗去
+                q = span(wk, 5.0, 9.0)
+                rx = lerp(x + 2, 12, ease_in_out(q))
+                ry = lerp(ty + 2, -6, ease_in_out(q)) + math.sin(wk * 5) * 1.5
+                ring = (rx, ry)
+                g.d.ellipse((rx - 3, ry - 3, rx + 3, ry + 3), outline=1)
+                g.d.ellipse((rx - 1, ry - 1, rx + 1, ry + 1), outline=0)
+                if int(t * 8) % 2:
+                    for a in range(0, 360, 45):
+                        g.px(rx + math.cos(math.radians(a + t * 90)) * 5, ry + math.sin(math.radians(a + t * 90)) * 5)
+                if wk > 8.4:                      # 星使立降
+                    s = 1 + int(t * 8) % 2
+                    g.d.line((19 - s, 7, 19 + s, 7), fill=1), g.d.line((19, 7 - s, 19, 7 + s), fill=1)
+        # 小道士：一手扶左卷，读一个字点一下头、张一下嘴
+        face = "normal"
+        reading = on and slide == 0
+        if reading and (t % (SLIP - SLIDE) / ((SLIP - SLIDE) / 3)) % 1 < 0.35:
+            face = "wow"
+        if wk is not None and 5.0 < wk < 9.5 and wn % 3 == 2:
+            face = "wow"
+        spr, at = put_arm(ROLL_L - 2 - (DX + 2), 3 + int(round(math.sin(slide * math.pi) * 2)), "fist")
+        pop = ease_out_back(span(e3, 0.0, 0.5)) if not on else 1.0
+        nod = 1 if reading and (t * 3 / (SLIP - SLIDE)) % 1 < 0.25 else 0
+        figure(g, DX, FLOOR + (1 - pop) * 10, t, legs="sit", arm=spr, arm_at=at, face=face, dy=nod)
+        self.sparks.step(dt)
+        self.sparks.draw(g)
+        # 字最后写
+        if open_k >= 1:
+            self.near_text(g, tt, cur, row, slide)
+        if ring and wk > 6.0:
+            label(g, 64, 1, "脉望", align="center")
+        return cur, row, slide, ring
+
+    def mx(self, g: Gfx, t: float, cur: int, row: int, slide: float, ring):
+        if ring:
             for y in range(8):
                 for x in range(8):
                     if abs(math.hypot(x - 3.5, y - 3.5) - 2.6) < 0.7:
                         g.mx[y, x] = True
-            g.mx_level = 3 if blink(t, 0.4) else 1
-        elif st:
-            g.mx_set(int(t * 3) % 8, 7, False)
+            return
+        off = int(slide * 2)
+        for c in range(0, 8, 2):
+            x = c + off
+            if 0 <= x < 8:
+                g.mx[:, x] = True
+        x = 1 + off
+        if x < 8:
+            g.mx[row * 2 + 1, x] = int(t * 6) % 2 == 0
+            g.mx[row * 2 + 2, x] = True
 
     def enter(self, g: Gfx, t: float):
-        p = ease_in_out(span(t, 0.0, 2.2))
-        lo = lerp(RROLL - 8, LROLL + 8, p)
-        self.frame(g, 0.0, lo=lo, read=t > 2.4)
-        if t < 2.2:
-            g.mx[:] = False
-            n = int(p * 8)
-            for c in range(8 - n, 8):
-                if c % 2 == 0:
-                    g.mx[1:7, c] = True
+        self.scene(g, t, min(t / self.T["enter"], 0.999))
+        n = int(span(t, 0.4, 2.2) * 4.99)
+        for c in range(n):
+            g.mx[:, c * 2] = True
 
     def hold(self, g: Gfx, t: float):
         self.ht = t
-        self.frame(g, t)
+        self.mx(g, t, *self.scene(g, t))
 
     def exit(self, g: Gfx, t: float):
-        p = ease_in_out(span(t, 0.0, self.T["exit"]))
-        lo = lerp(LROLL + 8, RROLL - 8, p)
-        self.frame(g, self.ht + t, lo=lo, read=False)
-        if p > 0.95:
-            g.d.rectangle((0, 0, 127, 63), fill=0)
-            roll(g, RROLL, 0)
-        g.mx[:] = False
-        for c in range(int(p * 8), 8):
-            if c % 2 == 0:
-                g.mx[1:7, c] = True
+        tt = self.ht + t
+        q = t / self.T["exit"]
+        out = self.scene(g, tt, close=span(q, 0, 0.6))
+        self.mx(g, tt, *out)
+        iris(g, span(q, 0.4, 1.0), DX + 8, 34)

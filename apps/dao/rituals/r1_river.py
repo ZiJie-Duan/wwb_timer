@@ -1,301 +1,407 @@
-"""放河灯：中元夜，月下江面，一只手把一盏莲花灯放进水里，灯随波漂远、越漂越小；一盏接一盏。
+"""放河灯：中元夜，满月当空、远山如墨；小道士在江边石阶上跪下，一盏盏把莲花灯放进水里，灯顺水漂向天边。
 
-依据：农历七月十五中元节，道经以为“地官赦罪”之日；宫观设中元普度，夜放水灯（河灯、荷花灯）照引幽冥。
-（中国非遗网“中元节”条：水灯以纸或木为底，形似荷花，上安灯盏，七月十五夜点燃放入江河任其漂流。）
+依据：农历七月十五中元节，道经以为“地官赦罪”之日，宫观设中元普度；当夜放水灯（河灯、荷花灯），
+中元也有烧法船的习俗（中国非遗网“中元节”）。七月十五是满月。
 
-入场：夜色里月亮升起、水纹铺开，手放下第一盏灯，水面荡起一圈涟漪。
-持续：每 60 秒放一盏（一轮十盏 = 600 秒），灯漂 300 秒到天边，画面上同时漂着五盏、远近大小不同，
-      火苗跳、倒影晃、灯随波起伏；月影在水里碎成一串。
-      一轮结束：远处一只纸扎法船（中元烧法船）从左到右驶过天边，右侧“第几轮”加一。
-中断：江雾从两边漫过来，灯火变暗成豆，“雾锁江”。
-恢复：雾散，灯火复明。
-圆满：江上所有灯的火光一齐离灯升空，化作星点，“中元普度”。
+入场：夜空、满月、远山、江面渐显，江心荡开几圈涟漪；小道士走到江边石阶上，对江拱手作揖。
+持续：每 60 秒放一盏（一轮十盏 = 600 秒）：转身从灯篮里取灯 → 跪下 → 双手送灯入水（涟漪一圈圈）→ 起身作揖。
+      每盏用 300 秒漂到天边，一路先快后慢、越漂越小越高，同时漂着五盏；灯火逐帧跳动，水里倒影碎成几段，
+      灯随波轻轻起伏。水纹缓缓横移，月影在水里碎成一串；隔一阵一条鱼跃出水面“扑通”溅起水花，萤火虫一闪一闪。
+      续：远处一只纸扎法船（两层楼、风帆、窗里亮灯）从左到右驶过天边，小道士拱手，“第几盏”从头数起。
+中断：江雾从两岸漫来，水上的灯暗成一点，牌子“暂歇”。  恢复：小道士剑指一点，雾散，灯火一盏盏复明。
+圆满：江上每盏灯的火光离开灯，升空化作星点，满月放光，小道士跪拜，闪白，“中元普度”。
 """
 from __future__ import annotations
 
 import math
 
-from ..engine.anim import blink, clamp, ease_in, ease_in_out, ease_out, ease_out_back, lerp, noise, rand, span
+from ..engine import pix
+from ..engine.anim import ease_in, ease_in_out, ease_out, lerp, rand, span
+from ..engine.chars import daoshi
 from ..engine.cn import cn_num
-from ..engine.fx import flame, ring, stars
 from ..engine.gfx import Gfx
 from ..engine.scene import Ritual, register
-from .r1_common import sleeve, vreveal
+from .r1_common import Clock, badge, hit, mx_art, mx_burst, pose_arm, ring_dots, star, title
 
-HORIZON = 24
-NEAR_Y = 56
-STEP = 60.0
-TRAVEL = 300.0
-MOON = (100, 10)
-RENEW = 9.0
+BANK = 54                # 石阶顶面（小道士站的地面）
+HORIZON = 27
+DX = 24                  # 小道士
+BASKET_X = 7
+DROP = (42, 58)          # 放灯入水的位置
+EVERY = 60.0
+LIFE = 300.0
+RENEW = 8.0
+MOON = (104, 10)
+
+LOTUS = pix.sprite("""
+  #  .  #
+  #.#.#.#
+ ##.#.#.##
+#.##.#.##.#
+.#########.
+ ..#####..
+""")
+
+LOTUS_MID = pix.sprite("""
+# # #
+.###.
+ ###
+""")
+
+FLAME = pix.frames("""
+ #
+###
+#.#
+---
+  #
+ ##
+#.#
+---
+#
+##
+#.#
+""")
+
+FISH = pix.frames("""
+  .##.
+.######.#
+ .####.##
+  .##.
+""")
+
+BOAT = pix.sprite("""
+        #
+       ###      #
+    .#######.  ###
+    .#.#.#.#.  #.#
+  ..#########..###
+  .#.#.##.#.#.#####
+ ####################
+  ##################
+   .##############.
+""")
 
 
-def lotus_lamp(g: Gfx, x: float, y: float, s: float, t: float, seed: int, lit: float = 1.0, reflect: bool = True):
-    """莲花灯：(x, y) 为吃水线中心，s 缩放（1 = 近处）"""
-    d = g.d
-    w = 9 * s
-    if s < 0.32:  # 远处：一个小点加火
-        d.line((x - 1, y, x + 1, y), fill=1)
+def scene_bg(g: Gfx, t: float, show: float = 1.0):
+    """夜空：满月（月面暗斑）、星星、远山剪影、江面水纹、月影、前景石阶"""
+    mx, my = MOON
+    g.d.ellipse((mx - 7, my - 7, mx + 7, my + 7), fill=1)
+    for x, y in ((-3, -2), (2, 1), (-1, 3), (3, -3)):
+        g.px(mx + x, my + y, 0)
+    g.px(mx - 2, my - 2, 0)
+    for i in range(14):
+        x, y = rand(i, 3) * 128, rand(i + 20, 3) * 18
+        if abs(x - mx) < 10 and abs(y - my) < 10:
+            continue
+        if (t * 0.7 + rand(i + 40, 3)) % 1 < 0.8:
+            g.px(x, y)
+    ridge = [(0, 24), (12, 19), (22, 22), (36, 16), (50, 22), (60, 20), (74, 24), (88, 20), (100, 23), (114, 18),
+             (127, 22)]
+    g.d.polygon(ridge + [(127, HORIZON), (0, HORIZON)], fill=0)
+    g.d.line(ridge, fill=1)
+    for x in range(2, 128, 4):                        # 山脚一抹雾（稀点）
+        g.px(x + (x // 4) % 2 * 2, HORIZON - 2)
+    g.d.line((0, HORIZON, 127, HORIZON), fill=1)
+    for row in range(8):                              # 水纹：越近越长越稀
+        y = HORIZON + 3 + row * 4 + row * row // 5
+        if y > 63:
+            break
+        L = 1 + row
+        gap = 15 + row * 4
+        off = int(t * (1.5 + row * 0.5)) + row * 7
+        for x in range(-gap, 128 + gap, gap):
+            xx = (x + off) % (128 + gap) - gap
+            g.d.line((xx, y, xx + L, y), fill=1)
+    for j in range(6):                                # 月影
+        y = HORIZON + 3 + j * 4
+        w = 3 + j + int(math.sin(t * 2 + j) * 1.5)
+        x = mx + math.sin(t * 1.3 + j * 1.7) * 1.5
+        pix.dotted(g, x - w, y, x + w, y, 2, j)
+    # 前景左下的石阶
+    pts = [(0, BANK), (32, BANK), (34, BANK + 1), (34, BANK + 4), (38, BANK + 5), (38, 63), (0, 63)]
+    g.d.polygon(pts, fill=0)
+    g.d.line(pts[:-1], fill=1)
+    for x in range(5, 32, 9):
+        g.d.line((x, BANK + 1, x, BANK + 3), fill=1)
+    g.d.line((0, BANK + 4, 33, BANK + 4), fill=1)
+    pix.checker(g, (1, BANK + 5, 37, 64), 0.25)
+
+
+def lamp_pos(age: float, lane: int):
+    """放下后 age 秒的位置与大小（0..1，1 = 近处）"""
+    a = min(age / LIFE, 1.0) ** 0.7
+    x = lerp(DROP[0], 100 + lane * 9, a) + math.sin(age * 0.05 + lane) * 4 * (1 - a)
+    y = lerp(DROP[1], HORIZON + 2, a) + math.sin(age * 1.7 + lane) * (1.2 * (1 - a))
+    return x, y, 1 - a
+
+
+def river_lamp(g: Gfx, x: float, y: float, size: float, t: float, lit: float = 1.0, seed: int = 0):
+    """莲花灯：近处是带瓣的大灯，远了变成小灯、光点；倒影碎光"""
+    fl = pix.anim(FLAME, t + seed * 0.37, 8)
+    if size > 0.55:
+        pix.blit(g, LOTUS, x - 5, y - 4)
+        if lit > 0.5:
+            pix.blit(g, fl, x - 1, y - 8, outline=False)
+        elif lit > 0:
+            g.px(x, y - 5)
+        for j in range(3):   # 倒影
+            if (int(t * 6) + j + seed) % 3:
+                w = 2 - j // 2
+                g.d.line((x - w + (j % 2), y + 3 + j * 2, x + w, y + 3 + j * 2), fill=1)
+    elif size > 0.25:
+        pix.blit(g, LOTUS_MID, x - 2, y - 2)
+        if lit > 0.5:
+            g.px(x, y - 3), g.px(x, y - 4)
+            if int(t * 5 + seed) % 2:
+                g.px(x - 1, y - 3)
+        if (int(t * 6) + seed) % 2:
+            g.d.line((x - 1, y + 3, x + 1, y + 3), fill=1)
+    else:
+        g.px(x, y)
         if lit > 0.5:
             g.px(x, y - 1)
-            if blink(t + seed * 0.3, 0.7, 0.6):
-                g.px(x, y - 2)
-        return
-    d.chord((x - w, y - 3 * s, x + w, y + 2 * s), 0, 180, fill=0, outline=1)   # 底托
-    for k in (-2, -1, 0, 1, 2):  # 花瓣：尖朝上
-        px = x + k * w * 0.42
-        ph = (5 if k == 0 else 4 if abs(k) == 1 else 3) * s
-        d.polygon([(px - 2.2 * s, y), (px, y - ph - 1), (px + 2.2 * s, y)], fill=0, outline=1)
-    if lit > 0:
-        if s > 0.55:
-            flame(g, x, y - 5 * s, 5 * s * max(lit, 0.4), 8 * s * lit, t, seed)
-        else:
-            d.rectangle((x, y - 5 * s - 2, x, y - 5 * s), fill=1)
-    if reflect:  # 倒影：碎光
-        for j in range(int(3 + 4 * s)):
-            yy = y + 3 + j * 2
-            if yy >= 64:
-                break
-            off = math.sin(t * 2 + j * 1.3 + seed) * (1 + j * 0.4)
-            if (j + int(t * 3)) % 3 != 2:
-                g.px(x + off, yy)
+            if (int(t * 4) + seed) % 3:
+                g.px(x, y + 2)
+
+
+def basket(g: Gfx, n: int):
+    """灯篮（篮里露出几盏灯的瓣尖）"""
+    x0 = BASKET_X - 6
+    g.d.arc((x0 + 1, BANK - 14, x0 + 11, BANK - 2), 180, 360, fill=1)
+    g.d.arc((x0 + 2, BANK - 13, x0 + 10, BANK - 3), 180, 360, fill=1)
+    for i in range(min(n, 3)):
+        g.px(x0 + 3 + i * 3, BANK - 8)
+        g.px(x0 + 2 + i * 3, BANK - 7), g.px(x0 + 4 + i * 3, BANK - 7)
+    g.d.polygon([(x0, BANK - 6), (x0 + 12, BANK - 6), (x0 + 10, BANK - 1), (x0 + 2, BANK - 1)], fill=1)
+    for x in range(x0 + 2, x0 + 11, 2):
+        g.px(x, BANK - 4, 0)
+
+
+def mx_river(g: Gfx, t: float, lit: bool = True):
+    mx_art(g, """
+........
+........
+........
+.#.##.#.
+.######.
+..####..
+""")
+    if lit:
+        f = int(t * 8) % 3
+        g.mx[1, 3:5] = True
+        g.mx[0, (3, 4, 4)[f]] = True
+        g.mx[2, 3:5] = True
+    for x in range(8):
+        g.mx[7, x] = (x + int(t * 3)) % 4 < 2
 
 
 @register
-class RiverLamps(Ritual):
+class RiverLanterns(Ritual):
     id = "r1.river"
     name = "放河灯"
-    desc = "中元夜放莲花灯，一盏盏随波漂远变小，五盏远近同在；一轮十盏后法船驶过天边"
-    T = {"enter": 4.0, "interrupt": 1.6, "resume": 1.6, "complete": 5.0}
+    desc = "中元夜满月下，小道士在江边跪下一盏盏放莲花灯，灯顺水漂向天边越来越小；鱼跃、萤火；一轮后纸扎法船驶过天边"
+    T = {"enter": 6.0, "interrupt": 1.8, "resume": 1.8, "complete": 5.5}
     CYCLE = 600.0
 
     def setup(self):
-        self.sky_seed = self.rng.randrange(1000)
+        self.clock = Clock()
+        self.sparks = pix.Sparks(self.seed)
 
-    # ------------------------------------------------------------ 灯（全是 e 的函数）
-
-    def lamp_xy(self, i: int, e: float, t: float):
-        """第 i 盏（i 从 0 起，e_i = i*STEP）→ (x, y, s) 或 None"""
-        age = e - i * STEP
-        if age < 0 or age > TRAVEL:
-            return None
-        d = age / TRAVEL
-        q = 1 - (1 - d) ** 2           # 先快后慢：近大远小
-        x0 = 32 + ((i * 0.618 + rand(0, self.seed)) % 1.0) * 60   # 相邻两盏左右错开
-        drift = (rand(i + 50, self.seed) - 0.5) * 30
-        x = x0 + drift * q + math.sin(age * 0.05 + i) * 3
-        y = lerp(NEAR_Y, HORIZON + 2, q)
-        s = lerp(1.0, 0.18, q)
-        y += math.sin(t * 1.6 + i * 2.1) * s * 1.2  # 随波起伏
-        return x, y, s
-
-    def lamps(self, g: Gfx, e: float, t: float, lit: float = 1.0, skip_new: bool = False):
-        last = int(e // STEP)
+    def placed(self, e: float):
+        """江上漂着的灯：[(放下后秒数, 序号)]（e 的函数；序号决定航道）"""
         out = []
-        for i in range(max(0, last - 5), last + 1):
-            if skip_new and i == last:
-                continue
-            p = self.lamp_xy(i, e, t)
-            if p:
-                out.append((p[2], i, p))
-        for s, i, (x, y, ss) in sorted(out):  # 远的先画
-            lotus_lamp(g, x, y, ss, t + i, self.seed + i, lit=lit)
+        n = int((e - 2.6) // EVERY) if e >= 2.6 else -1
+        for i in range(max(0, n - 5), n + 1):
+            age = e - (i * EVERY + 2.6)
+            if 0 <= age < LIFE:
+                out.append((age, i))
         return out
 
-    # ------------------------------------------------------------ 景
+    def counter(self, g: Gfx, e: float, label: str | None = None):
+        n = int((e % self.CYCLE) // EVERY) + 1
+        badge(g, 4, 3, label or f"第{cn_num(n)}盏")
 
-    def night(self, g: Gfx, t: float, a: float = 1.0):
-        mx, my = MOON
-        if a > 0:
-            r = 6  # 七月十五：满月
-            g.d.ellipse((mx - r, my - r, mx + r, my + r), fill=1)
-            for dx, dy in ((1, -2), (2, -2), (2, -1), (-3, 1), (-2, 2), (-1, 3)):  # 月面暗斑
-                g.px(mx + dx, my + dy, 0)
-            ring(g, mx, my, r + 3 + math.sin(t * 1.1), density=4, phase=t * 0.2)
-        stars(g, t, self.sky_seed, n=int(10 * a), box=(30, 0, 92, HORIZON - 4), twinkle=0.35)
-        # 远山
-        pts = [(0, HORIZON)]
-        for x in range(0, 129, 8):
-            pts.append((x, HORIZON - 3 - 4 * noise(x * 0.07, self.sky_seed)))
-        pts.append((128, HORIZON))
-        g.d.line(pts[1:-1], fill=1)
-        g.d.line((0, HORIZON, 127, HORIZON), fill=1)
+    def lamps(self, g: Gfx, e: float, t: float, lit: float = 1.0):
+        for age, i in sorted(self.placed(e), key=lambda a: -a[0]):
+            x, y, s = lamp_pos(age, i % 3)
+            river_lamp(g, x, y, s, t, lit, seed=i)
 
-    def water(self, g: Gfx, t: float):
-        """水纹：近处长、远处短，缓缓横移"""
-        for row in range(7):
-            k = row / 6
-            y = int(lerp(HORIZON + 3, 62, k * k))
-            ln = int(2 + 6 * k)
-            gap = int(20 + 18 * k)
-            off = int(t * (2 + 6 * k) + row * 7) % gap
-            for x in range(-gap + off, 128, gap):
-                xx = x + int(rand(row * 31 + (x - off) // gap, 5) * 6)
-                g.d.line((xx, y, xx + ln, y), fill=1)
-        mx, _ = MOON  # 月影：一串碎光
-        for j in range(6):
-            y = HORIZON + 3 + j * 3
-            w = 1 + j
-            off = math.sin(t * 1.3 + j) * 1.5
-            if (j + int(t * 2)) % 4:
-                g.d.line((mx - 2 + off - w / 2, y, mx + 2 + off + w / 2, y), fill=1)
+    def ambient(self, g: Gfx, e: float, t: float, dt: float):
+        k = (e + self.seed * 11) % 41      # 鱼跃
+        if k < 1.4:
+            q = k / 1.1
+            fx = 80 + (self.seed % 3) * 8
+            if q < 1:
+                x, y = fx + q * 14, 44 - math.sin(q * math.pi) * 10
+                spr = FISH[0] if q < 0.5 else FISH[0].flipv()
+                pix.blit(g, spr, x - 4, y - 2)
+            if hit(k, 0.0, dt) or hit(k, 1.1, dt):
+                self.sparks.burst(fx + (14 if k > 0.5 else 0), 44, 8, 18, up=14, life=0.5, gravity=70)
+            if k > 1.1:
+                ring_dots(g, fx + 14, 45, 2 + (k - 1.1) * 14, 2, sy=0.3)
+        for j in range(2):                  # 萤火虫
+            ph = e * 0.3 + j * 3.1
+            x = 20 + j * 22 + math.sin(ph) * 10
+            y = 40 + math.cos(ph * 1.3) * 4
+            if int(e * 2 + j) % 3:
+                g.px(x, y)
 
-    def texts(self, g: Gfx, e: float, a: float = 1.0, left: str = "地官赦罪"):
-        g.d.rectangle((0, 0, 15, len(left) * 12 + 3), fill=0)
-        vreveal(g, 2, 2, left, a)
-        n = int(e // self.CYCLE) + 1
-        r = f"第{cn_num(n)}轮"
-        g.d.rectangle((113, 63 - len(r) * 12 - 1, 127, 63), fill=0)
-        vreveal(g, 115, 64 - len(r) * 12, r, a)
-
-    def boat(self, g: Gfx, x: float, t: float):
-        """法船：远处一只纸扎船，两层楼、三面帆"""
-        y = HORIZON + 1 + math.sin(t * 2) * 0.5
-        d = g.d
-        d.polygon([(x - 12, y - 3), (x + 12, y - 3), (x + 9, y), (x - 9, y)], fill=0, outline=1)
-        d.line((x - 14, y - 6, x - 12, y - 3), fill=1)   # 船头翘
-        d.line((x + 14, y - 6, x + 12, y - 3), fill=1)
-        d.rectangle((x - 6, y - 7, x + 4, y - 4), fill=0, outline=1)  # 楼
-        d.line((x - 7, y - 8, x + 5, y - 8), fill=1)
-        for mx_, h in ((-9, 9), (7, 11)):
-            d.line((x + mx_, y - 3, x + mx_, y - 3 - h), fill=1)
-            d.polygon([(x + mx_, y - 3 - h), (x + mx_ + 4, y - 5 - h * 0.4), (x + mx_, y - 5)], fill=0, outline=1)
-        if blink(t, 0.4, 0.5):
-            g.px(x - 1, y - 6)
-            g.px(x + 2, y - 6)
-
-    def placing(self, g: Gfx, i: int, u: float, t: float):
-        """放灯：手托灯从画下伸来放进水里（u = 放下前后的秒数，-1.2..1.0）"""
-        p = self.lamp_xy(i, i * STEP, t)
-        x, y = p[0], NEAR_Y
-        if u < 0:
-            q = ease_out(span(u, -1.2, -0.1))
-            ly = lerp(80, y, q)
-            lotus_lamp(g, x, ly, 1.0, t, self.seed + i, reflect=False)
-            sleeve(g, x + 2, ly + 6, 1.35, fist=False)
-        else:
-            q = ease_in(span(u, 0.1, 1.0))
-            sleeve(g, x + 2 + q * 6, y + 6 + q * 30, 1.35, fist=False)
-        if 0 <= u < 1.0:  # 涟漪
-            r = 4 + u * 14
-            g.d.arc((x - r, y - r * 0.25, x + r, y + r * 0.25), 0, 180, fill=1)
-            if u > 0.3:
-                r2 = r - 6
-                g.d.arc((x - r2, y - r2 * 0.25, x + r2, y + r2 * 0.25), 0, 180, fill=1)
-
-    def mx(self, g: Gfx, t: float, lit: float = 1.0):
-        # 莲花灯
-        g.mx_rows([0, 0, 0, 0, 0b01011010, 0b01111110, 0b00111100, 0])
-        if lit > 0.5:
-            g.mx[3, 3 + (1 if noise(t * 5, self.seed) > 0.6 else 0)] = True
-            g.mx[2, 3] = blink(t, 0.5, 0.6)
-        elif lit > 0:
-            g.mx[3, 3] = blink(t, 1.0, 0.5)
-        ph = int(t * 3) % 4  # 水波
-        for x in range(8):
-            g.mx[7, x] = (x + ph) % 4 < 2
-
-    # ------------------------------------------------------------ 阶段
+    # ------------------------------------------------------------ 入场
 
     def enter(self, g: Gfx, t: float):
-        a = span(t, 0, 1.2)
-        self.night(g, t, a)
-        if a < 1:
-            g.fade(a, (0, 0, 128, HORIZON + 1))
-        w = span(t, 0.6, 1.6)
-        if w > 0:
-            self.water(g, t)
-            if w < 1:
-                g.fade(w, (0, HORIZON + 1, 128, 64))
-        u = t - 3.0
-        if t > 1.8:
-            if u < 0:
-                self.placing(g, 0, lerp(-1.2, -0.1, span(t, 1.8, 3.0)) if t < 3.0 else 0, t)
-            else:
-                lotus_lamp(g, *self.lamp_xy(0, 0, t)[:2], 1.0, t, self.seed)
-                self.placing(g, 0, u, t)
-        self.texts(g, 0, a=span(t, 2.6, 3.8))
-        self.mx(g, t, lit=1 if t > 3.0 else 0)
-        if t < 1.8:
-            g.mx[0:7, :] = False
+        """夜色渐显 → 小道士走到江边 → 对江拱手、作揖"""
+        dt = self.clock(t)
+        scene_bg(g, t)
+        g.fade(span(t, 0.0, 1.6))
+        basket(g, 3)
+        if t < 3.4:
+            x = lerp(-12, DX, ease_out(span(t, 1.0, 3.4)))
+            daoshi(g, x, BANK, "walk", t)
+        else:
+            daoshi(g, DX, BANK, "gongshou" if t < 4.4 else ("bow" if t < 5.2 else "idle"), t)
+        for j in range(3):     # 江面一圈圈亮开的涟漪
+            r = (t - 1.5 - j * 0.5) * 14
+            if 0 < r < 40:
+                ring_dots(g, 84, 44, r, 3, sy=0.25)
+        self.sparks.step(dt)
+        self.sparks.draw(g)
+        if t > 3.4:
+            self.counter(g, 0.0)
+        mx_river(g, t)
+
+    def place(self, g: Gfx, t: float, u: float, dt: float):
+        """u ∈ [0, 4]：转身取灯 → 跪下 → 送灯入水（涟漪）→ 起身作揖"""
+        if u < 1.0:
+            h = pose_arm(g, DX, BANK, t, 60 if u > 0.3 else 30, flip=True)
+            if u > 0.6:
+                river_lamp(g, h["hand"][0], h["hand"][1] + 3, 1.0, t)
+        elif u < 2.6:
+            q = ease_in_out(span(u, 1.6, 2.4))
+            h = pose_arm(g, DX, BANK, t, 30 if q < 0.5 else 60, legs="kneel", shoulder=(0, -14))
+            if u < 2.4:
+                hx, hy = h["hand"]
+                lx, ly = lerp(hx + 1, DROP[0], q), lerp(hy + 3, DROP[1], q)
+                river_lamp(g, lx, ly, 1.0, t)
+        elif u < 3.4:
+            pose_arm(g, DX, BANK, t, 30, legs="kneel", shoulder=(0, -14), face="happy")
+        else:
+            daoshi(g, DX, BANK, "gongshou" if u < 3.9 else "bow", t)
+        if u >= 2.4:   # 涟漪
+            a = u - 2.4
+            for j in range(3):
+                r = 2 + (a - j * 0.25) * 9
+                if 0 < r < 16:
+                    ring_dots(g, DROP[0], DROP[1] + 2, r, 2, sy=0.3)
+        if hit(u, 2.4, dt):
+            self.sparks.burst(DROP[0], DROP[1] + 1, 6, 12, up=8, life=0.4, gravity=50)
+
+    # ------------------------------------------------------------ 持续
 
     def hold(self, g: Gfx, t: float, e: float):
+        dt = self.clock(t)
         k = e % self.CYCLE
-        self.night(g, t)
-        self.water(g, t)
-        if e >= self.CYCLE and k < RENEW:  # 法船驶过天边
-            self.boat(g, lerp(-20, 150, k / RENEW), t)
-        last = int(e // STEP)
-        u = e - last * STEP            # 最新一盏放下了多久
-        nxt_u = u - STEP                # 下一盏（负 = 还没放）
-        self.lamps(g, e, t, skip_new=(u < 0))
-        if u < 1.0:
-            self.placing(g, last, u, t)
-        elif nxt_u > -1.2:
-            self.placing(g, last + 1, nxt_u, t)
-        self.texts(g, e)
-        self.mx(g, t)
-        if u < 0.15:
-            g.mx_level = 3
+        scene_bg(g, t)
+        if e >= self.CYCLE and k < RENEW:     # 续：法船驶过天边
+            q = span(k, 0.0, RENEW)
+            bx = lerp(-24, 132, q)
+            by = HORIZON - 8 + math.sin(t * 1.5) * 0.5
+            pix.blit(g, BOAT, bx - 10, by - 1)
+            for wx in (bx - 5, bx - 1, bx + 3):     # 窗里的灯
+                if int(t * 3 + wx) % 3:
+                    g.px(wx, by + 3)
+            pix.dotted(g, bx - 12, HORIZON + 1, bx + 10, HORIZON + 1, 2, int(t * 6))
+        basket(g, 3)
+        self.lamps(g, e, t)
+        self.ambient(g, e, t, dt)
+        u = k % EVERY
+        if u < 4.0:
+            self.place(g, t, u, dt)
+        elif e >= self.CYCLE and k < RENEW:
+            daoshi(g, DX, BANK, "gongshou" if k < 6 else "bow", t)
+        else:
+            c = (u + self.seed * 3) % 30
+            if 20 <= c < 22.4:
+                daoshi(g, DX, BANK, "gongshou" if c < 21.2 else "bow", t)
+            else:
+                daoshi(g, DX, BANK, "idle", t, face="happy" if 4.0 <= u < 6.0 else "normal")
+        self.sparks.step(dt)
+        self.sparks.draw(g)
+        self.counter(g, e)
+        mx_river(g, t)
 
-    def _mist(self, g: Gfx, p: float):
-        """江雾：从两边漫向中间"""
-        if p <= 0:
+    # ------------------------------------------------------------ 中断 / 恢复 / 圆满
+
+    def mist(self, g: Gfx, t: float, amt: float):
+        """江雾：几条稀疏的点状雾带从两岸往江心漫，只在水面上"""
+        if amt <= 0:
             return
-        w = int(p * 70)
-        g.fade(1 - 0.55 * p, (0, HORIZON + 1, 128, 64))  # 雾里水纹和灯都淡下去
-        g.shade((0, HORIZON - 4, w, HORIZON + 8), 0.25 * p)  # 两岸漫来的雾带
-        g.shade((128 - w, HORIZON + 14, 128, HORIZON + 24), 0.2 * p)
+        for j in range(4):
+            y = HORIZON + 2 + j * 7
+            w = 50 * amt + j * 4
+            ph = int(t * 6) + j * 3
+            pix.dotted(g, 40, y, 40 + w, y, 3, ph)
+            pix.dotted(g, 127 - w, y + 3, 127, y + 3, 3, ph + 1)
+            if amt > 0.5:
+                pix.dotted(g, 44, y + 1, 44 + w * 0.6, y + 1, 4, ph)
 
     def interrupt(self, g: Gfx, t: float, e: float):
-        p = ease_in_out(span(t, 0, 1.4))
-        self.night(g, t)
-        self.water(g, t * (1 - p))
-        self.lamps(g, e, t, lit=1 - 0.7 * p)
-        self._mist(g, p)
-        self.texts(g, e, left="雾锁江" if t > 0.9 else "地官赦罪")
-        self.mx(g, t, lit=1 - p)
+        dt = self.clock(t)
+        scene_bg(g, t)
+        basket(g, 3)
+        lit = 1 - span(t, 0.6, 1.4)
+        self.lamps(g, e, t, lit=1.0 if lit > 0.5 else 0.3)
+        daoshi(g, DX, BANK, "gongshou" if t > 0.3 else "idle", t)
+        self.mist(g, t, ease_out(span(t, 0.0, 1.6)))
+        self.counter(g, e, "暂歇" if t > 0.8 else None)
+        mx_river(g, t, lit=lit > 0.5)
 
     def resume(self, g: Gfx, t: float, e: float):
-        p = 1 - ease_in_out(span(t, 0, 1.4))
-        self.night(g, t)
-        self.water(g, t)
-        self.lamps(g, e, t, lit=1 - 0.7 * p)
-        self._mist(g, p)
-        self.texts(g, e, left="雾锁江" if t < 0.5 else "地官赦罪")
-        self.mx(g, t, lit=1 - p)
+        dt = self.clock(t)
+        scene_bg(g, t)
+        basket(g, 3)
+        relit = t > 1.0
+        self.lamps(g, e, t, lit=1.0 if relit else 0.3)
+        h = daoshi(g, DX, BANK, "point" if t < 1.3 else "idle", t)
+        self.mist(g, t, 1 - ease_in(span(t, 0.3, 1.4)))
+        if hit(t, 1.0, dt):
+            for age, i in self.placed(e):
+                x, y, s = lamp_pos(age, i % 3)
+                self.sparks.burst(x, y - 3, 4, 10, up=6, life=0.4, gravity=10)
+            pix.flash(g)
+        self.sparks.step(dt)
+        self.sparks.draw(g)
+        self.counter(g, e, "暂歇" if t < 0.6 else None)
+        mx_river(g, t, lit=relit)
 
     def complete(self, g: Gfx, t: float, e: float):
-        self.night(g, t)
-        self.water(g, t)
-        lamps = self.lamps(g, e, t, lit=1 - span(t, 0.8, 1.2))
-        # 每盏灯的火光离灯升空，化作星点
-        for s, i, (x, y, ss) in lamps:
-            st = 0.8 + rand(i, 3) * 0.6
-            q = span(t, st, st + 2.4)
-            if q <= 0:
-                continue
-            tx = 20 + rand(i, 9) * 90
-            ty = 2 + rand(i, 10) * 14
-            xx = lerp(x, tx, ease_in_out(q)) + math.sin(q * 8 + i) * 3 * (1 - q)
-            yy = lerp(y - 5 * ss, ty, ease_out(q))
-            if q < 1:
-                g.d.rectangle((xx - 1, yy - 1, xx, yy), fill=1)
-                g.px(xx, yy + 2)
-            elif blink(t + i * 0.3, 0.5, 0.7):
-                for dx, dy in ((0, 0), (1, 0), (-1, 0), (0, 1), (0, -1)):
-                    g.px(tx + dx, ty + dy)
-        if t > 2.6:
-            s = "中元普度"
-            n = int(clamp((t - 2.6) * 4 / len(s)) * len(s))
-            g.d.rectangle((0, 0, 15, 50), fill=0)
-            g.vtext(2, 2, s[:n])
-        else:
-            self.texts(g, e, a=1 - span(t, 1.6, 2.4))
-        self.mx(g, t, lit=1 - span(t, 0.8, 1.2))
-        if t > 1.0:
-            r = int((t - 1.0) * 4) % 8
-            g.mx[:, :] = False
-            for x in range(8):
-                g.mx_set(x, 7 - ((r + x * 3) % 8))
-            g.mx_level = 2
+        dt = self.clock(t)
+        scene_bg(g, t)
+        basket(g, 3)
+        rise = span(t, 0.6, 3.0)
+        self.lamps(g, e, t, lit=1.0 if rise <= 0 else 0.3)
+        for age, i in self.placed(e):    # 灯火离开灯，升空化作星点
+            x, y, s = lamp_pos(age, i % 3)
+            q = span(t, 0.6 + i % 3 * 0.15, 3.0 + i % 3 * 0.15)
+            if 0 < q:
+                yy = lerp(y - 5, 4 + (i * 7) % 16, ease_in_out(q))
+                xx = x + math.sin(q * 6 + i) * 3 * (1 - q)
+                if q < 1:
+                    g.d.ellipse((xx - 1, yy - 1, xx + 1, yy + 1), fill=1)
+                    g.px(xx, yy + 3)
+                else:
+                    star(g, xx, yy, 1 if int(t * 4 + i) % 2 else 0)
+        if t > 2.4:   # 满月放光
+            for j in range(12):
+                a = j / 12 * 2 * math.pi + t * 0.3
+                pix.dotted(g, MOON[0] + math.cos(a) * 10, MOON[1] + math.sin(a) * 10,
+                           MOON[0] + math.cos(a) * 14, MOON[1] + math.sin(a) * 14, 2)
+        daoshi(g, DX, BANK, "kneel" if 1.0 < t < 4.6 else "idle", t, face="happy" if t > 4.6 else "normal")
+        if hit(t, 3.0, dt):
+            pix.flash(g)
+            self.sparks.burst(MOON[0], MOON[1], 24, 40, life=1.2, gravity=10)
+        self.sparks.step(dt)
+        self.sparks.draw(g)
+        if t > 3.2:
+            title(g, 46, 6, "中元普度", t, 3.2)
+        mx_river(g, t)
+        mx_burst(g, t, 3.0)

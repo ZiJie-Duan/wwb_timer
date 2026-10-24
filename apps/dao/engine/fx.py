@@ -250,6 +250,9 @@ def brush_reveal(g: Gfx, x: float, y: float, s: str, p: float, size: int = 12, s
             break
         glyph = _glyph(ch, size, scale)
         cw = glyph.width
+        bb = glyph.getbbox()
+        if bb and k >= 1:  # 写完的字登记范围（文字堆叠检查；正在写的字有笔尖，不登记）
+            g.text_boxes.append((ch, cx + bb[0], cy + bb[1], cx + bb[2], cy + bb[3], cx, cy, size, scale))
         if k >= 1:
             g.img.paste(1, (cx, cy), glyph)
         else:

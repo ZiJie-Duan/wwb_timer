@@ -200,3 +200,6 @@ def mx_trigram(g: Gfx, name: str, y: int = 1, step: int = 2):
 def mx_taiji(g: Gfx, angle: float = 0.0):
     white, inside = _taiji_mask(8, 3.9, 3.5, 3.5, angle)
     g.mx[:] = white | (inside & ~_taiji_mask(8, 2.9, 3.5, 3.5, angle)[1])
+
+
+taiji_mask = _taiji_mask  # 公开：(n, r, cx, cy, angle) → (阳鱼, 圆内) 两个 bool 数组

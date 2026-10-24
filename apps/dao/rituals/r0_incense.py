@@ -149,7 +149,7 @@ def sticks(g: Gfx, length: float, lit, t: float):
         top = STICK_BASE - L
         if lit[i] and L > 0:
             on = (t * 2.3 + i * 0.41) % 1 < 0.75
-            g.k.rectangle((x - 1, top - 1, x + 1, top + 1), fill=1)
+            g.d.rectangle((x - 1, top - 1, x + 1, top + 1), fill=0)
             g.d.point((x, top))
             if on:
                 g.d.point((x - 1, top)), g.d.point((x + 1, top)), g.d.point((x, top - 1))
@@ -363,7 +363,7 @@ class IncenseRitual(Ritual):
             w = text_width("功德圆满")
             cx = 42
             y = 6 + (1 - pop) * 10
-            g.k.rectangle((cx - w / 2 - 3, y - 2, cx + w / 2 + 2, y + 12), fill=1)
+            g.d.rectangle((cx - w / 2 - 3, y - 2, cx + w / 2 + 2, y + 12), fill=0)
             g.d.rectangle((cx - w / 2 - 3, y - 2, cx + w / 2 + 2, y + 12), outline=1)
             if int(t * 6) % 2 == 0:
                 for sx, sy in ((cx - w / 2 - 7, y + 4), (cx + w / 2 + 6, y + 4)):

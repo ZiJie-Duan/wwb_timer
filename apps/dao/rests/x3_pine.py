@@ -1,232 +1,262 @@
-"""松风：《梁书·陶弘景传》“特爱松风，庭院皆植松，每闻其响，欣然为乐。有时独游泉石，望见者以为仙人。”
-（陶弘景，南朝茅山上清派宗师，号华阳隐居。）
+"""松风：《梁书·陶弘景传》（《太平御览》卷九五三引）“特爱松风，庭院皆植松，每闻其响，欣然为乐。”
+陶弘景是茅山上清派宗师。出处：<https://ctext.org/taiping-yulan/953>
 
-入场：一阵风从左边吹进来，老松的枝叶由静到动，松针簌簌，树下的隐者闭目侧耳。
-持续：崖上一株老松，主干扭转，一枝长臂探向山谷（像迎客松），枝头一簇簇平顶的松盖。
-      平时微风，松盖轻轻起伏；每隔一阵起一阵大风：风线成群掠过，松盖整排压弯、回弹，松针被吹散。
-      远山、远处一线瀑布在雾里。
-      小事件：松果从枝头掉下，在石上弹两下滚到隐者脚边；风大时隐者衣袖飘起；“特爱松风”的题字隔一阵浮现。
-      点阵：一道随风势起伏的“松涛”波形。
-退场：风止，松针落定，画面淡去。
+崖头一株老松：主干扭着长上去（树皮一块块鳞纹），一枝长臂探向山谷，枝上一簇簇平顶松盖；
+松下小道士盘坐听风，发带往后飘。远处山谷里远山、一线瀑布。
+持续：平时微风，松盖轻轻摇，离树根越远摆得越多；每 31 秒一阵大风（2 秒起风、9 秒落定）：
+      风线成群从右往左掠过、松盖整排被压弯再回弹、松针被吹落飘走、小道士的发带飘平。
+小事件：松果从长臂上掉下，在石上弹两下滚到小道士脚边，他吓一跳（73s）；
+        一只松鼠沿长臂跑出来，蹲在枝头啃一会儿再跑回去（117s）；“特爱松风”题字（140s 一次）。
+入场：一阵风从右边吹进来，老松由静到动。  退场：风止，画面淡出。
+点阵：“松涛”波形，振幅与速度随风势，大风时加粗。
 """
 from __future__ import annotations
 
 import math
 
-from ..engine.anim import clamp, ease_in, ease_out, ease_out_bounce, lerp, noise, rand, span, smoothstep
-from ..engine.gfx import Gfx, Sprite
+from ..engine import pix
+from ..engine.anim import clamp, ease_in, ease_out, lerp, noise, rand, span
+from ..engine.chars import daoshi
+from ..engine.gfx import Gfx
 from ..engine.scene import Rest, register
-from .x3_lib import every, halo, layer, peaks, pine_pad, poly_sprite, vpoem
+from .x3_lib import bake, bird, every, mountain, pine_pad, plate, ribbon, ridge
 
-CLIFF = [(0, 46), (12, 45), (24, 46), (34, 49), (40, 54), (43, 64), (0, 64)]
-BASE = (22, 46)
-TRUNK = [(22, 46), (20, 40), (24, 33), (21, 26), (26, 19), (33, 14), (42, 11)]
-# 枝：从主干第几个点出发，后面的点（相对坐标）
-BRANCHES = [
-    (2, [(10, -2), (24, -5), (40, -3), (56, -7), (68, -8)]),     # 探向山谷的长臂
-    (3, [(-8, -3), (-15, -6), (-19, -9)]),
-    (5, [(10, -4), (22, -6), (32, -6)]),
-    (4, [(-6, -4), (-10, -9)]),
-]
-PADS = [  # (枝号, 枝上第几点, 宽) ；枝号 -1 = 主干
-    (0, 4, 20), (0, 3, 15), (0, 2, 13), (0, 1, 10), (1, 2, 13), (1, 1, 9), (2, 2, 16), (2, 1, 11), (3, 1, 10),
-    (-1, 6, 13), (-1, 5, 10),
-]
-SAGE = (34, 49)
-SIT = halo(Sprite("""
-  .##..
-  ####.
-  .##..
-  ###..
-  ####.
-  #####
-  ######
-"""))
+GROUND = 54
+DX = 48
+ROOT = (16, GROUND)
+# 枝干：主干 + 长臂（点 = (x, y, 离根的柔度)）
+TRUNK = [(16, 54, 0), (12, 46, 0), (16, 37, 0.05), (12, 28, 0.1), (17, 19, 0.2), (21, 10, 0.3)]
+ARM = [(15, 30, 0.05), (26, 22, 0.25), (38, 17, 0.45), (50, 14, 0.65), (62, 13, 0.8), (74, 10, 0.95), (86, 11, 1.0)]
+LOW = [(13, 42, 0.05), (6, 36, 0.3), (1, 33, 0.45)]
+PADS = [(21, 6, 17, 0.35), (9, 13, 13, 0.25), (28, 15, 13, 0.3), (40, 11, 15, 0.5), (54, 9, 17, 0.7),
+        (66, 9, 13, 0.85), (78, 6, 15, 1.0), (89, 8, 11, 1.1), (3, 29, 13, 0.5), (47, 4, 11, 0.6)]
+
+
+def _ground():
+    pts = [(-1, GROUND), (70, GROUND), (74, 57), (77, 64), (-1, 64)]
+
+    def draw(g):
+        g.d.polygon(pts, fill=0, outline=1)
+        g.d.line((0, GROUND + 1, 69, GROUND + 1), fill=0)
+        for x in range(2, 68, 2):
+            g.px(x, GROUND + 2)
+        for x0, y0, ln in ((6, 58, 6), (24, 60, 5), (40, 57, 7), (56, 61, 6), (66, 58, 3)):
+            g.d.line((x0, y0, x0 + ln, y0), fill=1)
+        pix.checker(g, (70, 57, 77, 64), 0.25)
+        for x in (8, 30, 38, 62):  # 草
+            g.px(x, GROUND - 1), g.px(x + 1, GROUND - 2), g.px(x + 2, GROUND - 1)
+
+    return bake(draw, solid=lambda d: d.polygon(pts, fill=1))
+
+
+_C: dict = {}
+
+
+def parts():
+    if not _C:
+        far = mountain(ridge([(96, 30, 22), (118, 24, 22)], 41, base=64, rough=0.9, power=0.9, round_top=True),
+                       lit=((0.5, 1), (0.25, 2), (0.125, 2)), shade=((0.125, 2),), outline=1, veins=2, seed=4)
+        far2 = mountain(ridge([(84, 36, 18), (108, 30, 20), (128, 34, 12)], 42, base=64, rough=0.6, round_top=True),
+                        lit=((0.25, 1),), shade=(), outline=2)
+        _C.update(far=far, far2=far2, ground=_ground(),
+                  pads={w: pine_pad(w, w) for w in (11, 13, 15, 17)})
+    return _C
+
+
+SQUIRREL = pix.frames("""
+##
+# #  .
+#  ####
+ ######
+ #  # #
+---
+ ##
+#  # .
+#  ####
+ ######
+  # #
+---
+##   .
+ # ####
+ #######
+  ## ##
+""")
+
+
+def wind(t: float) -> float:
+    """风势 0..1：微风 + 每 31 秒一阵大风（2 秒起、9 秒落）"""
+    w = 0.12 + 0.08 * noise(t * 0.3, 5)
+    k = t % 31
+    if k < 11:
+        w += ease_out(span(k, 0, 2)) * (1 - span(k, 2, 11)) * 0.9
+    return clamp(w)
+
+
+def sway(t: float, flex: float) -> tuple[float, float]:
+    """离根柔度 flex 处的位移（风从右往左吹）"""
+    w = wind(t)
+    dx = -w * 6 * flex + math.sin(t * (1.2 + w * 4) + flex * 2) * (0.5 + 2.5 * w) * flex
+    dy = w * 1.5 * flex * flex
+    return dx, dy
 
 
 @register
 class PineWind(Rest):
     id = "x3.pine"
     name = "松风"
-    desc = "崖上老松探出长臂，平时微风轻摇，一阵大风过来松盖整排压弯回弹；松下隐者闭目听松，松果偶落"
+    desc = "崖头老松一枝长臂探向山谷，松下小道士盘坐听风；大风时松盖整排压弯回弹、松针飘落；松果落下、松鼠出来啃果"
     T = {"enter": 2.6, "exit": 1.2}
 
     def setup(self):
-        s = self.seed
-        self.far = layer(peaks(128, 46, [(78, 14, 22), (112, 8, 26)], s, 1.0, power=1.4), 0.14, outline=2,
-                         fog=14, floor=0.0)
-        self.mid = layer(peaks(128, 62, [(58, 44, 30), (104, 34, 34)], s + 4, 1.6, power=1.5), 0.4, outline=1,
-                         fog=16, floor=0.0, solid=True)
-        self.cliff = poly_sprite([CLIFF], 0.0, strokes=[(6, 48, 9, 55), (16, 50, 14, 58), (28, 52, 32, 60),
-                                                        (36, 56, 37, 62), (8, 60, 12, 63)])
+        self.P = parts()
 
-    # ------------------------------------------------------------ 风
+    def tree(self, g: Gfx, t: float, wt=None):
+        P = self.P
 
-    def wind(self, t: float) -> float:
-        """0..1：平时 0.15–0.3 的微风，每隔一阵一场大风"""
-        w = 0.18 + 0.12 * noise(t * 0.25, self.seed)
-        ev = every(t, 31.0, 9.0, 6.0)
-        if ev:
-            k, lt = ev
-            peak = 0.75 + 0.25 * rand(k, self.seed)
-            w += peak * smoothstep(span(lt, 0, 2.0)) * (1 - smoothstep(span(lt, 4.5, 9.0)))
-        return clamp(w, 0, 1.2)
+        def pts(chain):
+            out = []
+            for x, y, f in chain:
+                dx, dy = sway(t, f)
+                out.append((x + dx, y + dy))
+            return out
 
-    def sway(self, t: float, w: float, k: float) -> tuple[float, float]:
-        """离树根越远 k 越大，摆得越多：返回 (dx, dy)"""
-        osc = math.sin(t * (2.2 + w * 2) + k * 2.5) * (0.6 + w * 1.6)
-        lean = w * 4.0
-        return (osc + lean) * k, (abs(osc) * 0.4 + lean * 0.3) * k
+        tr = pts(TRUNK)
+        g.d.line(tr, fill=1, width=5)
+        g.d.line(tr, fill=0, width=3)
+        for i, (x, y) in enumerate(tr[:-1]):  # 树皮鳞纹
+            nx, ny = tr[i + 1]
+            for k in (0.3, 0.7):
+                px_, py_ = lerp(x, nx, k), lerp(y, ny, k)
+                g.px(px_ - 1 + (i % 2), py_), g.px(px_ + (i % 2), py_ - 1)
+        for chain, wd in ((ARM, 3), (LOW, 2)):
+            p = pts(chain)
+            g.d.line(p, fill=1, width=wd)
+            if wd > 2:
+                g.d.line(p, fill=0, width=1)
+                for x, y in p[1:-1]:
+                    g.px(x, y - 1)
+        w = wind(t)
+        for i, (x, y, wd, f) in enumerate(PADS):
+            dx, dy = sway(t + i * 0.13, f)
+            spr = P["pads"][min(P["pads"], key=lambda k: abs(k - wd))]
+            if w > 0.5 and f > 0.4:  # 大风时压扁一点
+                spr = pix.stretch(spr, 1.0 + 0.1, 0.8)
+            pix.blit(g, spr, x - spr.w // 2 + dx, y - spr.h // 2 + dy)
+        return w
 
-    # ------------------------------------------------------------ 零件
-
-    def pine(self, g: Gfx, t: float, w: float):
-        bx, by = BASE
-        # 主干（粗，带树皮裂纹）
-        pts = []
-        for i, (x, y) in enumerate(TRUNK):
-            k = (i / (len(TRUNK) - 1)) ** 2 * 0.35
-            dx, dy = self.sway(t, w, k)
-            pts.append((x + dx, y + dy))
-        for i in range(len(pts) - 1):
-            wd = 4 if i < 2 else 3 if i < 4 else 2
-            g.d.line((pts[i], pts[i + 1]), fill=1, width=wd)
-        for i in range(1, len(pts) - 2):  # 树皮：暗色的鳞纹
-            x, y = (pts[i][0] + pts[i + 1][0]) / 2, (pts[i][1] + pts[i + 1][1]) / 2
-            g.px(x, y, 0)
-            g.px(pts[i][0] - 1, pts[i][1] + 1, 0)
-        g.d.line((bx - 4, by, bx - 1, by - 3), fill=1)    # 根
-        g.d.line((bx + 5, by + 1, bx + 1, by - 3), fill=1)
-        ends = {}
-        for bi, (root, rel) in enumerate(BRANCHES):
-            rx, ry = pts[root]
-            prev = (rx, ry)
-            chain = []
-            L = len(rel)
-            for j, (ox, oy) in enumerate(rel):
-                k = 0.25 + (j + 1) / L * (0.9 if bi == 0 else 0.6)
-                dx, dy = self.sway(t + bi * 0.3, w, k)
-                p = (TRUNK[root][0] + ox + dx, TRUNK[root][1] + oy + dy)
-                g.d.line((prev, p), fill=1, width=2 if j < L / 2 else 1)
-                chain.append(p)
-                prev = p
-            ends[bi] = chain
-        ends[-1] = pts
-        for bi, j, wd in PADS:
-            x, y = ends[bi][j]
-            pine_pad(g, x, y - 2, wd, sway=w * 1.2 * (1 if bi in (0, 2, -1) else 0.6))
-
-    def wind_lines(self, g: Gfx, t: float, w: float):
-        n = int(1 + w * 9)
+    def gust_lines(self, g: Gfx, t: float, w: float):
+        n = int(max(0, w - 0.25) * 14)
         for i in range(n):
-            sp = 50 + rand(i, 5) * 40
-            x = (rand(i, 6) * 220 + t * sp * (0.4 + w)) % 220 - 50
-            y = 6 + rand(i, 7) * 40
-            ln = 8 + rand(i, 8) * 12 * (0.5 + w)
-            pts = [(x + u, y + math.sin(u * 0.35 + t * 3 + i) * 1.2) for u in range(0, int(ln), 2)]
-            if len(pts) > 1:
-                g.d.line(pts, fill=1)
-                ex, ey = pts[-1]
-                g.d.arc((ex - 2, ey - 3, ex + 2, ey + 1), 270, 90, fill=1) if i % 3 == 0 else None
-
-    def needles(self, g: Gfx, t: float, w: float):
-        """大风吹落的松针（每根是一小撇）"""
-        if w < 0.5:
-            return
-        n = int((w - 0.5) * 24)
-        for i in range(n):
-            ph = (t * (0.4 + rand(i, 3) * 0.3) + rand(i, 4)) % 1.0
-            x = 40 + rand(i, 5) * 60 + ph * 70
-            y = 8 + rand(i, 6) * 26 + ph * 18 + math.sin(ph * 12 + i) * 2
-            g.d.line((x, y, x + 2, y + (1 if i % 2 else -1)), fill=1)
-
-    def falls_far(self, g: Gfx, t: float):
-        x = 106
-        for y in range(18, 34):
-            if (y + int(t * 10)) % 3:
-                g.px(x, y)
-
-    def sage(self, g: Gfx, t: float, w: float):
-        x, y = SAGE
-        g.blit(SIT, x - 3, y - SIT.h + 2)
-        if w > 0.55:  # 衣袖、发带被风吹起
-            fl = math.sin(t * 14) * 1.5
-            g.d.line((x - 2, y - 4, x - 6 - w * 3, y - 4 + fl), fill=1)
-            g.d.line((x - 1, y - 7, x - 5 - w * 3, y - 8 - fl), fill=1)
+            sp = 70 + rand(i, 3) * 40
+            y = 4 + rand(i, 4) * 46
+            x = 140 - ((t * sp + rand(i, 5) * 200) % 200)
+            ln = 6 + int(rand(i, 6) * 8)
+            if i % 3 == 0:  # 带卷头的风线
+                g.d.line((x, y, x + ln, y), fill=1)
+                g.d.arc((x - 3, y - 3, x + 1, y + 1), 90, 270, fill=1)
+            else:
+                for j in range(0, ln, 2):
+                    g.px(x + j, y)
+        for i in range(int(w * 10)):  # 被吹落的松针
+            k = ((t * 0.6 + rand(i, 7)) % 1)
+            x0 = 30 + rand(i, 8) * 60
+            x = x0 - k * 70 * w
+            y = 18 + rand(i, 9) * 8 + k * 30 + math.sin(t * 8 + i) * 2
+            g.d.line((x, y, x + 1, y + (1 if i % 2 else -1)), fill=1)
 
     def cone(self, g: Gfx, t: float):
-        """松果：从长臂的枝头落下，在石上弹两下，滚到隐者脚边"""
-        ev = every(t, 73.0, 12.0, 44.0)
+        """松果落下弹两下停在石上；随后松鼠从树根跑出来，叼起松果跑回去"""
+        ev = every(t, 73, 16, 25)
         if not ev:
-            return
-        k, lt = ev
-        x0, y0 = 46, 34
-        if lt < 1.4:
-            p = lt / 1.4
-            x = x0 - p * 8
-            y = lerp(y0, 50, ease_out_bounce(p))
+            return None
+        lt = ev[1]
+        x0, y0 = 72, 14
+        end = 66.0
+        if lt < 1.2:
+            k = ease_in(lt / 1.2)
+            x, y = x0 - lt * 2, lerp(y0, GROUND - 2, k)
         elif lt < 3.0:
-            p = (lt - 1.4) / 1.6
-            x = x0 - 8 - ease_out(p) * 2
-            y = 50
+            k = span(lt, 1.2, 3.0)
+            hop = abs(math.sin(k * math.pi * 2)) * (1 - k) * 8
+            x, y = lerp(x0 - 2.4, end, k), GROUND - 2 - hop
         else:
-            x, y = x0 - 10, 50
-            if lt > 10:
-                if int(lt * 6) % 2:
-                    return
-        g.d.ellipse((x - 1, y - 2, x + 1, y + 1), fill=1)
-        g.px(x, y - 1, 0)
+            x, y = end, GROUND - 2
+        # 松鼠：5–8.5 跑过去，8.5–11 蹲着啃，11–14 叼着跑回树根
+        sq = None
+        if 5 < lt < 14:
+            if lt < 8.5:
+                sx, run, fl = lerp(18, end - 6, span(lt, 5, 8.5)), True, False
+            elif lt < 11:
+                sx, run, fl = end - 6, False, False
+            else:
+                sx, run, fl = lerp(end - 6, 14, span(lt, 11, 14)), True, True
+            spr = SQUIRREL[int(lt * 10) % 2] if run else (SQUIRREL[2] if int(lt * 3) % 3 else SQUIRREL[0])
+            sq = (spr, sx, fl)
+            if lt > 11:
+                x, y = sx - 1, GROUND - 6
+        if lt < 14:
+            g.d.ellipse((x - 1, y - 2, x + 1, y + 1), fill=1)
+            g.px(x, y - 1, 0), g.px(x, y + 1, 0)
+        if sq:
+            spr, sx, fl = sq
+            pix.blit(g, spr, sx - 3, GROUND - spr.h, flip=fl)
+        return lt
 
-    def poem(self, g: Gfx, t: float, k: float):
-        if k > 0:
-            g.d.rectangle((113, 0, 127, 50), fill=0)
-            vpoem(g, 115, 2, "特爱松风", k)
+    def cranes(self, g: Gfx, t: float):
+        ev = every(t, 117, 9, 50)
+        if ev:
+            k = ev[1] / 9
+            for j in range(2):
+                bird(g, lerp(132, 70, k) + j * 8, 30 + j * 2 + math.sin(k * 5 + j) * 2, ev[1], fps=4, flip=True,
+                     ph=j * 0.5)
+
+    def world(self, g: Gfx, t: float):
+        P = self.P
+        g.blit(P["far2"], 0, 0)
+        g.blit(P["far"], 0, 0)
+        for y in range(36, 62):  # 远处一线瀑布
+            if (y + int(t * 20)) % 3:
+                g.px(107, y)
+        g.blit(P["ground"], 0, 0)
+        w = self.tree(g, t)
+        self.cranes(g, t)
+        ev = every(t, 73, 16, 25)
+        wow = ev is not None and 1.2 < ev[1] < 3.6
+        ph = t % 26
+        pose = "sit" if (wow or 18 < ph < 24) else "meditate"
+        daoshi(g, DX, GROUND, pose, t, face="wow" if wow else "normal")
+        ribbon(g, DX - 3, GROUND - 31, t, w)
+        self.cone(g, t)
+        self.gust_lines(g, t, w)
+        return w
 
     def mx(self, g: Gfx, t: float, w: float):
-        for x in range(8):  # 松涛波形
-            a = 0.6 + w * 2.6
-            y = 3.5 + math.sin(x * 0.85 - t * (2.5 + w * 3)) * a
-            g.mx_set(x, int(round(y)))
-            if w > 0.6:
-                g.mx_set(x, int(round(y)) + 1)
-        g.mx[7, :] = True
+        amp = 0.8 + w * 2.6
+        for x in range(8):
+            y = 3.5 + math.sin(x * 0.9 + t * (2 + w * 6)) * amp
+            yi = int(round(y))
+            if 0 <= yi < 8:
+                g.mx[yi, x] = True
+                if w > 0.5 and yi + 1 < 8:
+                    g.mx[yi + 1, x] = True
 
-    # ------------------------------------------------------------ 阶段
-
-    def picture(self, g: Gfx, t: float, w: float):
-        g.blit(self.far, 0, 0)
-        g.blit(self.mid, 0, 0)
-        self.falls_far(g, t)
-        self.wind_lines(g, t, w)
-        g.blit(self.cliff, 0, 0)
-        self.pine(g, t, w)
-        self.needles(g, t, w)
-        self.sage(g, t, w)
+    def hold(self, g: Gfx, t: float):
+        w = self.world(g, t)
+        if every(t, 140, 12, 60):
+            plate(g, 102, 49, "特爱松风", align="center")
+        self.mx(g, t, w)
 
     def enter(self, g: Gfx, t: float):
         T = self.T["enter"]
-        w = self.wind(0) * ease_out(span(t, 0.3, 1.8)) + 0.6 * math.sin(span(t, 0.3, T) * math.pi)
-        self.picture(g, t - T, w)
-        self.poem(g, t, span(t, 1.0, T))
-        self.mx(g, t, w)
-
-    def hold(self, g: Gfx, t: float):
-        w = self.wind(t)
-        self.picture(g, t, w)
-        self.cone(g, t)
-        if t < 16:
-            self.poem(g, t, 1 - span(t, 13, 16))
-        else:
-            ev = every(t, 140.0, 22.0, 60.0)
-            if ev:
-                self.poem(g, t, span(ev[1], 0, 2.0) * (1 - span(ev[1], 19, 22)))
-        self.mx(g, t, w)
+        tw = t - T
+        w = self.world(g, tw)
+        g.fade(span(t, 0, 0.8))
+        if t > 1.0:
+            plate(g, 102, 49, "特爱松风", align="center")
+        self.mx(g, tw, w)
 
     def exit(self, g: Gfx, t: float):
-        T = self.T["exit"]
-        tt = self.hold_t + t   # 接着持续阶段最后的样子
-        w = self.wind(tt) * (1 - span(t, 0, 0.6))
-        self.picture(g, tt, w)
-        g.fade(1 - ease_in(span(t, 0.2, T)))
-        self.mx(g, t, w)
-        g.mx[:, : int(t / T * 8)] = False
+        tt = self.hold_t + t
+        w = self.world(g, tt)
+        g.fade(1 - span(t, 0.2, 1.2))
+        self.mx(g, tt, w * (1 - span(t, 0, 1.2)))

@@ -1,402 +1,546 @@
-"""化符入水：手拈一道符在碗上方燃烧，符灰一片片落进清水，碗里泛起涟漪；一道烧尽，剑指在水面画符，再续一道。
+"""化符入水：夜里院中，小道士一手拈着一道黄符横在清水碗上方，符从末端慢慢烧向指尖，符灰一片片落进碗里。
 
-依据：符水之法——符烧成灰和水吞服；水咒“北方壬癸水……百病消除”；
-治鲠符等以剑指（中指、食指）“在碗中水面写符”。
+依据：符水——纸符“烧成灰与水一起吞服”；水咒“北方壬癸水……云雨须臾至……百病消除”；
+治鲠等法“伸直中指和食指……在碗中水面写符”。北方壬癸属水，夜空画北斗。
+
+舞台（侧视）：北斗七星、院墙瓦檐；左边小道士，中间三足架上一只清水碗，右边小几上烛台与一叠黄符。
+入场：小道士拿着新符走到烛台前，把符的一头伸进烛火——“呼”地着了，火星一溅，再走回碗前。
+持续：一轮 600 秒烧一道：符头在指尖、符脚朝外，火苗在符脚那头逐帧跳动，焦边往指尖退（随 e），
+      烟团一路往上飘；每 9 秒一片符灰从焦边打着旋落进碗里，水面泛起一圈扁涟漪，碗里漂的灰越来越多；
+      每 30 秒一个小事件：上前半步、另一只手剑指在水面画讳（“北方壬癸水”），或凑近吹一口气让火苗一窜。
+      烧到最后剩指尖一角，松手落水，剑指画讳，一碗符水放光。续：走到小几前拈一道新符、烛上点着、回到碗前，“第几道”加一。
+中断：把符提起来甩两下，火灭成一缕烟，“暂歇”。恢复：剑指一点，火星飞到符脚，重新烧起来。
+圆满：剩下的符“呼”地烧完，大块灰落水，最后一角落下溅起水花，一碗符水放光，水气升腾，“百病消除”。
 """
 from __future__ import annotations
 
 import math
 
-from ..engine.anim import blink, clamp, ease_in, ease_in_out, ease_out, ease_out_back, lerp, noise, rand, span
+import numpy as np
+
+from ..engine import pix
+from ..engine.anim import ease_in, ease_in_out, ease_out, ease_out_back, lerp, rand, span
+from ..engine.chars import Part, daoshi
 from ..engine.cn import cn_num
-from ..engine.fx import flame, ring, smoke_wisp, typewriter
 from ..engine.gfx import Gfx, Sprite
 from ..engine.scene import Ritual, register
-from .r2_common import JIANZHI, arm, glyph, rays
+from .r2_common import (act, boxed, candle, fist, floor, fu_spr, ring, star4,
+                        table_spr, vbox)
 
-JIANZHI_D = JIANZHI.flipv()
+FLOOR = 58
+DAO_X = 36
+HAND = (DAO_X + 12, 38)          # 拈符的手
+BOWL_X, BOWL_Y = 49, 44           # 碗（左上角，27×12）
+WATER = (62, 46)                  # 水面中心
+TAB_X, TAB_Y = 90, 50             # 矮几
+CANDLE_X = 104
+STACK_X = 93                      # 小几上的一叠黄符
+LIGHT_X = 70                      # 点符时站的位置
+FULL, STUB = 21, 3
+FW = 9                            # 符纸宽
+RENEW = 9.0
+END = 585.0                       # 烧完（轮内）
+ASH_EVERY = 9.0
+CNT_X = 121
+DIPPER = [(70, 9), (76, 7), (82, 9), (87, 12), (90, 18), (98, 19), (100, 13)]  # 北斗：天枢…摇光（斗口朝左）
 
-BX, BY = 64, 46          # 碗口中心
-FX0, FX1 = 58, 70        # 符纸左右
-FTOP, FBOT, FEND = 11, 38, 16  # 符纸上沿、新符下沿、烧到最后剩的下沿
-CANDLE = (100, 40)       # 烛芯
-LEAD = 6.0               # 每轮开头：点符
-END = 560.0              # 烧完的时刻（轮内）
-RENEW = 6.5
-
-PINCH = Sprite("""
-   .####.
-  .#....#.
-  #..##..#
-  #.#..#.#
-  .#....#.
-   #.##.#
-   #.##.#
-    #..#
+FLAME = pix.frames("""
+  #
+  ##
+ ###
+#####
+##.##
+#...#
+ #.#
+---
+ #
+ ##
+ ###
+####
+##.##
+#...#
+ #.#
+---
+   #
+  #
+ ###
+ ####
+##.##
+#...#
+ #.#
 """)
 
 
-def _water_y(x: float) -> float:
-    return BY
+# ---------------------------------------------------------------- 道具
+
+_P: dict = {}
+
+
+def paper(L: int, t: float) -> Sprite:
+    """横拈的符（符头在左、靠指尖；符脚朝右）烧剩 L 列：右边两列焦黑（网点），焦边参差（随时间抖）"""
+    L = max(1, min(FULL, int(L)))
+    fr = int(t * 6) % 3
+    key = ("paper", L, fr)
+    s = _P.get(key)
+    if s is None:
+        base = fu_spr(FW, FULL).rot90(1)                    # 21×9，符头朝左
+        on = base.on[:, :L].copy()
+        mk = base.mask[:, :L].copy()
+        if L < FULL:
+            for y in range(FW):
+                if L >= 2 and (y + fr) % 2 == 0:
+                    on[y, L - 2] = False
+                on[y, L - 1] = (y + fr) % 3 == 0
+                if rand(y * 7 + fr, 3) < 0.35 and L > 2:
+                    mk[y, L - 1] = on[y, L - 1] = False
+        s = _P[key] = Sprite(on=on, mask=mk)
+        if len(_P) > 200:
+            _P.clear()
+    return s
+
+
+def _bowl() -> Sprite:
+    """清水大碗 27×12（微俯视）：碗口一圈厚沿、里面一汪黑水、碗身一道回纹带、高光两点、背光网点、圈足"""
+    p = Part(27, 12)
+    p.shape("polygon", [(0, 2), (26, 2), (24, 6), (20, 10), (6, 10), (2, 6)], fill=1)
+    p.shape("ellipse", (0, 0, 26, 5), fill=1)
+    p.d.ellipse((2, 1, 24, 4), fill=0)                  # 水面
+    p.d.line((3, 6, 23, 6), fill=0)                     # 回纹带上下两道
+    p.d.line((5, 8, 21, 8), fill=0)
+    for x in range(5, 22, 4):
+        p.px(x, 7, 0), p.px(x + 1, 7, 0)
+    p.dither([(17, 7), (25, 4), (20, 10), (16, 10)], 0.5, 0)
+    p.px(6, 9, 0)
+    p.shape("rectangle", (9, 11, 17, 11), fill=1)       # 圈足
+    return p.sprite()
+
+
+def _stand() -> Sprite:
+    """碗下的木托 21×2：一道托板、三只短脚"""
+    p = Part(21, 2)
+    p.shape("rectangle", (1, 0, 19, 0), fill=1)
+    for x in (2, 10, 18):
+        p.px(x, 1)
+    return p.sprite()
+
+
+def _hills() -> Sprite:
+    """远山 128×14：只画山脊一线，脊下一行稀点"""
+    p = Part(128, 14)
+    pts = [(0, 10), (10, 6), (18, 9), (30, 2), (44, 9), (56, 5), (70, 11), (84, 4), (96, 9), (108, 3), (120, 8), (127, 6)]
+    p.shape("line", pts, fill=1)
+    for (x0, y0), (x1, y1) in zip(pts, pts[1:]):
+        for x in range(x0, x1, 3):
+            y = y0 + (y1 - y0) * (x - x0) / max(x1 - x0, 1)
+            p.px(x, int(y) + 2 + (x % 2))
+    return p.sprite()
+
+
+def prop(name):
+    if name not in _P:
+        _P[name] = {"stand": _stand, "bowl": _bowl, "hills": _hills}[name]()
+    return _P[name]
+
+
+def mx_draw(g: Gfx, L: float, lit: bool, t: float, ash: float | None = None, ripple: float | None = None, glow=False):
+    """点阵：上面一道横符（越烧越短、末端火点闪），下面一只碗；落灰时一点往下掉，涟漪时水线向两边散"""
+    n = 1 + int(round((L - STUB) / (FULL - STUB) * 5)) if L > 0 else 0
+    for x in range(1, 1 + n):
+        g.mx[2, x] = True
+        g.mx[3, x] = x % 2 == 1
+    if lit and n:
+        g.mx[1, min(n + 1, 7)] = (t * 5) % 1 < 0.6
+        g.mx[2, min(n + 1, 7)] = True
+        if (t * 1.3) % 1 < 0.3:
+            g.mx[0, min(n, 7)] = True
+    g.mx[5, 0] = g.mx[5, 7] = True
+    g.mx[6, 1] = g.mx[6, 6] = True
+    g.mx[7, 2:6] = True
+    if ash is not None:
+        g.mx[3 + min(int(ash * 3), 2), 4] = True
+    if ripple is not None:
+        r = int(ripple * 3)
+        g.mx[5, max(3 - r, 1)] = g.mx[5, min(4 + r, 6)] = True
+    if glow:
+        g.mx[5, 1:7] = True
+        g.mx[4, 2] = g.mx[4, 5] = (t * 4) % 1 < 0.5
 
 
 @register
 class FuShui(Ritual):
     id = "r2.fushui"
     name = "化符入水"
-    desc = "手拈黄符在烛上点着，悬在清水碗上慢慢烧尽，符灰落水泛起涟漪；一道烧完以剑指在水面画符，再化一道"
-    T = {"enter": 4.5, "interrupt": 1.6, "resume": 2.2, "complete": 5.0}
+    desc = "夜里院中，小道士拈一道黄符在清水碗上方，符从末端慢慢烧向指尖，符灰打着旋落进碗里泛起涟漪，隔一阵剑指在水面画讳"
+    T = {"enter": 6.5, "interrupt": 1.6, "resume": 1.8, "complete": 5.5}
     CYCLE = 600.0
 
     def setup(self):
-        self.s = self.rng.randrange(1000)
+        self.puffs = pix.Puffs(self.seed)
+        self.sparks = pix.Sparks(self.seed + 1)
+        self.last_t = None
+        self.fired: set = set()
 
-    # ------------------------------------------------------------ 零件
+    def _dt(self, t):
+        dt = 1 / 30 if self.last_t is None or t < self.last_t else min(t - self.last_t, 0.2)
+        self.last_t = t
+        return dt
 
-    def bowl(self, g: Gfx, glow: float = 0.0):
-        g.d.chord((36, 30, 92, 62), 0, 180, fill=0, outline=1)
-        g.d.rectangle((55, 59, 73, 62), fill=0, outline=1)
-        g.d.chord((36, 30, 92, 62), 0, 180, outline=1)
-        g.d.ellipse((36, 42, 92, 50), fill=0, outline=1)
-        g.d.ellipse((40, 43, 88, 49), outline=1)
-        for i in range(9):  # 碗身一圈点纹
-            a = math.pi * (0.15 + 0.7 * i / 8)
-            g.px(BX + math.cos(a) * 24, 47 + math.sin(a) * 11)
+    def once(self, key) -> bool:
+        if key in self.fired:
+            return False
+        if len(self.fired) > 200:
+            self.fired.clear()
+        self.fired.add(key)
+        return True
+
+    @staticmethod
+    def burn(u: float) -> float:
+        """轮内 u 秒时符剩下的长度"""
+        return lerp(FULL, STUB, span(u, RENEW, END))
+
+    # ------------------------------------------------------------ 舞台
+
+    def stage(self, g: Gfx, t: float, lit: bool = True, stack: int = 3):
+        for i in range(len(DIPPER) - 1):  # 北斗：星与星之间的虚线
+            (x0, y0), (x1, y1) = DIPPER[i], DIPPER[i + 1]
+            pix.dotted(g, x0, y0, x1, y1, step=3)
+        pix.dotted(g, *DIPPER[3], *DIPPER[0], step=3)
+        for i, (x, y) in enumerate(DIPPER):
+            g.px(x, y)
+            if (t * 0.7 + i * 0.37) % 3 > 0.3:
+                star4(g, x, y)
+        for i in range(12):  # 疏星
+            x, y = int(rand(i, 5) * 112), int(rand(i, 6) * 22)
+            if (t * 0.5 + rand(i, 7) * 9) % 4 > 0.6 and not (60 < x < 104 and y < 20) and not (y < 18 and x < 64):
+                g.px(x, y)
+        pix.blit(g, prop("hills"), 0, 28, outline=False)
+        floor(g, FLOOR)
+        pix.blit(g, table_spr(24, FLOOR - TAB_Y), TAB_X, TAB_Y)
+        candle(g, CANDLE_X, TAB_Y, t, lit)
+        for i in range(stack):  # 小几上一叠黄符
+            g.d.line((STACK_X + (i % 2), TAB_Y - 1 - i, STACK_X + 7 + (i % 2), TAB_Y - 1 - i), fill=1)
+        pix.blit(g, prop("stand"), BOWL_X + 3, BOWL_Y + 12)
+        pix.blit(g, prop("bowl"), BOWL_X, BOWL_Y)
+
+    def water(self, g: Gfx, u: float, t: float, burnt: float, glow: float = 0.0):
+        """水面：漂着的灰（随烧掉的比例变多）、水光一闪一闪、落灰的涟漪（按 u 算，不用状态）"""
+        cx, cy = WATER
+        for j in range(int(burnt * 9)):
+            x = cx + (rand(j, 21) - 0.5) * 18 + math.sin(t * 0.4 + j) * 1.2
+            g.px(x, cy - 0.5 + (j % 2))
+        gx = cx - 8 + (t * 3) % 16
+        g.px(gx, cy - 1)
+        for j in range(int(span(u, RENEW, END) * (END - RENEW) / ASH_EVERY) + 1):
+            land = RENEW + j * ASH_EVERY + 5.4
+            r = (u - land) / 1.6
+            if 0 < r < 1:
+                self.ripple(g, cx + (rand(j, 33) - 0.5) * 6, r)
         if glow > 0:
-            rays(g, BX, BY, 30, 30 + glow * 10, 14, phase=glow, sy=0.5)
+            for i in range(3):
+                x = cx - 6 + i * 6 + math.sin(t * 3 + i) * 1.5
+                if (t * 4 + i) % 1 < glow:
+                    g.px(x, cy - 1), g.px(x, cy)
 
-    def ripples(self, g: Gfx, drops):
-        """drops: [(age 秒, x)]：水面涟漪（压扁的椭圆）"""
-        for age, x in drops:
-            if 0 <= age < 2.2:
-                r = 2 + age * 10
-                if r > 22:
-                    continue
-                ry = r * 0.22
-                d = 1 if age < 0.6 else 2
-                n = max(8, int(r * 4))
-                for i in range(0, n, d):
-                    a = i / n * 2 * math.pi
-                    px, py = x + math.cos(a) * r, BY + math.sin(a) * ry
-                    if (px - BX) ** 2 / 23 ** 2 + (py - BY) ** 2 / 2.8 ** 2 < 1:
-                        g.px(px, py)
+    def ripple(self, g: Gfx, x: float, r: float, big: float = 1.0):
+        rx = 1 + r * 9 * big
+        ry = max(0.5, rx * 0.22)
+        n = int(rx * 4) + 6
+        for i in range(0, n, 2):
+            a = i / n * 2 * math.pi
+            px, py = x + math.cos(a) * rx, WATER[1] + math.sin(a) * ry
+            if abs(px - WATER[0]) < 11 - abs(py - WATER[1]) * 3:
+                g.px(px, py)
 
-    def ash_floating(self, g: Gfx, p: float, t: float):
-        """水面漂着的符灰：越烧越多"""
-        n = int(p * 18)
-        for i in range(n):
-            a = rand(i, self.s) * 2 * math.pi + t * 0.05 * (1 if i % 2 else -1)
-            r = 0.2 + 0.8 * rand(i + 40, self.s)
-            g.px(BX + math.cos(a) * r * 20, BY + math.sin(a) * r * 2.4)
+    def flakes(self, g: Gfx, u: float, L: float):
+        """正在往下掉的符灰（打着旋）"""
+        for j in range(int(span(u, RENEW, END) * (END - RENEW) / ASH_EVERY) + 1):
+            t0 = RENEW + j * ASH_EVERY + 4.0
+            k = (u - t0) / 1.4
+            if 0 <= k < 1:
+                x0 = HAND[0] + 1 + self.burn(t0)
+                x = lerp(x0, WATER[0] + (rand(j, 33) - 0.5) * 6, k) + math.sin(k * 9) * 1.5
+                y = lerp(HAND[1] + 1, WATER[1] - 1, ease_in(k))
+                if int(k * 8) % 2:
+                    g.px(x, y), g.px(x + 1, y)
+                else:
+                    g.px(x, y), g.px(x, y + 1)
+                return k
+        return None
 
-    def candle(self, g: Gfx, t: float, lit: float = 1.0):
-        x, y = CANDLE
-        g.d.rectangle((x - 4, y + 2, x + 4, 62), outline=1, fill=0)
-        g.d.line((x - 6, 62, x + 6, 62), fill=1)
-        g.d.line((x + 2, y + 3, x + 2, y + 7), fill=1)
-        g.d.line((x, y + 2, x, y), fill=1)
-        if lit > 0.05:
-            flame(g, x, y, 5 * lit, 10 * lit, t, self.s + 1)
+    def fu(self, g: Gfx, hand, L: float, t: float, lit: bool, dt: float, flare: float = 1.0, smoke: float = 1.0):
+        """拈着的符 + 末端的火苗 + 烟团"""
+        hx, hy = hand
+        spr = paper(int(round(L)), t if lit else 0)
+        pix.blit(g, spr, hx + 1, hy - 4)
+        ex, ey = hx + 1 + spr.w, hy - 4
+        if lit:
+            f = pix.anim(FLAME, t, 8)
+            if flare != 1.0:
+                f = pix.stretch(f, flare, flare)
+            pix.blit(g, f, ex - f.w // 2 - 1, ey + 4 - f.h)
+            if smoke > 0 and int(t * 2.6) != int((t - dt) * 2.6):
+                self.puffs.emit(ex - 1, ey - 5, vx=-3, vy=-8, life=2.0, rmax=1.6, spread=1)
+        fist(g, hx, hy)
+        g.px(hx + 1, hy - 1)                                  # 拈符的两指
+        return ex, ey
 
-    def fu(self, g: Gfx, x: float, top: float, bot: float, burning: bool, t: float, full: float = FBOT):
-        """一道符：上沿 top，下沿（烧到的地方）bot；字随符纸位置固定，下半烧掉的部分不画"""
-        w = FX1 - FX0
-        if bot <= top + 1:
-            return
-        g.d.rectangle((x, top, x + w, bot), fill=0, outline=1)
-        # 符文（坐标相对上沿）：三勾、敕、螺旋
-        for j, cx in enumerate((x + 3, x + 6, x + 9)):
-            g.d.line([(cx, top + 2), (cx + 1, top + 3), (cx, top + 5)], fill=1)
-        if top + 7 < bot:
-            spr = glyph("敕")
-            g.blit(spr, x + 1, top + 7)  # 先画整字，再把烧掉的部分抹掉
-        sp = []
-        for i in range(20):
-            k = i / 19
-            a = k * 4 * math.pi
-            sp.append((x + w / 2 + math.cos(a) * 3.5 * (1 - k * 0.8), top + 22 + math.sin(a) * 3.2 * (1 - k * 0.8)))
-        g.d.line(sp, fill=1)
-        if bot + 1 < top + 27:
-            g.d.rectangle((x - 1, bot + 1, x + w + 1, top + 27), fill=0)  # 抹掉已烧掉的
-        if burning:
-            # 焦边：锯齿 + 一条暗带
-            for xx in range(int(x), int(x + w) + 1):
-                jag = noise(xx * 0.7 + t * 2, self.s) * 3
-                g.d.line((xx, bot - jag, xx, bot), fill=1 if (xx + int(t * 8)) % 3 else 0)
-            for i in range(3):  # 火苗沿着焦边
-                fx = x + 2 + i * (w - 4) / 2
-                flame(g, fx, bot + 2, 5, 7 + 3 * noise(t * 3 + i, self.s), t + i * 0.3, self.s + i)
+    # ------------------------------------------------------------ 状态
+
+    def state(self, u: float) -> dict:
+        """轮内 u 秒：小道士站位、手、符长、是否着火、事件"""
+        S = dict(x=DAO_X, hand=HAND, L=self.burn(u), lit=True, face="normal", pose=None, jz=None, flare=1.0,
+                 drop=None, glow=0.0, phrase=False)
+        if u >= END:  # 最后一角落水 → 剑指画讳 → 符水放光
+            f = u - END
+            S["L"] = STUB
+            if f < 0.8:
+                S["hand"] = (HAND[0], HAND[1] - 2 * math.sin(f / 0.8 * math.pi))
+            else:
+                S.update(lit=False, L=0, hand=None, drop=f - 0.8)
+                S["pose"] = "idle"
+                if 2.2 < f < 7.0:
+                    S["pose"] = None
+                    S["x"] = DAO_X + 6 * span(f, 2.2, 2.6)
+                    a = (f - 2.6) * 4
+                    r = 4 * span(f, 2.6, 3.0)
+                    S["jz"] = (WATER[0] - 4 + math.cos(a) * r, WATER[1] - 1 + math.sin(a) * r * 0.3)
+                    S["trail"] = (a, r)
+                    S["phrase"] = True
+                elif f >= 7.0:
+                    S["pose"] = "gongshou" if f < 11 else ("bow" if f < 12.4 else "idle")
+                    S["face"] = "happy"
+                S["glow"] = span(f, 4.0, 6.0)
+            return S
+        ph = (u - RENEW) % 30 if u >= RENEW else -1
+        if 12.0 < ph < 16.0:                      # 闭目念水咒：三点灵光绕碗转，水面泛光
+            S["face"] = "sleep"
+            S["orbit"] = ph - 12.0
+            S["phrase"] = True
+            S["glow"] = 0.3 if 12.5 < ph < 15.5 else 0.0
+        elif 24.0 < ph < 25.6:                    # 凑近吹一口气，火苗一窜
+            S["face"] = "wow"
+            S["flare"] = 1 + 0.5 * math.sin(span(ph, 24.3, 25.3) * math.pi)
+            S["blow"] = ph - 24.0
+        elif 6.0 < ph < 7.0:
+            S["face"] = "happy"
+        if u < RENEW:
+            S["phrase"] = True
+        return S
+
+    # ------------------------------------------------------------ 画
+
+    def draw_state(self, g: Gfx, t: float, u: float, S: dict, dt: float, stack: int = 3):
+        self.stage(g, t, stack=stack)
+        burnt = 1 - (S["L"] - STUB) / (FULL - STUB) if S["L"] > 0 else 1.0
+        self.water(g, u, t, burnt, S["glow"])
+        ash = self.flakes(g, u, S["L"]) if u < END else None
+        if S["drop"] is not None:  # 最后一角落水
+            k = S["drop"] / 0.6
+            if k < 1:
+                pix.blit(g, paper(STUB, 0), HAND[0] + 1, lerp(HAND[1] - 3, WATER[1] - 2, ease_in(k)))
+            r = (S["drop"] - 0.6) / 1.8
+            if 0 < r < 1:
+                self.ripple(g, WATER[0] - 6, r, 1.2)
+                self.ripple(g, WATER[0] - 6, max(r - 0.3, 0), 1.2)
+            if S["drop"] > 0.6 and self.once(("splash", round((u - S["drop"]) * 10))):
+                self.sparks.burst(WATER[0] - 6, WATER[1] - 1, 8, 18, up=14, life=0.5, gravity=80)
+        if S["glow"] > 0.5:  # 符水放光：碗口上方几道光、水气升起
+            for i in range(5):
+                x = WATER[0] - 8 + i * 4
+                h = 2 + ((int(t * 6) + i) % 3)
+                g.d.line((x, BOWL_Y - 2, x, BOWL_Y - 2 - h), fill=1) if i % 2 == int(t * 3) % 2 else None
+            if int(t * 1.5) != int((t - dt) * 1.5):
+                self.puffs.emit(WATER[0] + (rand(int(t), 9) - 0.5) * 10, BOWL_Y - 3, vx=0, vy=-5, life=1.6, rmax=1.4)
+        if S["pose"]:
+            daoshi(g, S["x"], FLOOR, S["pose"], t, face=S["face"])
         else:
-            g.d.line((x, bot, x + w, bot), fill=1)
+            if S["hand"] is None:
+                if S["jz"]:  # 剑指在水面画讳
+                    jx, jy = S["jz"]
+                    h = act(g, S["x"], FLOOR, t, hand_to=(WATER[0] - 6, 36), face=S["face"])["hand"]
+                    g.d.rectangle((h[0] - 1, h[1] + 1, h[0] + 2, h[1] + 5), fill=0)
+                    g.d.line((h[0], h[1] + 1, h[0], h[1] + 4), fill=1)        # 剑指朝下：食指、中指
+                    g.d.line((h[0] + 1, h[1] + 1, h[0] + 1, h[1] + 4), fill=1)
+                    pix.dotted(g, h[0] + 0.5, h[1] + 6, jx, jy - 1, step=2, phase=int(t * 12))
+                    if S.get("trail"):
+                        a0, r = S["trail"]
+                        for j in range(12):
+                            aa = a0 - j * 0.35
+                            g.px(WATER[0] - 4 + math.cos(aa) * r, WATER[1] + math.sin(aa) * r * 0.3)
+                    if int(t * 4) % 2:
+                        star4(g, jx + 2, jy - 2)
+                else:
+                    daoshi(g, S["x"], FLOOR, "idle", t)
+            else:
+                h = act(g, S["x"], FLOOR, t, hand_to=S["hand"], face=S["face"])["hand"]
+                self.fu(g, h, S["L"], t, S["lit"], dt, flare=S["flare"])
+        if S.get("orbit") is not None:  # 三点灵光绕碗
+            k = S["orbit"]
+            for j in range(3):
+                a = k * 2.4 + j * 2.09
+                r = 15 * min(k * 2, 1, (4 - k) * 2)
+                if r > 1:
+                    star4(g, WATER[0] + math.cos(a) * r, WATER[1] + 2 + math.sin(a) * r * 0.35, big=j == int(k * 3) % 3)
+        if S.get("blow") is not None:
+            b = S["blow"]
+            for j in range(3):
+                q = b * 1.4 - j * 0.2
+                if 0 < q < 1:
+                    g.px(S["x"] + 8 + q * 6, 33 + j + q * 2)
+            if 0.4 < b < 0.5 and self.once(("blow", round(u))):
+                ex = HAND[0] + 1 + S["L"]
+                self.sparks.burst(ex, HAND[1] - 5, 6, 16, up=10, life=0.5, gravity=30)
+        self.puffs.step(dt, wind=math.sin(t * 0.3) * 2)
+        self.puffs.draw(g)
+        self.sparks.step(dt)
+        self.sparks.draw(g)
+        rip = None
+        for j in range(int(span(u, RENEW, END) * (END - RENEW) / ASH_EVERY) + 1):
+            r = (u - (RENEW + j * ASH_EVERY + 5.4)) / 1.6
+            if 0 < r < 1:
+                rip = r
+        mx_draw(g, S["L"], S["lit"], t, ash=ash, ripple=rip, glow=S["glow"] > 0.5)
 
-    def hand(self, g: Gfx, x: float, top: float):
-        """拈符的手：两指捏住符的上沿，袖子往右上出画"""
-        hx, hy = x + 3, top - 6
-        arm(g, hx + 7, hy + 2, -0.45, 70, 4, 14)
-        g.blit(PINCH, hx, hy)
-
-    def burn_y(self, u: float) -> float:
-        p = clamp((u - LEAD) / (END - LEAD))
-        return lerp(FBOT, FEND, p)
-
-    def drops(self, u: float):
-        """按 e 定时的落灰：(年龄, x)"""
-        out = []
-        if u < LEAD:
-            return out
-        period = 9.0
-        j = int((u - LEAD) // period)
-        for jj in (j - 1, j):
-            if jj < 0:
-                continue
-            t0 = LEAD + jj * period + rand(jj, self.s) * 4
-            age = u - t0
-            x = FX0 + 2 + rand(jj + 99, self.s) * (FX1 - FX0 - 4)
-            out.append((age, x))
-        return out
-
-    def falling_ash(self, g: Gfx, u: float, bot: float):
-        """一片符灰从焦边飘落：落到水面时（age=0）起涟漪"""
-        rip = []
-        for age, x in self.drops(u):
-            fall = 1.6
-            if -fall < age < 0:
-                k = 1 + age / fall
-                yy = lerp(bot + 2, BY, ease_in(k))
-                xx = x + math.sin(k * 6 + x) * 2
-                g.d.rectangle((xx, yy, xx + 1, yy), fill=1)
-            elif age >= 0:
-                rip.append((age, x))
-        self.ripples(g, rip)
-
-    def texts(self, g: Gfx, e: float, right: str | None = None, a: float = 1.0):
+    def counter(self, g: Gfx, e: float, label: str | None = None):
         n = int(e // self.CYCLE) + 1
-        left = "北方壬癸水"
-        g.vtext(2, 2, left[:int(round(a * len(left)))])
-        r = right if right is not None else f"第{cn_num(n)}道"
-        g.vtext(115, 2, r[:int(round(a * len(r)))])
+        vbox(g, CNT_X, 10, label or ("第" + (cn_num(n) if n < 100 else str(n)) + "道"))
 
-    def mx(self, g: Gfx, u: float, t: float, p: float):
-        g.mx_rows([0, 0, 0, 0, 0b11111111, 0b01000010, 0b00111100, 0b00011000])
-        # 符在上方（越烧越短）
-        h = int(round((1 - p) * 3)) + 1
-        for y in range(0, h):
-            g.mx[y, 3] = g.mx[y, 4] = True
-        if blink(t, 0.25):
-            g.mx_set(3 + int(t * 4) % 2, h)
-        for age, x in self.drops(u):  # 落灰：涟漪向两边散开
-            if 0 <= age < 0.9:
-                d = int(age * 4)
-                g.mx[4, max(0, 3 - d)] = False
-                g.mx[4, min(7, 4 + d)] = False
+    def phrase(self, g: Gfx, s: str = "北方壬癸水"):
+        g.text(3, 5, s)
+
+    # ------------------------------------------------------------ 点符（入场 / 续）
+
+    def light(self, g: Gfx, t: float, k: float, e: float, dt: float, from_x: float = DAO_X):
+        """k ∈ [0, 6.5]：走到小几（0–1.2）→ 拈符（1.2–1.8）→ 伸进烛火（1.8–2.4）→ 着火（2.8）→ 走回（3.4–5.2）→ 放到碗上（5.2–6.5）"""
+        self.stage(g, t, stack=3 if k < 1.6 else 2)
+        self.water(g, 0, t, 0.0 if from_x != DAO_X else 0.0)
+        lit = k >= 2.8
+        if k < 1.2:
+            x = lerp(from_x, LIGHT_X + 12, ease_in_out(span(k, 0, 1.2)))
+            daoshi(g, x, FLOOR, "walk" if k < 1.15 else "idle", t)
+        elif k < 1.8:
+            q = span(k, 1.2, 1.6)
+            hand = (lerp(LIGHT_X + 20, STACK_X + 2, ease_out(q)), lerp(46, TAB_Y - 3, ease_out(q)))
+            hand = act(g, LIGHT_X + 12, FLOOR, t, hand_to=hand)["hand"]
+            if k > 1.6:
+                self.fu(g, hand, FULL, t, False, dt)
+        elif k < 3.4:
+            q = ease_in_out(span(k, 1.8, 2.4))
+            x = lerp(LIGHT_X + 12, LIGHT_X, q)
+            hand = (lerp(STACK_X + 2, LIGHT_X + 12, q), lerp(TAB_Y - 3, 37, q))
+            hand = act(g, x, FLOOR, t, hand_to=hand, face="wow" if 2.6 < k < 3.2 else "normal")["hand"]
+            self.fu(g, hand, FULL, t, lit, dt)
+            if 2.8 <= k < 2.8 + dt * 1.5 and self.once(("ignite", round(e), round(t))):
+                self.sparks.burst(hand[0] + 1 + FULL, hand[1] - 3, 12, 22, up=12, life=0.6, gravity=40)
+                self.puffs.emit(hand[0] + FULL, hand[1] - 6, vy=-6, life=0.8, rmax=2.2, spread=0)
+        else:
+            q = ease_in_out(span(k, 3.4, 5.2))
+            x = lerp(LIGHT_X, DAO_X, q)
+            hand = (x + 12, lerp(37, HAND[1], ease_out(span(k, 4.6, 5.6))))
+            if k < 5.2:
+                hand = act(g, x, FLOOR, t, hand_to=hand, legs="walk")["hand"]
+            else:
+                hand = act(g, x, FLOOR, t, hand_to=hand, face="happy" if k > 5.8 else "normal")["hand"]
+            self.fu(g, hand, FULL, t, True, dt)
+        self.puffs.step(dt, wind=math.sin(t * 0.3) * 2)
+        self.puffs.draw(g)
+        self.sparks.step(dt)
+        self.sparks.draw(g)
+        mx_draw(g, FULL if k > 1.6 else 0, lit, t)
 
     # ------------------------------------------------------------ 阶段
 
-    def frame(self, g: Gfx, t: float, u: float, e: float, burning: bool = True, fx: float = FX0, ftop: float = FTOP):
-        p = clamp((u - LEAD) / (END - LEAD))
-        bot = self.burn_y(u)
-        self.texts(g, e)
-        self.candle(g, t)
-        self.bowl(g)
-        self.ash_floating(g, p, t)
-        self.fu(g, fx, ftop, bot, burning, t)
-        self.falling_ash(g, u, bot)
-        self.hand(g, fx, ftop)
-        if burning:
-            smoke_wisp(g, fx + 6, ftop - 2, 10, t, self.s, sway=3, drift=-8)
-        return p
-
-    def light_sequence(self, g: Gfx, t: float, k: float, e: float):
-        """新符入场、在烛上点着、移回碗上方（k 0..LEAD）"""
-        self.texts(g, e)
-        self.candle(g, t)
-        self.bowl(g)
-        cx, cy = CANDLE
-        if k < 1.6:  # 从右上方来到烛火上方
-            p = ease_out(span(k, 0, 1.6))
-            x, top = lerp(110, cx - 6, p), lerp(-40, cy - 31, p)
-        elif k < 3.2:  # 点着，烧起来
-            x, top = cx - 6, cy - 31
-        else:  # 回到碗上方
-            p = ease_in_out(span(k, 3.2, 4.8))
-            x, top = lerp(cx - 6, FX0, p), lerp(cy - 31, FTOP, p) - math.sin(p * math.pi) * 4
-        lit = k > 2.2
-        bot = top + (FBOT - FTOP)
-        self.fu(g, x, top, bot, lit, t)
-        self.hand(g, x, top)
-        if 1.6 < k < 2.4:  # 符角凑近烛火
-            g.px(x + 6, bot + 1)
-        p_mx = 0
-        g.mx_rows([0, 0, 0, 0, 0b11111111, 0b01000010, 0b00111100, 0b00011000])
-        for y in range(4):
-            g.mx[y, 3] = g.mx[y, 4] = True
-        if lit:
-            g.mx_set(3 + int(t * 4) % 2, 4 if blink(t, 0.25) else 3)
-        g.mx_level = 4 if 2.2 < k < 2.5 else 1
-
     def enter(self, g: Gfx, t: float):
-        if t < 1.2:  # 碗与烛先出现
-            self.bowl(g)
-            p = ease_out_back(span(t, 0, 1.0))
-            g.d.rectangle((CANDLE[0] - 4, 62 - p * 20, CANDLE[0] + 4, 62), outline=1)
-            ring(g, BX, BY, span(t, 0.3, 1.2) * 20, 2)
-            g.mx_rows([0, 0, 0, 0, 0b11111111, 0b01000010, 0b00111100, 0b00011000])
-            return
-        k = (t - 1.2) / (self.T["enter"] - 1.2) * LEAD
-        self.light_sequence(g, t, k, 0.0)
-        g.d.rectangle((0, 0, 15, 63), fill=0)
-        self.texts(g, 0, a=span(t, 2.5, 4.5))
+        dt = self._dt(t)
+        if t < 1.0:  # 走进来
+            self.stage(g, t)
+            self.water(g, 0, t, 0.0)
+            daoshi(g, lerp(-12, DAO_X, ease_out(span(t, 0, 1.0))), FLOOR, "walk", t)
+            mx_draw(g, 0, False, t)
+        else:
+            self.light(g, t, (t - 1.0) * 6.5 / 5.5, 0.0, dt)
+        self.counter(g, 0.0)
 
     def hold(self, g: Gfx, t: float, e: float):
+        dt = self._dt(t)
         u = e % self.CYCLE
         if e >= self.CYCLE and u < RENEW:
-            self._renew(g, t, u, e)
+            k = u / RENEW * 6.5
+            self.light(g, t, k, e, dt)
+            self.counter(g, e if k > 2.8 else e - u - 1)
             return
-        if e >= self.CYCLE:
-            uu = u
-        else:
-            uu = u
-        if uu < LEAD and e < self.CYCLE:
-            self.light_sequence(g, t, LEAD, e)
-            return
-        if u >= END:  # 烧尽：只剩手指捏着的一角，余烟
-            self.texts(g, e)
-            self.candle(g, t)
-            self.bowl(g)
-            self.ash_floating(g, 1.0, t)
-            self.hand(g, FX0, FTOP)
-            g.d.rectangle((FX0, FTOP, FX1, FTOP + 4), fill=0, outline=1)
-            smoke_wisp(g, FX0 + 6, FTOP + 6, 12 * (1 - span(u, END, END + 20)), t, self.s, sway=3)
-            self.ripples(g, [((u - END) % 6, BX - 6 + rand(int((u - END) // 6), 3) * 12)])
-            self.mx(g, u, t, 1.0)
-            return
-        p = self.frame(g, t, u, e)
-        self.mx(g, u, t, p)
-
-    def _renew(self, g: Gfx, t: float, u: float, e: float):
-        """一道烧尽：手松开，残角落水；剑指在水面画符；再点一道"""
-        if u < 3.0:
-            self.texts(g, e)
-            self.candle(g, t)
-            self.bowl(g, glow=span(u, 2.2, 3.0) * (1 - span(u, 2.6, 3.0)))
-            self.ash_floating(g, 1.0, t)
-            if u < 0.8:  # 残角飘落
-                yy = lerp(FTOP, BY - 2, ease_in(u / 0.8))
-                g.d.rectangle((FX0 + 3, yy, FX1 - 3, yy + 2), fill=1)
-                self.hand(g, FX0 + u * 40, FTOP - u * 30)
-            else:
-                self.ripples(g, [(u - 0.8, BX)])
-            if 0.9 < u < 2.8:  # 剑指在水面上画一道螺旋
-                k = span(u, 0.9, 2.6)
-                pts = []
-                for i in range(int(k * 30) + 1):
-                    a = i / 30 * 3 * math.pi
-                    pts.append((BX + math.cos(a) * (18 - i * 0.5), BY + math.sin(a) * (2.5 - i * 0.06)))
-                if len(pts) > 1:
-                    g.d.line(pts, fill=1)
-                fx, fy = pts[-1]
-                hy = fy - 16 - 2 * (1 - span(u, 0.9, 1.2)) * 10
-                arm(g, fx + 2, hy + 3, -1.0, 60, 4, 14)
-                g.blit(JIANZHI_D, fx - 1, hy)
-            self.mx(g, -1, t, 1.0)
-            g.mx_level = 3 if 2.2 < u < 2.8 else 1
-            return
-        self.light_sequence(g, t, (u - 3.0) / (RENEW - 3.0) * LEAD, e)
+        S = self.state(u)
+        self.draw_state(g, t, u, S, dt)
+        if S["phrase"]:
+            self.phrase(g)
+        self.counter(g, e)
 
     def interrupt(self, g: Gfx, t: float, e: float):
-        """甩灭：手把符提起抖两下，火灭成烟"""
-        u = max(e % self.CYCLE, LEAD + 0.01)
-        if e >= self.CYCLE:
-            u = max(u, RENEW)
-        lift = ease_out(span(t, 0, 0.5)) * 6
-        shake = math.sin(t * 30) * 3 * (1 - span(t, 0.2, 1.0)) if t < 1.0 else 0
-        p = clamp((u - LEAD) / (END - LEAD))
-        bot = self.burn_y(u) - lift
-        self.texts(g, e, right="暂歇")
-        self.candle(g, t)
-        self.bowl(g)
-        self.ash_floating(g, p, t)
-        self.fu(g, FX0 + shake, FTOP - lift, bot, t < 0.6, t)
-        self.hand(g, FX0 + shake, FTOP - lift)
-        if t > 0.5:
-            smoke_wisp(g, FX0 + 6, bot - 1, 18 * (1 - span(t, 0.8, 1.6) * 0.7), t, self.s, sway=4)
-        g.mx_rows([0, 0, 0, 0, 0b11111111, 0b01000010, 0b00111100, 0b00011000])
-        g.mx[0:2, 3:5] = True
+        dt = self._dt(t)
+        u = e % self.CYCLE
+        S = dict(self.state(u if not (e >= self.CYCLE and u < RENEW) else RENEW))
+        S.update(jz=None, flare=1.0, phrase=False, x=DAO_X)
+        S.pop("blow", None)
+        if S["hand"] is not None and S["L"] > 0:
+            shake = math.sin(span(t, 0.2, 0.9) * 4 * math.pi) * 3 if t < 0.9 else 0
+            S["hand"] = (HAND[0], HAND[1] - 6 * ease_out(span(t, 0, 0.3)) + shake + 6 * span(t, 1.0, 1.4))
+            S["lit"] = t < 0.7
+            S["face"] = "sleep" if t > 1.2 else "normal"
+            if 0.7 <= t < 0.7 + dt * 1.5 and self.once(("out", round(e))):
+                ex = HAND[0] + 1 + S["L"]
+                self.puffs.emit(ex, S["hand"][1] - 4, vy=-6, life=1.2, rmax=2.0, spread=0)
+        self.draw_state(g, t, u, S, dt)
+        self.counter(g, e, "暂歇")
 
     def resume(self, g: Gfx, t: float, e: float):
-        """移到烛火上重新点着，再回到碗上方"""
-        u = max(e % self.CYCLE, LEAD + 0.01)
-        if e >= self.CYCLE:
-            u = max(u, RENEW)
-        p = clamp((u - LEAD) / (END - LEAD))
-        bot0 = self.burn_y(u)
-        cx, cy = CANDLE
-        h = bot0 - FTOP
-        if t < 0.8:
-            k = ease_in_out(span(t, 0, 0.8))
-            x, top = lerp(FX0, cx - 6, k), lerp(FTOP - 6, cy - h - 2, k)
-        elif t < 1.3:
-            x, top = cx - 6, cy - h - 2
+        dt = self._dt(t)
+        u = e % self.CYCLE
+        if e >= self.CYCLE and u < RENEW:
+            u = RENEW
+        S = dict(self.state(u))
+        S.update(phrase=False)
+        if S["hand"] is not None and S["L"] > 0 and S["lit"]:
+            ex, ey = HAND[0] + 1 + S["L"], HAND[1] - 3
+            q = span(t, 0.3, 1.0)
+            S["lit"] = t >= 1.0
+            S["face"] = "normal" if t < 1.0 else "happy"
+            self.draw_state(g, t, u, S, dt)
+            if 0 < q < 1:
+                star4(g, lerp(CANDLE_X, ex, q), lerp(TAB_Y - 17, ey, q) - math.sin(q * math.pi) * 12, big=True)
+            if 1.0 <= t < 1.0 + dt * 1.5 and self.once(("relit", round(e))):
+                self.sparks.burst(ex, ey, 12, 22, up=12, life=0.6, gravity=40)
+                pix.flash(g)
         else:
-            k = ease_in_out(span(t, 1.3, 2.2))
-            x, top = lerp(cx - 6, FX0, k), lerp(cy - h - 2, FTOP, k)
-        lit = t > 1.0
-        self.texts(g, e)
-        self.candle(g, t)
-        self.bowl(g)
-        self.ash_floating(g, p, t)
-        self.fu(g, x, top, top + h, lit, t)
-        self.hand(g, x, top)
-        self.mx(g, u, t, p)
-        g.mx_level = 4 if 1.0 < t < 1.2 else 1
+            self.draw_state(g, t, u, S, dt)
+        self.counter(g, e)
 
     def complete(self, g: Gfx, t: float, e: float):
-        u = max(e % self.CYCLE, LEAD)
-        p0 = clamp((u - LEAD) / (END - LEAD))
-        p = lerp(p0, 1, ease_in(span(t, 0, 1.4)))
-        bot = lerp(FBOT, FEND, p)
-        self.candle(g, t)
-        glow = span(t, 2.0, 2.6)
-        self.bowl(g, glow=0)
-        self.ash_floating(g, max(p, 0.5), t)
-        if t < 1.4:
-            self.texts(g, e)
-            self.fu(g, FX0, FTOP, bot, True, t)
-            self.hand(g, FX0, FTOP)
-            for i in range(3):  # 大块的灰一齐落
-                k = ((t * 1.5 + i * 0.33) % 1)
-                g.d.rectangle((FX0 + 2 + i * 4, lerp(bot, BY, ease_in(k)), FX0 + 3 + i * 4, lerp(bot, BY, ease_in(k))),
-                              fill=1)
-        elif t < 2.0:  # 最后一角落水
-            k = span(t, 1.4, 2.0)
-            yy = lerp(FTOP, BY - 2, ease_in(k))
-            g.d.rectangle((FX0 + 3, yy, FX1 - 3, yy + 2), fill=1)
-            self.hand(g, FX0 + k * 50, FTOP - k * 40)
-            self.texts(g, e)
-        if t >= 2.0:  # 一碗符水放光
-            k = t - 2.0
-            g.d.ellipse((41, 44, 87, 48), fill=0)
+        dt = self._dt(t)
+        u = e % self.CYCLE
+        L0 = self.burn(u) if RENEW <= u < END else FULL if u < RENEW else STUB
+        S = dict(self.state(RENEW + 1))
+        S.update(phrase=False, jz=None)
+        L = lerp(L0, STUB, ease_in(span(t, 0, 1.4)))
+        S["L"] = L
+        S["flare"] = 1.5 if t < 1.4 else 1.0
+        if t >= 1.4:
+            S["drop"] = t - 1.4
+            S.update(lit=False, L=0, hand=None, pose="gongshou" if t < 3.0 else ("bow" if t < 4.4 else "gongshou"),
+                     face="happy")
+            S["glow"] = span(t, 2.0, 2.6)
+        self.draw_state(g, t, END + (t if t >= 1.4 else 0), S, dt)
+        if t < 1.4 and int(t * 10) % 3 == 0:  # 大块灰落水
+            x = HAND[0] + 1 + L
+            self.sparks.burst(x, HAND[1], 2, 8, life=0.6, gravity=60)
+        if 2.0 <= t < 2.0 + dt * 1.5 and self.once(("cflash", round(e))):
+            pix.flash(g)
+            self.sparks.burst(WATER[0], WATER[1] - 2, 24, 36, up=16, life=1.0, gravity=30)
+        if t > 2.0:
             for j in range(3):
-                r = ((k * 12 + j * 7) % 21) + 1
-                n = 24
-                for i in range(n):
-                    a = i / n * 2 * math.pi
-                    g.px(BX + math.cos(a) * r, BY + math.sin(a) * r * 0.12)
-            rays(g, BX, BY - 4, 32, 36 + 6 * math.sin(k * 5), 14, phase=k * 0.2, sy=0.55)
-            for i in range(3):  # 水气升起
-                smoke_wisp(g, BX - 10 + i * 10, BY - 4, 14 + 6 * span(t, 2.0, 3.0), t, self.s + i, sway=2.5)
-            if k < 0.15:
-                g.invert((36, 40, 93, 63))
-            typewriter(g, BX, 4, "百病消除", t - 2.6, cps=5, align="center")
-        g.mx_rows([0, 0, 0, 0, 0b11111111, 0b01000010, 0b00111100, 0b00011000])
-        if t >= 2.0:
-            r = (t - 2.0) * 4
-            for y in range(5):
-                for x in range(8):
-                    if abs(math.hypot(x - 3.5, (y - 4) * 1.4) - r) < 0.7:
-                        g.mx[y, x] = True
-            g.mx_level = 1 + int(5 * (1 - span(t, 2.0, 3.5)))
-        else:
-            h = int(round((1 - p) * 3)) + 1 if t < 1.4 else 0
-            for y in range(h):
-                g.mx[y, 3] = g.mx[y, 4] = True
+                r = (t - 2.0) * 16 - j * 7
+                if r > 0:
+                    ring(g, WATER[0], WATER[1] - 2, 10 + r, step=2, sy=0.45)
+            g.mx_level = 1 + int(6 * (1 - span(t, 2.0, 3.6)))
+        if t > 2.4:
+            boxed(g, 4, 6, "百病消除", size=12, pop=ease_out_back(span(t, 2.4, 2.8)))
+        self.counter(g, e, "符成" if t > 2.0 else None)

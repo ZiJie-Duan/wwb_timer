@@ -1,313 +1,378 @@
-"""龟息：岸边打坐的人与池中石上的老龟同息。鼻前一根鸿毛，人引气、闭气默数、再微微吐出，
-鸿毛几乎不动；老龟伸颈吞气、缩颈闭息。
+"""龟息：池边石上，小道士闭目调息，鼻前悬着一根鸿毛；池中石上一只老龟跟着一伸一缩。
 
-依据：《抱朴子·释滞》“初学行炁，鼻中引炁而闭之，阴以心数至一百二十，乃以口微吐之……
-以鸿毛著鼻口之上，吐炁而鸿毛不动为候也”；“得胎息者，能不以鼻口嘘吸，如在胞胎之中”。
-《抱朴子·对俗》“知龟鹤之遐寿，故效其道引以增年”，又见老龟“伸颈吞气”。
-
-入场：池水泛起涟漪，老龟从水里爬上石头；鸿毛从上方飘落到人的鼻前。
-持续：一息约 40 秒：引气（龟伸颈）→ 闭气，头边默数 1…120（龟缩颈）→ 微吐（鸿毛轻颤）。
-      一轮 10 分钟里吐气越来越细，鸿毛越来越静。一轮满：池里开出一朵莲（最多四朵），
-      龟浮于莲叶之上（《抱朴子》千岁之龟“浮于莲叶之上”）。
-中断：人睁眼长出一口气，鸿毛被吹飞，龟缩进壳里，“出息”。
-恢复：鸿毛飘回鼻前，龟探出头来。
-圆满：人腹中一团光蜷成胎形，龟壳放光，“如在胞胎”。
+依据：《抱朴子·释滞》“初学行炁，鼻中引炁而闭之，阴以心数至一百二十，乃以口微吐之……以鸿毛著鼻口之上，
+吐炁而鸿毛不动为候也”“得胎息者，能不以鼻口嘘吸，如在胞胎之中”；《抱朴子·对俗》“仙经象龟之息”，
+老龟“伸颈吞气”，千岁之龟“浮于莲叶之上”。
+入场：池水起涟漪，老龟从水里爬上石头；一根鸿毛从上方飘落到小道士鼻前。
+持续：一息 40 秒：引气 4 秒（龟伸颈吞气，清气点点入鼻）→ 闭气 30 秒，右上默数 1…120（龟缩颈，鸿毛静止）
+      → 微吐 6 秒（鸿毛轻颤）。一轮 10 分钟里吐气越来越细，鸿毛越来越静；左上“第几息”。
+      小事件：蜻蜓飞来停在荷叶上 / 一尾鱼吐个泡。续：池里开出一朵莲（一轮一朵，最多四朵），闪光。
+中断：睁眼长出一口气，鸿毛被吹飞，龟缩头，“出息”。  恢复：鸿毛飘回鼻前，龟探出头。
+圆满：小道士腹中现出一团蜷着的胎形光、外有光环，龟甲纹闪光放光，“如在胞胎”。
+点阵：俯视的龟，头随呼吸伸缩。
 """
 from __future__ import annotations
 
 import math
 
-from ..engine.anim import blink, clamp, ease_in, ease_in_out, ease_out, ease_out_back, lerp, noise, rand, span
+from ..engine import pix
+from ..engine.anim import ease_in, ease_in_out, ease_out, lerp, span
+from ..engine.chars import Part
 from ..engine.cn import cn_num
-from ..engine.fx import ring, typewriter
 from ..engine.gfx import Gfx
 from ..engine.scene import Ritual, register
+from .r4_kit import P, Clock, cached, counter, dao, label, mx_art, mx_ring, pop_title, ring, star
 
-INHALE, HOLD, EXHALE = 4.0, 30.0, 6.0
-BREATH = INHALE + HOLD + EXHALE
-WATER = 55
-# 侧身打坐的人（面朝右）：坐标在 (0,0) 为坐垫底中心的局部系里
-PX, PY = 30, 54
-HEAD = (3, -36)
-BODY = [(-4, -28), (2, -29), (5, -25), (6, -18), (8, -12), (10, -7), (4, -5), (-9, -5), (-10, -10), (-9, -18),
-        (-7, -25)]
-LEGS = [(-11, -5), (-6, -9), (8, -10), (17, -8), (20, -4), (17, -1), (-11, -1)]
-ARM = [(-3, -26), (1, -26), (3, -17), (15, -10), (14, -7), (2, -12), (-4, -19)]
-NOSE = (PX + 12, PY - 33)
-TURTLE = (100, 46)   # 龟壳中心底
+FLOOR = 50              # 小道士坐的石面
+DX = 30
+WATER = 44              # 水面
+TX, TY = 98, 40         # 龟（脚底中点）
+BREATH = 40.0
+SIT = P(legs="sit", b=(110, 30, "palm"), f=(70, 150, "palm"), face="sleep")
+SIT_OPEN = P(legs="sit", b=(110, 30, "palm"), f=(70, 150, "palm"), face="wow")
+LOTUS_AT = [(70, WATER), (118, WATER - 1), (82, WATER + 6), (60, WATER + 8)]
+
+TURTLE = pix.frames("""
+          ##########
+       ####.#####.####
+     ###.##.#####.##.###
+    ##.###.#######.###.##
+   ######.#########.######   ###
+  #########################.#.##
+  #.#.#.#.#.#.#.#.#.#.#.#.#######
+   ####    ###      ###   ###
+    ##      ##       ##    ##
+---
+          ##########
+       ####.#####.####
+     ###.##.#####.##.###
+    ##.###.#######.###.##
+   ######.#########.######
+  ##########################.
+  #.#.#.#.#.#.#.#.#.#.#.#.###
+   ####    ###      ###   ###
+    ##      ##       ##    ##
+---
+          ##########            ###
+       ####.#####.####         #.##
+     ###.##.#####.##.###      ## ##
+    ##.###.#######.###.##    ##
+   ######.#########.######  ##
+  ###########################
+  #.#.#.#.#.#.#.#.#.#.#.#.###
+   ####    ###      ###   ###
+    ##      ##       ##    ##
+""")
+
+FEATHER = pix.frames("""
+ # # # #
+########.
+  # # #
+---
+  # # #
+########.
+ # # # #
+""")
+
+DRAGONFLY = pix.frames("""
+ # #
+#####.
+ # #
+---
+#   #
+#####.
+""")
 
 
-def breath(e: float) -> tuple[str, float]:
-    """→ (阶段 in/hold/out, 阶段内进度 0..1)"""
-    k = e % BREATH
-    if k < INHALE:
-        return "in", k / INHALE
-    if k < INHALE + HOLD:
-        return "hold", (k - INHALE) / HOLD
-    return "out", (k - INHALE - HOLD) / EXHALE
+def _rock(w, h):
+    """平顶石：顶面亮、侧面网点、几道裂纹"""
+    p = Part(w, h)
+    p.shape("polygon", [(0, h - 1), (2, 2), (5, 0), (w - 6, 0), (w - 2, 3), (w - 1, h - 1)], fill=1)
+    p.d.line((3, 2, w - 4, 2), fill=0)
+    p.dither([(1, 3), (w - 2, 3), (w - 1, h - 1), (0, h - 1)], 0.5, 0)
+    for x in range(6, w - 6, 9):
+        p.d.line((x, 3, x + 2, h - 2), fill=0)
+    return p.sprite()
 
 
-def _tp(pts, dx=0.0, dy=0.0):
-    return [(PX + x + dx, PY + y + dy) for x, y in pts]
+def _lotus(stage):
+    """莲：0 荷叶，1 花苞，2 盛开"""
+    p = Part(13, 10)
+    p.shape("ellipse", (0, 7, 12, 9), fill=1)          # 荷叶
+    p.d.line((6, 8, 9, 7), fill=0)
+    if stage >= 1:
+        p.shape("line", (6, 7, 6, 4), fill=1)
+    if stage == 1:
+        p.shape("ellipse", (4, 0, 8, 5), fill=1)
+        p.d.line((6, 1, 6, 4), fill=0)
+    elif stage == 2:
+        p.shape("polygon", [(2, 2), (4, 5), (8, 5), (10, 2), (8, 3), (6, 0), (4, 3)], fill=1)
+        p.d.line((6, 1, 6, 4), fill=0)
+        p.px(4, 4, 0), p.px(8, 4, 0)
+    return p.sprite()
+
+
+def willow(g: Gfx, t: float):
+    """右上角垂下的柳枝（随风摆）"""
+    for j, (x0, L) in enumerate(((62, 18), (70, 24), (78, 14), (56, 12))):
+        sw = math.sin(t * 0.9 + j) * 2
+        for i in range(L):
+            k = i / L
+            x = x0 + sw * k * k
+            g.px(x, i)
+            if i % 4 == 2:
+                g.px(x - 1, i + 1), g.px(x + 1, i + 1)
+    g.d.line((50, 0, 86, 0), fill=1)
+
+
+def pond(g: Gfx, t: float, e: float, lotus: int, bloom_k: float = 1.0):
+    """池塘：岸、水面波纹、荷叶与莲花、坐石、龟石"""
+    g.d.line((56, WATER, 127, WATER), fill=1)
+    for r, y in enumerate((WATER + 3, WATER + 7, WATER + 11, WATER + 16)):
+        off = int(t * (2 + r)) % 16
+        for x in range(56 - 16 + off + r * 5, 128, 16):
+            g.d.line((x, y, x + 3, y), fill=1)
+    for x in range(0, 128, 2):                                # 远山
+        g.px(x, 30 - 4 * math.sin(x * 0.05 + 1.3) - 2 * math.sin(x * 0.16))
+    willow(g, t)
+    g.d.rectangle((0, WATER - 1, 56, 63), fill=0)
+    pix.blit(g, cached(("tt", "rock", 1), lambda: _rock(40, 14)), DX - 20, FLOOR - 1)
+    g.d.line((0, 63, 56, 63), fill=1)
+    pix.blit(g, cached(("tt", "rock", 2), lambda: _rock(36, 8)), TX - 18, TY)
+    for i, (x, y) in enumerate(LOTUS_AT):
+        st = 2 if i < lotus else 0
+        if i == lotus - 1 and bloom_k < 1:
+            st = 1 if bloom_k < 0.5 else 2
+        if i >= 2 and st == 0:
+            continue
+        pix.blit(g, cached(("tt", "lotus", st), lambda st=st: _lotus(st)), x - 6, y - 9)
 
 
 @register
-class TurtleBreath(Ritual):
+class Turtle(Ritual):
     id = "r4.turtle"
     name = "龟息"
-    desc = "岸边打坐的人鼻前放一根鸿毛，引气闭气默数一百二十再微吐，池中老龟伸颈吞气、缩颈闭息"
-    T = {"enter": 4.5, "interrupt": 1.6, "resume": 2.0, "complete": 5.5}
+    desc = "池边石上小道士闭目调息，鼻前悬一根鸿毛；池中老龟跟着伸颈吞气、缩颈闭气，心中默数到一百二十"
+    T = {"enter": 6.0, "interrupt": 1.8, "resume": 2.0, "complete": 6.0}
     CYCLE = 600.0
 
-    # ------------------------------------------------------------ 零件
+    def setup(self):
+        self.sparks = pix.Sparks(self.seed + 1)
+        self.puffs = pix.Puffs(self.seed)
+        self.clock = Clock()
 
-    def pond(self, g: Gfx, t: float, e: float, lotus: int = 0, bloom: float = 1.0):
-        d = g.d
-        d.line((0, WATER, 22, WATER), fill=1)   # 岸
-        d.line((0, WATER - 1, 52, WATER - 1), fill=1)
-        for i in range(5):  # 水纹
-            y = WATER + 2 + i * 2
-            x0 = (i * 23 + t * (3 + i)) % 140 - 20
-            d.line((x0, y, x0 + 8 + i * 2, y), fill=1)
-        # 石头
-        rock = [(76, 52), (86, 47), (116, 47), (124, 53), (126, 60), (72, 60)]
-        d.polygon(rock, fill=0)
-        g.shade_poly(rock, 0.2)
-        # 芦苇
-        for i, x in enumerate((122, 126)):
-            sw = math.sin(t * 0.8 + i) * 1.5
-            d.line((x, 60, x + sw, 30 + i * 5), fill=1)
-            d.ellipse((x + sw - 1, 30 + i * 5, x + sw + 1, 35 + i * 5), fill=1)
-        # 莲（一轮一朵）
-        for j in range(min(lotus, 4)):
-            x = 52 + j * 9
-            k = bloom if j == lotus - 1 else 1.0
-            self.lotus(g, x, WATER + 3 + (j % 2) * 2, k)
+    def phase(self, e: float):
+        """一息里第 b 秒：('in'|'hold'|'out', 本段进度)"""
+        b = e % BREATH
+        if b < 4:
+            return "in", b / 4, b
+        if b < 34:
+            return "hold", (b - 4) / 30, b
+        return "out", (b - 34) / 6, b
 
-    def lotus(self, g: Gfx, x: float, y: float, k: float):
-        d = g.d
-        d.ellipse((x - 5, y, x + 5, y + 2), fill=0, outline=1)  # 荷叶
-        if k <= 0:
-            return
-        h = 5 * ease_out(k)
-        open_ = ease_out_back(span(k, 0.4, 1.0))
-        d.polygon([(x - 1, y), (x, y - h), (x + 1, y)], fill=1)
-        for sd in (-1, 1):
-            d.polygon([(x, y), (x + sd * (1 + 3 * open_), y - h * 0.8), (x + sd * (1 + 1 * open_), y)], fill=1)
-
-    def person(self, g: Gfx, eyes_open: bool = False, glow: float = 0.0):
-        d = g.d
-        d.ellipse((PX - 15, PY - 3, PX + 22, PY + 2), fill=0, outline=1)  # 蒲团
-        d.polygon(_tp(LEGS), fill=0)
-        g.shade_poly(_tp(LEGS), 0.3)
-        d.line((PX - 2, PY - 4, PX + 13, PY - 6), fill=1)
-        d.polygon(_tp(BODY), fill=0)
-        g.shade_poly(_tp(BODY), 0.3)
-        d.line((PX + 0, PY - 28, PX + 4, PY - 20), fill=1)                # 交领
-        d.polygon(_tp(ARM), fill=0, outline=1)
-        d.line((PX + 2, PY - 16, PX + 12, PY - 9), fill=1)                # 袖褶
-        hx, hy = PX + HEAD[0], PY + HEAD[1]
-        d.rectangle((hx - 3, hy + 3, hx + 1, hy + 8), fill=0, outline=1)       # 颈
-        d.ellipse((hx - 6, hy - 6, hx + 5, hy + 5), fill=1)                    # 头发
-        d.ellipse((hx - 1, hy - 3, hx + 6, hy + 6), fill=0)                    # 脸
-        d.arc((hx - 1, hy - 3, hx + 6, hy + 6), 250, 110, fill=1)
-        d.polygon([(hx + 5, hy - 1), (hx + 8, hy + 2), (hx + 5, hy + 2)], fill=0, outline=1)  # 鼻
-        d.ellipse((hx - 6, hy - 10, hx - 1, hy - 5), fill=1)                   # 发髻
-        d.line((hx - 8, hy - 8, hx + 1, hy - 8), fill=1)
-        if eyes_open:
-            d.rectangle((hx + 2, hy, hx + 3, hy), fill=1)
+    def turtle(self, g: Gfx, t: float, ph: str, q: float, glow: bool = False):
+        if ph == "in":
+            fr = TURTLE[2] if 0.2 < q < 0.85 else TURTLE[0]   # 伸颈仰头吞气
+        elif ph == "hold":
+            fr = TURTLE[1]
         else:
-            d.line((hx + 1, hy, hx + 3, hy + 1), fill=1)
-        d.line((hx + 3, hy + 4, hx + 4, hy + 4), fill=1)                       # 嘴
-        if glow > 0:  # 腹中胎形：一团蜷着的光
-            cx, cy = PX + 1, PY - 13
-            r = 2 + 3 * glow
-            d.ellipse((cx - r, cy - r, cx + r, cy + r), fill=0, outline=1)
-            d.ellipse((cx - r * 0.5, cy - r * 0.6, cx + r * 0.3, cy), fill=1)
-            d.arc((cx - r * 0.7, cy - r * 0.3, cx + r * 0.7, cy + r * 0.7), 300, 160, fill=1)
-
-    def feather(self, g: Gfx, x: float, y: float, tilt: float):
-        """鸿毛：一根弯弯的细羽，羽轴 + 两侧蓬松的羽丝（根部贴在鼻下）"""
-        a0 = math.radians(4 + tilt)
-        L = 9
-        prev = (x, y)
-        for k in range(1, L + 1):
-            a = a0 - k * 0.04
-            px, py = x + math.cos(a) * k, y + math.sin(a) * k
-            g.d.line((prev, (px, py)), fill=1)
-            prev = (px, py)
-            if k >= 3:
-                w = 2.0 * math.sin((k - 2) / (L - 1) * math.pi) + 0.5
-                nx, ny = -math.sin(a), math.cos(a)
-                g.d.line((px, py, px - nx * w + math.cos(a) * 1.5, py - ny * w + math.sin(a) * 1.5), fill=1)
-                if k % 2:
-                    g.d.line((px, py, px + nx * w + math.cos(a) * 1.5, py + ny * w + math.sin(a) * 1.5), fill=1)
-
-    def turtle(self, g: Gfx, neck: float, t: float, glow: float = 0.0, dx: float = 0.0, dy: float = 0.0):
-        """老龟（面朝左）：壳、颈（neck 0 缩 .. 1 伸）、四足、尾"""
-        d = g.d
-        bx, by = TURTLE[0] + dx, TURTLE[1] + dy
-        # 足
-        for fx in (bx - 10, bx + 9):
-            d.rectangle((fx - 2, by - 1, fx + 2, by + 2), fill=1)
-        d.line((bx + 15, by - 2, bx + 18, by), fill=1)  # 尾
-        # 颈与头
-        L = 2 + 10 * neck
-        nx, ny = bx - 14 - L, by - 4 - neck * 3
-        d.line((bx - 13, by - 3, nx + 2, ny + 1), fill=1, width=3)
-        d.ellipse((nx - 3, ny - 2, nx + 3, ny + 3), fill=1)
-        d.point((nx - 1, ny), fill=0)
-        # 壳：半椭圆，龟甲纹
-        shell = (bx - 15, by - 14, bx + 15, by + 4)
-        d.chord(shell, 180, 360, fill=0, outline=1)
-        d.line((bx - 15, by - 5, bx + 15, by - 5), fill=1)
-        d.line((bx - 16, by - 4, bx + 16, by - 4), fill=1)
-        for i, (cx, cy) in enumerate(((bx - 7, by - 10), (bx + 1, by - 11), (bx + 9, by - 9), (bx - 2, by - 7),
-                                       (bx + 6, by - 7))):
-            hexa = [(cx - 3, cy), (cx - 1.5, cy - 2), (cx + 1.5, cy - 2), (cx + 3, cy), (cx + 1.5, cy + 2),
-                    (cx - 1.5, cy + 2)]
-            d.polygon(hexa, outline=1, fill=1 if glow > 0 and blink(t + i * 0.2, 0.6, 0.5) else 0)
-        if glow > 0:
+            fr = TURTLE[0]
+        pix.blit(g, fr, TX - 16, TY - fr.h + 1, flip=True)
+        if glow:
             for j in range(10):
-                a = math.pi + j / 9 * math.pi
-                r0, r1 = 18, 18 + 6 * glow * (0.6 + 0.4 * math.sin(t * 6 + j))
-                d.line((bx + math.cos(a) * r0, by - 5 + math.sin(a) * r0 * 0.7, bx + math.cos(a) * r1,
-                        by - 5 + math.sin(a) * r1 * 0.7), fill=1)
+                a = j * math.pi / 9 + math.pi
+                r = 14 + (j % 2) * 3 + math.sin(t * 8 + j) * 1.5
+                pix.dotted(g, TX + math.cos(a) * 11, TY - 4 + math.sin(a) * 6, TX + math.cos(a) * r,
+                           TY - 4 + math.sin(a) * (r * 0.6), 2, int(t * 10))
 
-    def neck_at(self, e: float) -> float:
-        ph, k = breath(e)
-        if ph == "in":
-            return ease_out(k)
-        if ph == "hold":
-            return 1 - ease_in_out(span(k, 0, 0.12))
-        return 0.15 * math.sin(k * math.pi)
+    def feather(self, g: Gfx, t: float, h: dict, tremble: float, dx: float = 0, dy: float = 0):
+        nx, ny = h["nose"]
+        wob = math.sin(t * 25) * tremble
+        fr = FEATHER[1] if tremble > 0.3 and (t * 10) % 1 < 0.5 else FEATHER[0]
+        pix.blit(g, fr, nx + 2 + dx, ny - 1 + wob + dy)
 
-    def tilt_at(self, e: float, t: float) -> float:
-        """鸿毛的颤动：吐气时略动，一轮里越来越静"""
-        ph, k = breath(e)
-        p = (e % self.CYCLE) / self.CYCLE
-        if ph == "out":
-            amp = lerp(10, 1.5, p)
-            return math.sin(k * math.pi) * amp * (0.6 + 0.4 * math.sin(t * 13))
-        if ph == "in":
-            return -math.sin(k * math.pi) * lerp(4, 1, p)
-        return 0.0
+    def mx(self, g: Gfx, t: float, ph: str, q: float):
+        out = ph == "in" or (ph == "out" and q > 0.5)
+        mx_art(g, """
+..####..
+.#.##.#.
+.######.
+.#.##.#.
+.######.
+#.####.#
+..####..
+""", 0, 1)
+        if out:
+            g.mx[0, 3] = g.mx[0, 4] = True
+            g.mx[1, 3] = g.mx[1, 4] = True
+        else:
+            g.mx[1, 3] = g.mx[1, 4] = (t * 2) % 1 < 0.8
 
-    def count(self, g: Gfx, e: float):
-        ph, k = breath(e)
-        if ph != "hold":
-            return
-        n = min(120, 1 + int(k * 120))
-        g.text(PX - 14, PY - 50, str(n), size=8)
-
-    def texts(self, g: Gfx, e: float, left: str | None = None, a: float = 1.0):
-        ph, k = breath(e)
-        l = left if left is not None else {"in": "引气", "hold": "闭气", "out": "微吐"}[ph]
-        g.vtext(2, 2, l[:int(round(len(l) * a))])
+    def labels(self, g: Gfx, e: float, ph: str, q: float):
         n = int(e // BREATH) + 1
-        r = f"第{cn_num(n)}息"
-        g.text(126, 1, r[:int(round(len(r) * a))], align="right")
+        counter(g, f"第{cn_num(n)}息" if n < 100 else f"第{n}息")
+        if ph == "hold":
+            counter(g, f"默数{min(120, int(q * 120) + 1)}", right=True)
+        else:
+            counter(g, "引气" if ph == "in" else "微吐", right=True)
 
-    def mx(self, g: Gfx, neck: float, t: float):
-        """点阵：龟的俯视图，头随呼吸伸缩"""
-        art = ["........", "........", "..####..", ".######.", "########", ".######.", "..####..", ".#....#."]
-        for y, row in enumerate(art):
-            for x, ch in enumerate(row):
-                g.mx[y, x] = ch == "#"
-        g.mx[3, 2] = g.mx[3, 5] = g.mx[5, 2] = g.mx[5, 5] = False   # 甲纹
-        g.mx[1, 3] = g.mx[1, 4] = neck > 0.3
-        g.mx[0, 3] = g.mx[0, 4] = neck > 0.7
+    def lotus_count(self, e: float) -> int:
+        return min(4, int(e // self.CYCLE))
+
+    def event(self, g: Gfx, t: float, e: float):
+        """小事件：蜻蜓飞来停在荷叶上 / 鱼吐泡"""
+        slot, ph = int(e // 27), (e % 27) / 8.0
+        if ph >= 1:
+            return
+        if slot % 2 == 0:
+            lx, ly = LOTUS_AT[0]
+            if ph < 0.4:
+                x, y = lerp(130, lx, ease_out(ph / 0.4)), lerp(18, ly - 10, ease_out(ph / 0.4)) + math.sin(ph * 30) * 2
+            elif ph < 0.8:
+                x, y = lx, ly - 10
+            else:
+                x, y = lerp(lx, -10, ease_in((ph - 0.8) / 0.2)), ly - 10 - (ph - 0.8) * 60
+            fr = DRAGONFLY[0] if ph < 0.4 or ph > 0.8 or int(t * 3) % 3 == 0 else DRAGONFLY[1]
+            pix.blit(g, pix.anim(DRAGONFLY, t, 12) if (ph < 0.4 or ph > 0.8) else fr, x - 3, y)
+        else:
+            x = 76 + (slot * 13) % 30
+            for j in range(3):
+                k = (ph * 2 - j * 0.3)
+                if 0 < k < 1:
+                    r = 1 + (j % 2)
+                    g.d.ellipse((x + j * 2 - r, WATER + 4 - k * 10 - r, x + j * 2 + r, WATER + 4 - k * 10 + r), outline=1)
+
+    def breath_fx(self, g: Gfx, t: float, h: dict, ph: str, q: float, prog: float):
+        nx, ny = h["nose"]
+        if ph == "in":  # 清气点点入鼻 / 入龟口
+            for j in range(5):
+                k = (q * 1.5 + j * 0.2) % 1
+                a = j * 1.1 + 0.3
+                r = (1 - k) * 16 + 2
+                g.px(nx + 2 + math.cos(a) * r, ny + math.sin(a) * r * 0.6)
+                g.px(TX - 16 - (1 - k) * 8, TY - 6 - math.sin(k * 3) * 4 - j * 2)
+        elif ph == "out":  # 微吐：越往后越细
+            n = max(1, int(4 * (1 - prog)))
+            for j in range(n):
+                k = (q * 2 + j * 0.25) % 1
+                g.px(nx + 3 + k * 10, ny + 2 + k * 2)
 
     # ------------------------------------------------------------ 阶段
 
-    def lotus_n(self, e: float) -> int:
-        return int(e // self.CYCLE)
+    def enter(self, g: Gfx, t: float):
+        dt = self.clock(t)
+        pond(g, t, 0, 0)
+        # 涟漪 → 龟爬上石头
+        if t < 2.0:
+            r = t * 8
+            ring(g, TX, WATER + 4, r, dotted=2, ry=r * 0.3)
+        else:
+            k = ease_out(span(t, 2.0, 3.5))
+            fr = TURTLE[0] if int(t * 4) % 2 else TURTLE[1]
+            pix.blit(g, fr, TX - 16 + (1 - k) * 12, TY - fr.h + 1 + (1 - k) * 8, flip=True)
+        h = dao(g, DX, FLOOR, SIT_OPEN if t < 3.5 else SIT, t)
+        # 鸿毛从上方飘落到鼻前
+        k = ease_in_out(span(t, 2.5, 5.5))
+        if t > 2.5:
+            nx, ny = h["nose"]
+            self.feather(g, t, h, 0.0, math.sin(k * 7) * 6 * (1 - k), -(1 - k) * 34)
+        self.mx(g, t, "in", 0.5)
+        if t > 5.5:
+            self.labels(g, 0.0, "in", 0.0)
 
     def hold(self, g: Gfx, t: float, e: float):
+        dt = self.clock(t)
         k = e % self.CYCLE
-        n = self.lotus_n(e)
-        bloom = span(k, 0.5, 3.5) if (e >= self.CYCLE and k < 4.0) else 1.0
-        self.pond(g, t, e, lotus=n, bloom=bloom)
-        neck = self.neck_at(e)
-        self.turtle(g, neck, t)
-        self.person(g)
-        self.feather(g, *NOSE, self.tilt_at(e, t))
-        self.count(g, e)
-        if e >= self.CYCLE and k < 4.0 and bloom < 1:  # 开莲的闪光
-            x = 52 + (min(n, 4) - 1) * 9
-            for j in range(6):
-                if blink(t + j * 0.13, 0.4, 0.5):
-                    a = j / 6 * 2 * math.pi
-                    g.px(x + math.cos(a) * 7, WATER + math.sin(a) * 4)
-        self.texts(g, e)
-        self.mx(g, neck, t)
-
-    def enter(self, g: Gfx, t: float):
-        self.pond(g, t, 0)
-        rip = span(t, 0, 1.5)
-        if rip < 1:
-            ring(g, 100, WATER + 3, 3 + rip * 20, 2)
-        # 龟从水里爬上石头
-        k = ease_out(span(t, 0.6, 2.4))
-        self.turtle(g, 0.6 * k, t, dx=lerp(-28, 0, k), dy=lerp(16, 0, k))
-        g.d.rectangle((70, WATER + 6, 128, 63), fill=0) if k < 0.5 else None
-        self.person(g)
-        # 鸿毛从上方飘落
-        f = ease_out(span(t, 1.8, 4.3))
-        fx = NOSE[0] + math.sin(t * 3) * 6 * (1 - f)
-        fy = lerp(-10, NOSE[1], f)
-        self.feather(g, fx, fy, math.sin(t * 4) * 25 * (1 - f))
-        self.texts(g, 0, a=span(t, 3.4, 4.5))
-        self.mx(g, 0.6 * k, t)
+        prog = k / self.CYCLE
+        lotus = self.lotus_count(e)
+        renew = e >= self.CYCLE and k < 4.0
+        pond(g, t, e, lotus, span(k, 0.3, 1.6) if renew and lotus <= 4 else 1.0)
+        self.event(g, t, e)
+        ph, q, b = self.phase(e)
+        self.turtle(g, t, ph, q)
+        h = dao(g, DX, FLOOR, SIT, t)
+        trem = (1 - prog * 0.85) * (math.sin(q * math.pi) if ph == "out" else 0)
+        self.feather(g, t, h, trem * 1.5)
+        self.breath_fx(g, t, h, ph, q, prog)
+        if renew and abs(k - 1.0) < dt and int(e // self.CYCLE) <= 4:
+            x, y = LOTUS_AT[max(lotus - 1, 0)]
+            pix.flash(g)
+            self.sparks.burst(x, y - 6, 16, 24, up=10, life=0.8, gravity=20)
+        self.sparks.step(dt)
+        self.sparks.draw(g)
+        self.mx(g, t, ph, q)
+        if renew and k > 1.2:
+            n = int(e // BREATH) + 1
+            counter(g, f"第{cn_num(n)}息" if n < 100 else f"第{n}息")
+            nl = int(e // self.CYCLE)
+            pop_title(g, 92, 3, f"{cn_num(nl)}轮莲开" if nl < 100 else f"{nl}轮", span(k, 1.2, 1.6), t)
+        else:
+            self.labels(g, e, ph, q)
 
     def interrupt(self, g: Gfx, t: float, e: float):
-        self.pond(g, t, e, lotus=self.lotus_n(e))
-        neck = lerp(self.neck_at(e), -0.2, ease_in(span(t, 0, 0.6)))
-        self.turtle(g, max(0.0, neck), t)
-        self.person(g, eyes_open=t > 0.3)
-        # 一口长气把鸿毛吹飞
-        k = ease_in(span(t, 0.3, 1.5))
-        fx, fy = NOSE[0] + k * 70, NOSE[1] - math.sin(k * math.pi) * 12 + k * 6
-        if k < 1:
-            self.feather(g, fx, fy, k * 300)
-        if 0.3 < t < 1.0:
+        dt = self.clock(t)
+        pond(g, t, e, self.lotus_count(e))
+        ph, q, b = self.phase(e)
+        self.turtle(g, t, "hold", 0)
+        h = dao(g, DX, FLOOR, SIT_OPEN if t > 0.3 else SIT, t)
+        k = ease_in(span(t, 0.3, 1.6))
+        self.feather(g, t, h, 2.0 if t < 0.3 else 0, k * 70, -k * 30 + math.sin(t * 9) * 3 * k)
+        if 0.3 < t < 1.0:  # 长出一口气
+            nx, ny = h["nose"]
             for j in range(3):
-                y = NOSE[1] + 2 + j * 2
-                x0 = NOSE[0] + 2 + span(t, 0.3, 1.0) * 16
-                g.d.line((x0, y, x0 + 6, y), fill=1)
-        self.texts(g, e, left="出息")
-        self.mx(g, 0.0, t)
+                g.d.arc((nx + 2 + j * 4, ny - 4, nx + 6 + j * 4, ny + 4), -50, 50, fill=1)
+        self.mx(g, t, "hold", 0)
+        n = int(e // BREATH) + 1
+        counter(g, f"第{cn_num(n)}息" if n < 100 else f"第{n}息")
+        if t > 0.6:
+            counter(g, "出息", right=True)
 
     def resume(self, g: Gfx, t: float, e: float):
-        self.pond(g, t, e, lotus=self.lotus_n(e))
-        k = ease_out(span(t, 0.8, 2.0))
-        self.turtle(g, lerp(0.0, self.neck_at(e), k), t)
-        self.person(g, eyes_open=t < 0.5)
-        f = ease_out(span(t, 0, 1.6))
-        fx = NOSE[0] + math.sin(t * 3) * 6 * (1 - f)
-        fy = lerp(-10, NOSE[1], f)
-        self.feather(g, fx, fy, lerp(math.sin(t * 4) * 25, self.tilt_at(e, t), f))
-        if t > 1.6:
-            self.count(g, e)
-        self.texts(g, e, left="出息" if t < 0.6 else None)
-        self.mx(g, lerp(0.0, self.neck_at(e), k), t)
+        dt = self.clock(t)
+        pond(g, t, e, self.lotus_count(e))
+        ph, q, b = self.phase(e)
+        self.turtle(g, t, "hold" if t < 0.8 else ph, q)
+        h = dao(g, DX, FLOOR, SIT, t)
+        k = 1 - ease_out(span(t, 0.0, 1.6))
+        self.feather(g, t, h, 0, math.sin(t * 6) * 8 * k, -k * 30)
+        if abs(t - 0.8) < dt:
+            self.sparks.burst(TX - 14, TY - 4, 8, 14, life=0.4, gravity=10)
+        self.sparks.step(dt)
+        self.sparks.draw(g)
+        self.mx(g, t, ph, q)
+        self.labels(g, e, ph, q)
 
     def complete(self, g: Gfx, t: float, e: float):
-        self.pond(g, t, e, lotus=max(1, self.lotus_n(e)))
-        gl = ease_out(span(t, 1.0, 2.5))
-        self.turtle(g, lerp(self.neck_at(e), 1.0, span(t, 0, 0.8)), t, glow=gl)
-        self.person(g, glow=ease_out(span(t, 0.5, 2.0)))
-        self.feather(g, *NOSE, 0)
-        if t > 1.5:
-            ring(g, PX + 1, PY - 13, 8 + 3 * math.sin(t * 3), 2, t)
-        if t < 1.0:
-            self.texts(g, e, a=1 - span(t, 0, 1.0))
-        if t > 2.5:
-            typewriter(g, 70, 2, "如在胞胎", t - 2.5, cps=5, align="center")
-        self.mx(g, 1.0, t)
-        if t > 1.0:
-            for y in range(1, 7):
-                for x in range(1, 7):
-                    if g.mx[y, x] is False or not g.mx[y, x]:
-                        g.mx[y, x] = blink(t + (x + y) * 0.07, 0.5, 0.5) and (x + y) % 2 == 0
-            g.mx_level = 3 if 1.0 < t < 1.6 else 1
+        dt = self.clock(t)
+        pond(g, t, e, max(self.lotus_count(e), 1))
+        self.turtle(g, t, "hold", 0, glow=t > 2.0)
+        h = dao(g, DX, FLOOR, SIT if t < 4.2 else P(legs="sit", b=(110, 30, "palm"), f=(70, 150, "palm"), face="happy"), t)
+        self.feather(g, t, h, 0)
+        bx, by = DX + 2, FLOOR - 11
+        if t > 1.0:  # 腹中胎形光：一个蜷着的小光团 + 光环
+            k = ease_out(span(t, 1.0, 2.0))
+            r = 2 + k * 3
+            g.d.ellipse((bx - r - 1, by - r - 1, bx + r + 1, by + r + 1), fill=0)
+            g.d.ellipse((bx - r, by - r, bx + r, by + r), outline=1)
+            if k > 0.6:
+                g.d.ellipse((bx - 2, by - 3, bx + 1, by), fill=1)       # 头
+                g.d.arc((bx - 3, by - 2, bx + 3, by + 3), 300, 200, fill=1)  # 蜷着的身子
+            for j in range(2):
+                rr = ((t - 1.0) * 10 + j * 8) % 18 + r + 2
+                ring(g, bx, by, rr, dotted=2, ry=rr * 0.8)
+        if abs(t - 2.0) < dt:
+            pix.flash(g)
+            self.sparks.burst(TX, TY - 6, 20, 30, up=10, life=0.9, gravity=20)
+        if 2.0 < t < 2.3:
+            pix.shake(g, t, 1.2)
+        self.sparks.step(dt)
+        self.sparks.draw(g)
+        self.mx(g, t, "hold", 0)
+        if t > 2.0:
+            mx_ring(g, (t - 2.0) * 4 % 5)
+            g.mx_level = 1 + int(6 * (1 - span(t, 2.0, 3.5)))
+        if t > 2.6:
+            pop_title(g, 64, 3, "如在胞胎", span(t, 2.6, 3.0), t)
+        else:
+            n = int(e // BREATH) + 1
+            counter(g, f"第{cn_num(n)}息" if n < 100 else f"第{n}息")

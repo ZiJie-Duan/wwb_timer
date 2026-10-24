@@ -1,438 +1,470 @@
-"""烂柯：任昉《述异记》王质观棋。
+"""烂柯：任昉《述异记》王质观棋——“见童子数人棋而歌，质因听之。童子以一物与质，如枣核，质含之，不觉饥。
+俄顷，童子谓曰：何不去？质起视，斧柯烂尽。既归，无复时人。”
 
-“信安郡石室山，晋时王质伐木至，见童子数人棋而歌，质因听之。童子以一物与质，如枣核，质含之，不觉饥。
-俄顷，童子谓曰：‘何不去？’质起视，斧柯烂尽。既归，无复时人。”
-
-入场：石枰与两个梳双髻的童子从地里升起，樵夫扛着斧子从左边走来，把斧子拄在身边。
-持续：一局一轮（96 秒）。童子你一子我一子下棋（每 2 秒一手，落子有火星）；天上日月飞快轮转（山中一日，世上一年），
-      樵夫的胡子越长越长，斧柄一点点朽烂、长出蘑菇。中途童子递给樵夫一颗“枣核”。
-      局终：斧柄烂断、斧头落地，樵夫一惊；童子问“何不去”，题“斧柯烂尽”；樵夫拾起斧头走了，
-      童子收子，又一位年轻樵夫走来，拄斧观棋——下一局。
-退场：画面收拢成一个圆。
+山中空地，一方石枰（略俯视，刻着棋路）。小道士砍柴路过，把斧子靠在石头边，坐下与梳双髻的仙童对弈。
+入场：石枰从地里弹起，仙童从石枰后冒出来，小道士扛着斧子走来，把斧子靠在石头边坐下。
+持续（一局 96 秒）：两人你一子我一子（每 3 秒一手，落子“嗒”地一亮），背后日月每 10 秒轮转一次
+      （山中一日、世上一年，夜里星星出来）；小道士的白胡子越长越长，斧柄一点点朽缺、长出蘑菇和青苔；
+      第 30 秒仙童抛来一颗枣核，小道士含着嚼（“不觉饥”）。
+      局终：斧柄烂断、斧头“当”地落地，小道士一惊；仙童问“何不去”，题“斧柯烂尽”；小道士捡起斧头
+      走出画面，棋子收起，他又扛一把新斧子回来（胡子没了），再下一局。
+退场：收圆。
+点阵：小棋盘，最后一手闪烁，顶行一个点走过表示日月；斧头落地时换成斧头图标。
 """
 from __future__ import annotations
 
 import math
-import random
 
-from ..engine.anim import blink, clamp, ease_in, ease_in_out, ease_out, ease_out_back, ease_out_bounce, lerp, noise, rand, span
-from ..engine.fx import typewriter
+from ..engine import pix
+from ..engine.anim import ease_in, ease_in_out, ease_out, ease_out_back, ease_out_bounce, lerp, rand, span
+from ..engine.chars import Part, figure
 from ..engine.gfx import Gfx, Sprite
 from ..engine.scene import Rest, register
-from .x2_common import iris
+from .x2_common import TUFT, Clock, arm, iris, label, plate, put_arm, rock
 
-GROUND = 60
-CYC = 96.0
-PLAY_END = 72.0     # 落子到此为止
-STEP = 3.0          # 每手棋秒数
-COLS, ROWS = 9, 5
-BACK_Y, FRONT_Y = 36, 52
-BACK_X, FRONT_X = (46, 84), (36, 94)
-WZ_X = 3            # 樵夫站的位置（精灵左边）
-AXE_X = 22
+FLOOR = 58
+DX = 37                       # 小道士（盘坐，朝右）
+KX = 93                       # 仙童（盘坐，朝左）
+BX, BY = 46, 38               # 棋盘左上角
+COLS, ROWS = 8, 3
+GAME = 96.0
+MOVE = 3.5
+AXE = (17, FLOOR)             # 斧头着地点
+DAY = 10.0
 
-WOODMAN = Sprite("""
-        ...
-      ..###..
-    .#########.
-   #############
-      #......#
-      #......##
-      #....#..#
-      #.......#
-       #.....#
-       .#####.
-      #.......#
-     #.........#
-    #...........#
-    #..#........#
-    #..#........#
-    #..#........#
-    #...#.......#
-    #...##......#
-    #...........#
-    #############
-    #...........#
-    #...........#
-    #...........#
-    #...........#
-    #...........#
-    #############
-      #.#   #.#
-      #.#   #.#
-      #.#   #.#
-     ##.#  ##.#
-     ####  ####
+
+def cell(c: int, r: int):
+    y = 2 + r * 3
+    return BX + round(_colx(c, y)), BY + y
+
+
+# ---------------------------------------------------------------- 造型
+
+BW = 37                       # 石枰宽
+FACE_H = 11                   # 枰面（俯视的梯形）高
+
+
+def _colx(c: float, y: float) -> float:
+    """第 c 路在枰面第 y 行的 x（近大远小）"""
+    k = y / (FACE_H - 1)
+    return BW / 2 - 0.5 + (c - (COLS - 1) / 2) * lerp(3.4, 4.2, k)
+
+
+def _table():
+    """石枰 37×24：枰面是俯视的梯形（浅色石面刻暗线，近宽远窄），厚枰沿，下面一块天然大石（裂纹、苔点、阴影）"""
+    p = Part(BW, 24)
+    p.shape("polygon", [(4, 0), (BW - 5, 0), (BW - 1, FACE_H - 1), (0, FACE_H - 1)], fill=1)
+    p.d.polygon([(5, 1), (BW - 6, 1), (BW - 3, FACE_H - 2), (2, FACE_H - 2)], fill=0)
+    for c in range(COLS):                                   # 纵线（往远处收），隔点刻
+        x0, x1 = _colx(c, 1), _colx(c, FACE_H - 2)
+        for y in range(2, FACE_H - 2):
+            if y % 2 == 0 or y in (1, FACE_H - 3):
+                p.px(round(lerp(x0, x1, (y - 1) / (FACE_H - 3))), y, 1)
+    for r in range(ROWS):                                   # 横线
+        y = 2 + r * 3
+        if 1 < y < FACE_H - 2:
+            for x in range(round(_colx(0, y)), round(_colx(COLS - 1, y)) + 1, 2):
+                p.px(x, y, 1)
+    p.shape("rectangle", (0, FACE_H, BW - 1, FACE_H + 2), fill=1)                     # 枰沿
+    p.d.line((1, FACE_H + 1, BW - 2, FACE_H + 1), fill=0)
+    p.dither((BW - 9, FACE_H, BW - 1, FACE_H + 2), 0.5, 0)
+    top = FACE_H + 4
+    p.shape("polygon", [(3, top), (BW - 4, top), (BW - 1, top + 3), (BW - 3, top + 6), (BW - 1, 23), (1, 23),
+                        (3, top + 5), (1, top + 2)], fill=1)
+    p.d.line((3, top + 2, 8, top + 1), fill=0)                                            # 石面的层理
+    p.d.line((12, top + 4, 20, top + 3), fill=0)
+    p.d.line((5, top + 6, 11, top + 7), fill=0)
+    p.dither([(18, top), (BW, top), (BW, 24), (16, 24)], 0.5, 0)
+    p.dither([(1, top + 5), (18, top + 5), (16, 24), (1, 24)], 0.25, 0)
+    return p.sprite()
+
+
+def _kid(reach: bool):
+    """梳双髻的仙童（盘坐，朝左）16×23：头顶前后两个发髻扎红绳、绳尾飘在脑后；圆脸、短褂、腰带"""
+    p = Part(17, 23)
+    p.shape("ellipse", (8, 0, 12, 4), fill=1)              # 后髻
+    p.shape("ellipse", (4, 1, 8, 5), fill=1)               # 前髻
+    p.d.line((5, 4, 7, 4), fill=0)
+    p.d.line((9, 4, 11, 3), fill=0)
+    p.shape("line", (12, 4, 15, 7), fill=1)                # 发带尾巴
+    p.shape("ellipse", (1, 4, 14, 15), fill=1)             # 头
+    p.d.chord((3, 4, 14, 11), 200, 360, fill=0)            # 头发（只盖头顶和后脑）
+    p.d.polygon([(10, 8), (13, 8), (13, 12), (11, 12)], fill=0)
+    p.d.ellipse((1, 4, 14, 15), outline=1)
+    p.px(7, 6, 1), p.px(8, 6, 1)                           # 发丝高光
+    p.d.rectangle((3, 9, 3, 10), fill=0)                   # 眼（朝左）
+    p.d.rectangle((7, 9, 7, 10), fill=0)
+    p.px(2, 12, 0), p.px(8, 12, 0)                         # 腮
+    p.px(4, 12, 0), p.px(5, 12, 0)                         # 嘴
+    p.shape("polygon", [(4, 15), (11, 15), (13, 20), (2, 20)], fill=1)   # 短褂
+    p.d.line((5, 15, 8, 18), fill=0)
+    p.d.line((2, 18, 13, 18), fill=0)
+    p.dither([(10, 16), (13, 16), (13, 19), (11, 19)], 0.5, 0)
+    p.shape("ellipse", (0, 19, 16, 22), fill=1)            # 盘腿
+    p.d.line((3, 20, 13, 20), fill=0)
+    if not reach:
+        p.shape("polygon", [(5, 15), (4, 19), (6, 19), (7, 15)], fill=1)
+        p.d.line((5, 19, 6, 19), fill=0)
+    return p.sprite()
+
+
+def _axe_head():
+    """斧头 9×7（刃朝右）：后面是銎（装柄的孔），刃口外张、一道磨亮的刃线"""
+    return Sprite("""
+ ##.
+#..####
+#..#####.
+#..######
+#..#####.
+#..####
+ ##.
 """)
-WALK = Sprite("""
-      #.#    #.#
-      #.#   #.#
-     #.#    #.#
-    ##.#   ##.#
-    ####   ####
-""")
-BUNDLE = Sprite("""
-   #   #   #
-  ### ### ###
-  #.# #.# #.#
-  #.#.#.#.#.#
-  #.#.#.#.#.#
-  #.#.#.#.#.#
-  ###.###.###
-  #.#######.#
-  ###########
-""")
-KID = Sprite("""
- .##.     .##.
-#....#   #....#
-#....#####....#
- .##.......##.
-   #........#
-   #........#
-   #.....#..#
-   #........#
-   #......#.#
-    #......#
-     ######
-   ##......##
-  #..........#
- #............#
- #............#
- #............#
- #............#
-""")
-AXE_HEAD = Sprite("""
- ####
- #..##
- #...#
- #..##
- ####
+
+
+def _mushroom():
+    return Sprite("""
+ ###
+#####
+ .#.
+  #
 """)
 
-WOODMAN_L, BUNDLE_L, WALK_L, KID_R = WOODMAN.flip(), BUNDLE.flip(), WALK.flip(), KID.flip()
-AXE_DOWN = AXE_HEAD.rot90(-1)
+
+def _beard(n: int):
+    """白胡子：长 n 像素，尖下巴，两道暗须纹"""
+    p = Part(6, max(n, 1) + 1)
+    p.shape("polygon", [(0, 0), (5, 0), (4, n // 2), (3, n), (2, n), (1, n // 2)], fill=1)
+    if n > 3:
+        p.d.line((2, 1, 2, n - 2), fill=0)
+        p.px(4, 2, 0)
+    return p.sprite()
 
 
-def pad(g: Gfx, cx: float, cy: float, w: float, h: float):
-    """一团松针：压扁的椭圆，抖动灰度 + 上沿轮廓"""
-    pts = [(cx + math.cos(a / 12 * 2 * math.pi) * w, cy + math.sin(a / 12 * 2 * math.pi) * h * (0.6 if a < 6 else 1))
-           for a in range(12)]
-    g.d.polygon(pts, fill=0)
-    g.shade_poly(pts, 0.45, outline=None)
-    g.d.line(pts[6:] + pts[:1], fill=1)
+def _sun():
+    return Sprite("""
+ # # #
+  ###
+#######
+ #####
+#######
+  ###
+ # # #
+""")
 
 
-def tree(g: Gfx, t: float, seed: int):
-    """右边一棵老松：虬干 + 几团平展的松针"""
-    d = g.d
-    d.line([(119, GROUND), (118, 46), (121, 34), (117, 22), (119, 10), (116, 0)], fill=1, width=3)
-    d.line([(118, 33), (108, 27)], fill=1, width=2)
-    d.line([(118, 19), (106, 12)], fill=1, width=2)
-    sway = (noise(t * 0.3, seed) - 0.5) * 1.6
-    pad(g, 106 + sway, 26, 10, 4)
-    pad(g, 104 + sway * 1.3, 11, 12, 4)
-    pad(g, 124, 4, 8, 3)
-    for i in range(3):  # 树皮鳞纹
-        g.px(118, 52 - i * 12, 0)
-        g.px(119, 44 - i * 12, 0)
+def _moon():
+    return Sprite("""
+  ###
+ ##.
+##.
+##
+##.
+ ##.
+  ###
+""")
 
 
-def board_xy(c: float, r: float):
-    """棋盘交点 (c, r) → 屏幕坐标（透视：后窄前宽）"""
-    k = r / (ROWS - 1)
-    y = lerp(BACK_Y + 2, FRONT_Y - 2, k)
-    x0 = lerp(BACK_X[0] + 3, FRONT_X[0] + 3, k)
-    x1 = lerp(BACK_X[1] - 3, FRONT_X[1] - 3, k)
-    return lerp(x0, x1, c / (COLS - 1)), y
+_P: dict = {}
 
 
-def board(g: Gfx, dy: float = 0.0):
-    d = g.d
-    top = [(BACK_X[0], BACK_Y + dy), (BACK_X[1], BACK_Y + dy), (FRONT_X[1], FRONT_Y + dy), (FRONT_X[0], FRONT_Y + dy)]
-    d.polygon(top, fill=0, outline=1)
-    d.rectangle((FRONT_X[0], FRONT_Y + dy, FRONT_X[1], FRONT_Y + 4 + dy), fill=0, outline=1)  # 枰的厚度
-    for x in range(FRONT_X[0] + 3, FRONT_X[1] - 1, 4):
-        g.px(x, FRONT_Y + 2 + dy)
-    d.polygon([(FRONT_X[0] + 6, FRONT_Y + 5 + dy), (FRONT_X[1] - 6, FRONT_Y + 5 + dy), (FRONT_X[1] - 2, GROUND),
-               (FRONT_X[0] + 2, GROUND)], fill=0, outline=1)  # 石墩
-    g.shade((FRONT_X[0] + 4, FRONT_Y + 6 + dy, FRONT_X[1] - 3, GROUND), 0.15)
-    for r in range(ROWS):  # 棋盘线
-        x0, y = board_xy(0, r)
-        x1, _ = board_xy(COLS - 1, r)
-        d.line((x0, y + dy, x1, y + dy), fill=1)
-    for c in range(COLS):
-        xa, ya = board_xy(c, 0)
-        xb, yb = board_xy(c, ROWS - 1)
-        d.line((xa, ya + dy, xb, yb + dy), fill=1)
-
-
-def stone(g: Gfx, x: float, y: float, black: bool):
-    x, y = int(round(x)), int(round(y))
-    if black:
-        g.d.rectangle((x - 1, y - 1, x + 1, y + 1), fill=1)
-        g.d.line((x - 2, y, x + 2, y), fill=1)
-    else:
-        g.d.rectangle((x - 2, y - 1, x + 2, y + 1), fill=0)
-        g.d.rectangle((x - 1, y - 2, x + 1, y + 2), fill=0)
-        g.d.line((x - 1, y - 2, x + 1, y - 2), fill=1)
-        g.d.line((x - 1, y + 2, x + 1, y + 2), fill=1)
-        g.d.line((x - 2, y - 1, x - 2, y + 1), fill=1)
-        g.d.line((x + 2, y - 1, x + 2, y + 1), fill=1)
+def prop(name, *a):
+    key = (name,) + a
+    if key not in _P:
+        _P[key] = {"table": _table, "kid": _kid, "axe": _axe_head, "mush": _mushroom, "beard": _beard,
+                   "sun": _sun, "moon": _moon}[name](*a)
+    return _P[key]
 
 
 @register
 class Lanke(Rest):
     id = "x2.lanke"
     name = "烂柯"
-    desc = "王质观仙童下棋，日月飞转、胡子渐长，斧柄烂尽落地，童子问何不去，换一位樵夫再观一局"
+    desc = "小道士把斧子靠在石边与仙童对弈，日月飞转、白胡子越长越长、斧柄朽烂长蘑菇；局终斧头落地，“何不去”，换斧再来"
     T = {"enter": 3.0, "exit": 1.2}
 
     def setup(self):
+        self.clock = Clock()
+        self.sparks = pix.Sparks(self.seed)
+        self.puffs = pix.Puffs(self.seed + 1)
         self.ht = 0.0
-        self._orders: dict[int, list] = {}
 
-    def order(self, game: int) -> list:
-        if game not in self._orders:
-            pts = [(c, r) for c in range(COLS) for r in range(ROWS)]
-            random.Random(self.seed * 1000 + game).shuffle(pts)
-            if len(self._orders) > 4:
-                self._orders.clear()
-            self._orders[game] = pts
-        return self._orders[game]
+    # ------------------------------------------------------------ 棋局（确定性）
 
-    # ------------------------------------------------------------ 人物
+    def moves(self, game: int):
+        if getattr(self, "_mv_game", None) == game:
+            return self._mv
+        used, out = set(), []
+        for i in range(24):
+            mine = i % 2 == 0
+            for j in range(20):
+                c = int(rand(game * 131 + i * 7 + j, self.seed) * 5) + (0 if mine else 3)
+                if j > 12:
+                    c = int(rand(game * 131 + i * 7 + j, self.seed) * COLS)
+                r = int(rand(game * 71 + i * 13 + j * 3, self.seed + 5) * ROWS)
+                if (c, r) not in used:
+                    break
+            used.add((c, r))
+            out.append((c, r, mine))
+        self._mv_game, self._mv = game, out
+        return out
 
-    def woodman(self, g: Gfx, x: float, beard: float = 0.0, walk: float = -1.0, jump: float = 0.0,
-                face_left: bool = False, eat: bool = False):
-        """樵夫：斗笠、背柴；beard 0..1 胡子长度；walk ≥ 0 时迈步"""
-        y = GROUND - WOODMAN.h + 1 - jump
-        if walk >= 0:
-            y -= abs(math.sin(walk * math.pi * 2)) * 1.5
-        w = WOODMAN.w
-        spr = WOODMAN_L if face_left else WOODMAN
-        g.blit(BUNDLE_L if face_left else BUNDLE, x + (w - 7 if face_left else -5), y + 9)
-        g.blit(spr, x, y)
-        if walk >= 0 and int(walk * 2) % 2:
-            g.d.rectangle((x + 3, y + 26, x + w - 3, y + 30), fill=0)
-            g.blit(WALK_L if face_left else WALK, x + (1 if not face_left else w - WALK.w - 1), y + 26)
-        if beard > 0:  # 胡子：从下巴垂下，越来越长（白须，盖在衣服上）
-            bx = x + (w - 13 if face_left else 12)
-            ln = beard * 17
-            for i in range(int(ln) + 1):
-                hw = 1.6 * (1 - 0.6 * i / max(ln, 1))
-                cx = bx + math.sin(i * 0.5 + 1) * 0.7
-                g.d.line((cx - hw - 1, y + 8 + i, cx + hw + 1, y + 8 + i), fill=0)
-                g.d.line((cx - hw, y + 8 + i, cx + hw, y + 8 + i), fill=1)
-        if eat:
-            g.d.line((x + 12, y + 7, x + 13, y + 7), fill=0)
-
-    KID_X = (43, 78)
-    KID_Y = BACK_Y - 13
-
-    def kid(self, g: Gfx, left: bool, dy: float = 0.0):
-        """梳双髻的童子，坐在石枰后面（下半身被石枰挡住）"""
-        x = self.KID_X[0 if left else 1]
-        g.blit(KID if left else KID_R, x, self.KID_Y + dy)
-
-    def arm(self, g: Gfx, left: bool, reach: float, target):
-        """童子伸手落子：reach 0..1"""
-        x = self.KID_X[0 if left else 1]
-        sx, sy = (x + 12, self.KID_Y + 12) if left else (x + 2, self.KID_Y + 12)
-        if reach <= 0 or not target:
-            return
-        tx, ty = target
-        ex, ey = lerp(sx, tx, reach), lerp(sy, ty - 1, reach) - math.sin(reach * math.pi) * 3
-        g.d.line((sx, sy, ex, ey), fill=1, width=2)
-        g.d.rectangle((ex - 1, ey - 1, ex + 1, ey), fill=1)
-
-    def axe(self, g: Gfx, rot: float, fallen: float = -1.0, gone: bool = False):
-        """斧：rot 0..1 斧柄朽烂程度；fallen ≥ 0 时斧头掉落的进度"""
-        if gone:
-            return
-        x = AXE_X
-        top = 41
-        if fallen < 0:
-            for i in range(GROUND - top):  # 斧柄：越烂缺的点越多，还长出蘑菇
-                y = GROUND - 1 - i
-                if rand(i, self.seed) < rot * 0.55:
-                    continue
-                g.px(x, y)
-                if rand(i + 50, self.seed) > rot * 1.2:
-                    g.px(x + 1, y)
-            if rot > 0.35:
-                mh = (rot - 0.35) * 6
-                g.d.pieslice((x - 5, GROUND - 3 - mh, x - 1, GROUND + 1 - mh), 180, 360, fill=1)
-                g.d.line((x - 3, GROUND - 1 - mh, x - 3, GROUND), fill=1)
-            if rot > 0.6:
-                g.d.pieslice((x + 2, GROUND - 11, x + 6, GROUND - 7), 180, 360, fill=1)
-            g.blit(AXE_HEAD, x - 1, top - 2)
-        else:  # 斧柄烂成灰，斧头落地
-            p = ease_out_bounce(fallen)
-            hy = lerp(top - 2, GROUND - 4, p)
-            g.blit(AXE_DOWN if fallen > 0.4 else AXE_HEAD, x - 1, hy)
-            for j in range(10):  # 碎屑
-                k = clamp(fallen * 1.5 - rand(j, 4) * 0.3)
-                g.px(x + (rand(j, 5) - 0.5) * 8 * k, lerp(top + j * 2, GROUND, ease_in(k)))
+    # ------------------------------------------------------------ 画面
 
     def sky(self, g: Gfx, t: float):
-        """日月飞快轮转：一日 10 秒（山中方一日，世上已一年）"""
-        ph = (t / 10.0) % 1.0
-        k = (ph % 0.5) / 0.5
-        x = lerp(88, 6, k)
-        y = 19 - math.sin(k * math.pi) * 15
-        g.d.ellipse((x - 3, y - 3, x + 3, y + 3), fill=1)
-        if ph < 0.5:  # 日
-            for i in range(8):
-                a = i * math.pi / 4 + t
-                g.px(x + math.cos(a) * 5, y + math.sin(a) * 5)
-        else:  # 月 + 几颗星
-            g.d.ellipse((x - 1, y - 4, x + 5, y + 2), fill=0)
-            for i in range(6):
-                sx, sy = 8 + rand(i, 3) * 84, 2 + rand(i, 4) * 14
-                if noise(t * 2 + i, 7) > 0.4:
+        """背后的山 + 日月轮转（山中一日）"""
+        ph = (t % DAY) / DAY
+        night = ph >= 0.5
+        q = (ph % 0.5) / 0.5
+        x = lerp(6, 118, q)
+        y = 24 - math.sin(q * math.pi) * 18
+        if night:
+            for i in range(9):
+                sx, sy = int(rand(i, 3) * 124) + 2, int(rand(i, 4) * 20) + 2
+                if (t * 3 + i) % 4 > 0.6:
                     g.px(sx, sy)
+        pix.blit(g, prop("moon" if night else "sun"), x - 3, y - 3)
+        ridge = [(0, 36), (10, 30), (18, 33), (30, 24), (40, 30), (52, 27), (66, 34), (80, 26), (94, 31),
+                 (106, 22), (118, 29), (127, 27)]
+        g.d.polygon(ridge + [(127, FLOOR), (0, FLOOR)], fill=0)
+        g.d.line(ridge, fill=1)
+        for i in range(0, 128, 6):                 # 山脚的树
+            yy = 36 + (i * 7) % 5
+            g.px(i, yy), g.px(i + 1, yy - 1), g.px(i + 2, yy)
+        g.d.line((0, FLOOR, 127, FLOOR), fill=1)
+        pix.checker(g, (0, FLOOR + 1, 128, 64), 0.125)
+        for x in (4, 44, 84, 120):
+            pix.blit(g, TUFT[(x // 4) % 3], x, FLOOR - 2, outline=False)
 
-    def leaves(self, g: Gfx, t: float):
-        for j in range(2):  # 松针飘落
-            ph = t / 7 + j * 0.5
-            k = ph % 1
-            x = 104 + rand(int(ph) * 2 + j, self.seed) * 18 - k * 30
-            y = 14 + k * 46
-            if y < GROUND - 1:
-                g.d.line((x, y, x + 1 + math.sin(k * 20), y + 1), fill=1)
-
-    def ground(self, g: Gfx):
-        g.d.line((0, GROUND + 1, 127, GROUND + 1), fill=1)
-        for i in range(0, 128, 9):  # 草
-            gx = i + rand(i, 3) * 5
-            g.d.line((gx, GROUND, gx - 1, GROUND - 2), fill=1)
-
-    # ------------------------------------------------------------ 一局
-
-    def frame(self, g: Gfx, t: float):
-        game = int(t // CYC)
-        s = t % CYC
-        order = self.order(game)
-        nmax = int(PLAY_END / STEP)
-        placed = min(nmax, int((s - 2.0) / STEP) + 1) if s >= 2.0 else 0
-        shown = int(placed * (1 - span(s, 84, 90)))
-        talk = 74.5 < s < 84.5
-        if not talk:
-            self.sky(g, t)
-        tree(g, t, self.seed)
-        self.leaves(g, t)
-        self.ground(g)
-        self.kid(g, True)
-        self.kid(g, False)
-        board(g)
-        for i in range(shown):
-            c, r = order[i]
-            x, y = board_xy(c, r)
-            stone(g, x, y, i % 2 == 0)
-        # 落子：先伸手，落下时一点火星，再收手
-        if 2.0 - 0.7 <= s < PLAY_END + 0.4:
-            k = (s - 2.0) % STEP
-            nxt = placed
-            if nxt < nmax and k > STEP - 0.7:
-                reach = math.sin(span(k, STEP - 0.7, STEP) * math.pi * 0.5)
-                self.arm(g, nxt % 2 == 0, reach, board_xy(*order[nxt]))
-            elif placed > 0 and k < 0.4:
-                i = placed - 1
-                tgt = board_xy(*order[i])
-                self.arm(g, i % 2 == 0, 1 - span(k, 0.0, 0.4), tgt)
-                if k < 0.2:
-                    for a in range(4):
-                        ang = a * math.pi / 2 + 0.8
-                        g.px(tgt[0] + math.cos(ang) * 4, tgt[1] + math.sin(ang) * 3)
-        # 枣核：左边童子抛给樵夫一颗，樵夫含着
-        jj = span(s, 30.0, 31.2)
-        if 0 < jj < 1:
-            sx, sy = self.KID_X[0] + 2, self.KID_Y + 10
-            ex, ey = WZ_X + 13, GROUND - WOODMAN.h + 8
-            x, y = lerp(sx, ex, jj), lerp(sy, ey, jj) - math.sin(jj * math.pi) * 14
-            g.d.ellipse((x - 1, y - 1, x + 1, y + 1), fill=1)
-        # 樵夫 + 斧
-        rot = clamp(s / PLAY_END)
-        if s < 72:
-            self.woodman(g, WZ_X, rot, eat=31.2 < s < 33.5 and int(s * 5) % 2 == 0)
-            self.axe(g, rot)
-        elif s < 84.5:
-            jump = 4 * math.sin(span(s, 72.4, 73.0) * math.pi)
-            self.woodman(g, WZ_X, 1.0, jump=jump)
-            self.axe(g, 1.0, fallen=span(s, 72.0, 73.2))
-            if 72.4 < s < 75:  # 一惊
-                g.d.line((WZ_X + 18, 22, WZ_X + 18, 26), fill=1)
-                g.px(WZ_X + 18, 28)
-        elif s < 89:  # 拾起斧头，转身回家
-            k = span(s, 85.0, 89)
-            self.woodman(g, WZ_X - ease_in(k) * 30, 1.0, walk=s * 1.5 if k > 0 else -1, face_left=k > 0)
-            self.axe(g, 1.0, fallen=1.0, gone=k > 0)
-        else:  # 下一位樵夫走来，拄斧
-            k = ease_out(span(s, 89, 93))
-            self.woodman(g, lerp(-20, WZ_X, k), 0.0, walk=s * 1.5 if k < 1 else -1)
-            if s > 93:
-                self.axe(g, 0.0)
-            else:
-                g.blit(AXE_HEAD, lerp(-20, WZ_X, k) + 14, GROUND - 20)
-        # 字
-        if 74.5 < s < 79.5:  # 童子：何不去？
-            bx0, by0, bx1, by1 = 18, 2, 60, 18
-            g.d.rounded_rectangle((bx0, by0, bx1, by1), 4, fill=0, outline=1)
-            g.d.polygon([(46, by1), (52, by1), (50, self.KID_Y + 2)], fill=0, outline=1)
-            g.d.line((47, by1, 51, by1), fill=0)
-            typewriter(g, bx0 + 3, by0 + 3, "何不去", s - 74.5, cps=4)
-        elif 79.5 < s < 84.5:
-            typewriter(g, 50, 3, "斧柯烂尽", s - 79.5, cps=4, align="center")
-        self.mx(g, s, order, shown)
-
-    def mx(self, g: Gfx, s: float, order, shown):
-        if 72 <= s < 84.5:  # 斧
-            g.mx_rows([0x00, 0x1C, 0x3E, 0x7C, 0x18, 0x10, 0x10, 0x10] if s < 73 else
-                      [0, 0, 0, 0, 0, 0, 0xE0, 0xFF])
+    def axe(self, g: Gfx, decay: float, snapped: float = -1.0, gone: bool = False):
+        """靠在石头上的斧子：decay 0..1 斧柄朽烂（缺口、蘑菇、青苔）；snapped ≥ 0：断后几秒"""
+        pix.blit(g, rock(13, 9), 2, FLOOR - 9)
+        if gone:
             return
-        for i in range(shown):  # 小棋盘（只显示前 8 列）
-            c, r = order[i]
-            if c < 8:
-                g.mx_set(c, r + 2, True if i % 2 == 0 else blink(s + i * 0.3, 2.0, 0.85))
-        if shown and blink(s, 0.5):
-            c, r = order[shown - 1]
-            if c < 8:
-                g.mx_set(c, r + 2, False)
-        g.mx[0, :] = [blink(s / 10 + x / 8, 1.0, 0.5) for x in range(8)]  # 顶行：日月流转
+        hx, hy = AXE
+        top = (7, 40)
+        if snapped < 0:
+            pts = 22
+            for i in range(pts):
+                k = i / (pts - 1)
+                x, y = lerp(hx, top[0], k), lerp(hy - 4, top[1], k)
+                if rand(i, 9) < decay * 0.55 and i > 3:
+                    continue
+                if k > 1 - decay * 0.25:
+                    continue
+                g.px(x, y), g.px(x + 1, y)
+                if i % 5 == 2 and decay > 0.5:
+                    g.px(x - 1, y, 0)
+            if decay > 0.35:
+                pix.blit(g, prop("mush"), lerp(hx, top[0], 0.45) - 1, lerp(hy - 4, top[1], 0.45) - 3)
+            if decay > 0.65:
+                pix.blit(g, prop("mush"), lerp(hx, top[0], 0.7) - 4, lerp(hy - 4, top[1], 0.7) - 2)
+            pix.blit(g, prop("axe"), hx - 2, hy - 6)
+        else:
+            f = ease_out_bounce(span(snapped, 0, 0.6))
+            ang = f * 1.2                                  # 斧头倒下
+            pix.blit(g, prop("axe").rot90(-1) if f > 0.5 else prop("axe"), hx - 2 + f * 3, hy - 6 + f * 1)
+            for i in range(6):                             # 断下来的一截柄躺在地上
+                g.px(hx + 6 + i * 2, FLOOR - 1)
 
-    # ------------------------------------------------------------ 阶段
+    def board(self, g: Gfx, game: int, n: int, t: float, fade: float = 0.0):
+        mv = self.moves(game)
+        for i, (c, r, mine) in enumerate(mv[:n]):
+            if fade and rand(i, 77) < fade:
+                continue
+            x, y = cell(c, r)
+            if mine:   # 黑子：亮圈暗心（扁圆）
+                g.d.rectangle((x - 2, y - 1, x + 2, y + 1), fill=0)
+                g.d.line((x - 1, y - 1, x + 1, y - 1), fill=1)
+                g.d.line((x - 1, y + 1, x + 1, y + 1), fill=1)
+                g.px(x - 2, y), g.px(x + 2, y)
+            else:      # 白子：实心扁圆
+                g.d.rectangle((x - 1, y - 1, x + 1, y + 1), fill=1)
+                g.px(x - 2, y), g.px(x + 2, y)
+            if i == n - 1 and int(t * 4) % 2 == 0:   # 最后一手闪一下
+                g.d.rectangle((x - 2, y - 1, x + 2, y + 1), fill=0)
+                g.px(x, y)
+
+    def daoshi(self, g: Gfx, t: float, k: float, n: int, game: int, x: float | None = None, walk=None,
+               beard: int = 0, face: str = "normal"):
+        """下棋的小道士：轮到他时伸手落子；k 本局秒数"""
+        if walk is not None:      # 走路（扛斧 / 拎斧头）
+            spr, at = put_arm(4, -10, "fist", over=True) if walk == "shoulder" else put_arm(5, 9, "fist")
+            h = figure(g, x, FLOOR, t, legs="walk", arm=spr, arm_at=at, face=face)
+            hx, hy = h["hand"]
+            if walk == "shoulder":   # 新斧子扛在肩上
+                g.d.line((hx - 9, hy + 6, hx + 3, hy - 2), fill=1)
+                pix.blit(g, prop("axe").rot90(1), hx - 12, hy + 3)
+            elif walk == "head":
+                pix.blit(g, prop("axe"), hx - 3, hy)
+            return
+        mine_turn = (int(k // MOVE) % 2 == 0)
+        ph = (k % MOVE) / MOVE
+        dx, dy = 8, 9
+        if mine_turn and n < 24 and k < 84:
+            c, r, _ = self.moves(game)[min(int(k // MOVE), 23)]
+            cx, cy = cell(c, r)
+            sx, sy = DX + 2, FLOOR - 18
+            reach = span(ph, 0.25, 0.5) * (1 - span(ph, 0.62, 0.85))
+            dx, dy = lerp(8, cx - sx, ease_in_out(reach)), lerp(9, cy - sy - 1, ease_in_out(reach))
+        spr, at = put_arm(dx, dy, "pinch")
+
+        def front(gg, at_):
+            if beard > 0:
+                pix.blit(gg, prop("beard", beard), DX + 1, FLOOR - 20)
+
+        figure(g, DX if x is None else x, FLOOR, t, legs="sit", arm=spr, arm_at=at, face=face, front=front)
+
+    def kid(self, g: Gfx, t: float, k: float, dy: float = 0.0):
+        mine_turn = (int(k // MOVE) % 2 == 0)
+        ph = (k % MOVE) / MOVE
+        reach = (not mine_turn) and 0.2 < ph < 0.7 and k < 84
+        bob = 1 if (t * 1.3) % 2 < 0.25 else 0              # 摇头晃脑地唱
+        pix.blit(g, prop("kid", reach), KX - 8, FLOOR - 23 + dy + bob)
+        return KX - 8, FLOOR - 23 + dy + bob
+
+    # ------------------------------------------------------------ 一帧
+
+    def scene(self, g: Gfx, t: float, enter: float = 1.0):
+        dt = self.clock.dt(t)
+        on = enter >= 1
+        e3 = enter * self.T["enter"]
+        game = int(t // GAME) if on else 0
+        k = t % GAME if on else 0.0
+        n = min(int(k // MOVE + (1 if (k % MOVE) / MOVE > 0.5 else 0)), 24) if on else 0
+        self.sky(g, t)
+        decay = span(k, 3, 82) if on and k < 94 else 0.0
+        snapped = k - 84 if on and 84 <= k < 94 else -1.0
+        # 斧子
+        if on and abs(k - 84) < dt * 1.01:                   # 斧柄烂断，斧头落地
+            self.sparks.burst(AXE[0] + 2, FLOOR - 3, 14, 30, up=20, life=0.6, gravity=90)
+            self.puffs.emit(AXE[0], FLOOR - 4, vy=-4, life=1.0, rmax=2.5)
+        if on and 84 <= k < 84.3:
+            pix.shake(g, t, 1.5)
+        self.axe(g, decay, snapped, gone=on and 89.8 <= k < 94.0 or (not on and e3 < 2.0))
+        # 石枰
+        pop = ease_out_back(span(e3, 0.0, 0.6)) if not on else 1.0
+        tdy = (1 - pop) * 24
+        pix.blit(g, prop("table"), BX, BY - 1 + tdy)
+        if tdy < 1:
+            fade = span(k, 90.5, 92.5) if on else 0.0
+            if not on or k < 92.5:
+                self.board(g, game, n, t, fade)
+            if on:
+                mv = self.moves(game)
+                if 0 < n <= 24 and abs(k - (n - 0.5) * MOVE) < dt * 1.01 and k < 84:
+                    c, r, mine = mv[n - 1]
+                    x, y = cell(c, r)
+                    self.sparks.burst(x, y, 5, 12, up=8, life=0.3, gravity=30)
+        # 仙童
+        kdy = (1 - ease_out_back(span(e3, 0.5, 1.1))) * 20 if not on else 0.0
+        kx, ky = self.kid(g, t, k, kdy)
+        mine_turn = (int(k // MOVE) % 2 == 0)
+        ph = (k % MOVE) / MOVE
+        if on and not mine_turn and k < 84:                  # 仙童伸手落子
+            c, r, _ = self.moves(game)[min(int(k // MOVE), 23)]
+            cx, cy = cell(c, r)
+            reach = ease_in_out(span(ph, 0.25, 0.5) * (1 - span(ph, 0.62, 0.85)))
+            sx, sy = kx + 5, ky + 15
+            hx, hy = lerp(sx - 3, cx + 1, reach), lerp(sy + 2, cy - 1, reach)
+            g.d.line((sx, sy, hx, hy), fill=1, width=2)
+            g.d.rectangle((hx - 1, hy - 1, hx + 1, hy), fill=1)
+        # 小道士
+        face = "normal"
+        beard = int(span(k, 6, 84) * 10) if on else 0
+        if on and 84 <= k < 86.5:
+            face = "wow"
+        chew = on and 31.0 <= k < 35.0
+        if chew:
+            face = "happy" if int(t * 5) % 2 else "sleep"
+        if not on:
+            if e3 < 2.0:
+                self.daoshi(g, t, 0, 0, 0, x=lerp(-14, DX - 6, ease_out(span(e3, 0.6, 2.0))), walk="shoulder")
+            else:
+                pop2 = ease_out_back(span(e3, 2.0, 2.4))
+                self.daoshi(g, t, 0, 0, 0, face=face)
+        elif k < 89.0:
+            self.daoshi(g, t, k, n, game, beard=beard, face=face)
+        elif k < 92.0:      # 起身捡斧头，走出去
+            w = span(k, 89.5, 92.0)
+            if k < 89.5:
+                figure(g, DX, FLOOR, t, arm="down", face="wow")
+            else:
+                self.daoshi(g, t, k, n, game, x=lerp(DX - 6, -16, ease_in(w)), walk="head", face="normal")
+        elif k < 94.0:      # 扛着新斧子回来
+            self.daoshi(g, t, k, n, game, x=lerp(-16, DX - 6, ease_out(span(k, 92.0, 94.0))), walk="shoulder")
+        else:
+            self.daoshi(g, t, k, n, game, face=face)
+        # 枣核：仙童抛来，小道士接住含着
+        if on and 30.0 <= k < 31.0:
+            q = span(k, 30.0, 31.0)
+            x0, y0 = kx + 2, ky + 12
+            x1, y1 = DX + 4, FLOOR - 20
+            px_, py_ = lerp(x0, x1, q), lerp(y0, y1, q) - math.sin(q * math.pi) * 14
+            g.d.rectangle((px_ - 1, py_, px_, py_ + 1), fill=1)
+            g.px(px_ + 1, py_ + 1, 0)
+        if on and abs(k - 31.0) < dt * 1.01:
+            self.sparks.burst(DX + 4, FLOOR - 21, 6, 14, up=6, life=0.4, gravity=0)
+        if on and abs(k - 92.6) < dt * 1.01:                 # 收子：一团烟
+            self.puffs.emit(BX + 16, BY + 3, vy=-6, life=1.0, rmax=3, spread=10)
+            self.puffs.emit(BX + 8, BY + 3, vy=-5, life=0.9, rmax=2, spread=6)
+        self.puffs.step(dt)
+        self.puffs.draw(g)
+        self.sparks.step(dt)
+        self.sparks.draw(g)
+        # 字
+        if on and 85.0 <= k < 88.8:     # 仙童问：何不去
+            bx, by = 82, 15
+            w = 38
+            plate(g, (bx - 2, by - 3, bx + w, by + 12), frame=True)
+            g.d.line((bx + 26, by + 13, bx + 29, by + 16), fill=1)
+            g.d.line((bx + 27, by + 13, bx + 29, by + 15), fill=0)
+            label(g, bx + 1, by, "何不去", pad=0)
+        if on and 89.0 <= k < 94.5:
+            label(g, 64, 2, "斧柯烂尽", align="center")
+        return k, n, game, snapped
+
+    def mx(self, g: Gfx, t: float, k: float, n: int, game: int, snapped: float):
+        if 0 <= snapped < 4:                      # 斧头图标
+            g.mx_blit("""
+..####..
+.######.
+########
+.###.##.
+.....#..
+.....#..
+....#...
+....#...
+""")
+            return
+        g.mx[7, :] = True                         # 棋盘边
+        g.mx[1, :] = True
+        ph = (t % DAY) / DAY
+        g.mx[0, min(7, int((ph % 0.5) / 0.5 * 8))] = True
+        if ph >= 0.5:
+            g.mx[0, int(t * 3) % 8] = True
+        mv = self.moves(game)
+        for i, (c, r, mine) in enumerate(mv[:n]):
+            yy = 2 + r * 1 + (r >= 2) * 0
+            on = True
+            if i == n - 1:
+                on = int(t * 4) % 2 == 0
+            if mine:
+                g.mx[2 + r * 2, c] = on
+            else:
+                g.mx[2 + r * 2, c] = on if (int(t * 2) % 2 or i != n - 1) else False
 
     def enter(self, g: Gfx, t: float):
-        if t > 1.8:
-            self.sky(g, 0.0) if t > 2.4 else None
-        if t > 1.2:
-            tree(g, t, self.seed)
-        g.d.line((0, GROUND + 1, 127 * ease_out(span(t, 0, 0.6)), GROUND + 1), fill=1)
-        if t > 0.6:
-            self.ground(g)
-        for left, t0 in ((True, 1.0), (False, 1.2)):
-            k = ease_out_back(span(t, t0, t0 + 0.6))
-            if k > 0:
-                self.kid(g, left, dy=(1 - k) * 16)
-        rise = ease_out_back(span(t, 0.2, 1.1))
-        if t > 0.2:
-            board(g, (1 - rise) * 30)
-        if t > 1.4:
-            k = ease_out(span(t, 1.4, 2.6))
-            self.woodman(g, lerp(-20, WZ_X, k), 0.0, walk=t * 1.5 if k < 1 else -1)
-            if t > 2.6:
-                self.axe(g, 0.0)
-            else:
-                g.blit(AXE_HEAD, lerp(-20, WZ_X, k) + 14, GROUND - 20)
-        g.d.rectangle((0, GROUND + 2, 127, 63), fill=0)
-        g.mx[0, :] = [x <= t * 3 for x in range(8)]
+        self.scene(g, t, min(t / self.T["enter"], 0.999))
+        g.mx[7, :] = True
+        g.mx[6, 1:7] = t > 0.6
 
     def hold(self, g: Gfx, t: float):
         self.ht = t
-        self.frame(g, t)
+        k, n, game, sn = self.scene(g, t)
+        self.mx(g, t, k, n, game, sn)
 
     def exit(self, g: Gfx, t: float):
-        self.frame(g, self.ht + t * 0.3)
-        iris(g, span(t, 0.0, self.T["exit"]), 60, 42)
-        if t > 0.7:
-            g.mx[:] = False
+        tt = self.ht + t
+        k, n, game, sn = self.scene(g, tt)
+        self.mx(g, tt, k, n, game, sn)
+        iris(g, t / self.T["exit"], 64, 40)

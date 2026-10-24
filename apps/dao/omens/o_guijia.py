@@ -1,167 +1,232 @@
 """龟卜（灼龟观兆）。
 
-商周卜法：龟腹甲背面先施钻凿，以燃着的荆木（楚焞）灼其钻处，正面爆出“卜”形裂纹（兆）——
-直的一道为兆干，横出的一枝为兆枝，“卜”字即象其形。
-本作沿千里路（中缝）两侧自下而上灼六处，以兆枝定爻：一枝直出为阳、枝分两岔为阴，
-再生碎纹者为变（老阳/老阴）。六兆成卦。
+商周龟卜：龟腹甲背面施钻凿，以荆木（楚焞）灼钻处，正面爆出“卜”形兆纹（兆干 + 兆枝），“卜”字即象其形。
+爻的判法是本作约定：兆枝一道直出为阳，枝分两岔为阴，再生碎纹为变；底层用三钱法概率。
+
+画面：龟腹甲（千里路中缝、盾纹、背光网点）从右滑入立在木架上，六个钻凿；小道士点燃荆木，
+举着燃烧的荆条依次去灼：钻窝烧红闪烁、青烟直冒，“啪”的一声白圈炸开、屏幕一震、火星四溅，
+裂出卜形兆纹，左上弹出“少阳”等，卦牌长出一爻。
 """
 from __future__ import annotations
 
 import math
 
-from ..engine.anim import clamp, ease_in, ease_in_out, ease_out, ease_out_back, lerp, noise, rand, span
-from ..engine.fx import Particles, flame, smoke_wisp
+from ..engine import pix
+from ..engine.anim import ease_in_out, ease_out, lerp, span
+from ..engine.chars import Part, daoshi, figure
 from ..engine.gfx import Gfx
-from ..engine.scene import Omen, register
-from ..engine.symbols import cast_coins, changing, mx_hexagram, yang
-from .o_common import REVEAL, YAO_NAME, hexa, label, reveal
+from ..engine.scene import register
+from ..engine.symbols import changing, mx_hexagram, yang
+from .o_common import FLOOR, REVEAL, YAO_NAME, Base, arm, floor, tally
 
-MX = 88  # 千里路
-SHELL = [(76, 2), (100, 2), (104, 7), (106, 16), (111, 22), (111, 40), (106, 46), (104, 56), (98, 62), (78, 62),
-         (72, 56), (70, 46), (65, 40), (65, 22), (70, 16), (72, 7)]
-SEAMS = [(12, 1), (24, -1), (40, 1), (51, -1)]
-T0, D = 1.05, 0.62
-BURN = 0.32
+DAO_X = 20
+MX = 86                # 千里路（中缝）
+T0 = 0.85
+D = 0.7
+BURN = 0.38            # 每个钻窝：移过去 → 灼 → 啪
+R0 = T0 + 6 * D + 0.15
+PITS = [(MX - 9, 45), (MX + 9, 45), (MX - 9, 32), (MX + 9, 32), (MX - 9, 19), (MX + 9, 19)]
+
+FLAME = pix.frames("""
+ #
+ ##
+###
+#.#
+ #
+---
+  #
+ ##
+###
+#.#
+ #
+---
+ #
+ #
+###
+##.
+ #
+""")
 
 
-def pit_pos(i: int) -> tuple[float, float]:
-    return (MX - 10 if i % 2 == 0 else MX + 10), 55 - i * 9
+def _shell():
+    """龟腹甲 45×53（暗底亮线）：前叶（上）圆、两侧甲桥外凸、后叶（下）收窄带缺口；双线甲缘、千里路、盾纹；
+    右侧背光稀网点"""
+    p = Part(45, 53)
+    c = 22
+    pts = [(c - 9, 0), (c + 9, 0), (c + 14, 4), (c + 16, 12), (c + 22, 18), (c + 22, 32), (c + 16, 38),
+           (c + 15, 46), (c + 10, 52), (c + 2, 52), (c, 49), (c - 2, 52), (c - 10, 52), (c - 15, 46), (c - 16, 38),
+           (c - 22, 32), (c - 22, 18), (c - 16, 12), (c - 14, 4)]
+    p.shape("polygon", pts, fill=0)
+    p.d.polygon(pts, outline=1)
+    inner = [(x + (2 if x < c else -2 if x > c else 0), y + (2 if y < 26 else -2)) for x, y in pts]
+    p.d.polygon(inner, outline=1)
+    p.d.line((c, 2, c, 49), fill=1)                       # 千里路
+    for y, bow in ((8, 1), (16, -1), (28, 1), (39, -1), (46, 1)):  # 盾纹（横缝，微弯）
+        p.d.line((c - 14, y + bow, c - 1, y), fill=1)
+        p.d.line((c + 1, y, c + 14, y + bow), fill=1)
+    for y in range(14, 40, 2):  # 右侧甲桥背光：一窄条网点
+        for x in (c + 18 - (y // 2) % 2, c + 16 - (y // 2) % 2):
+            if 18 <= y <= 32 or x < c + 15:
+                p.px(x, y, 1)
+    return p.sprite()
+
+
+def _stand():
+    """木架 33×9：横梁两头翘、两条腿"""
+    p = Part(35, 10)
+    p.shape("rectangle", (2, 0, 32, 2), fill=1)
+    p.px(0, 0), p.px(1, 0), p.px(33, 0), p.px(34, 0)
+    p.d.line((3, 1, 31, 1), fill=0)
+    for x in (6, 27):
+        p.shape("rectangle", (x, 3, x + 1, 9), fill=1)
+    p.shape("rectangle", (4, 9, 30, 9), fill=1)
+    return p.sprite()
+
+
+SPR = {}
+
+
+def spr(name):
+    if not SPR:
+        SPR.update(shell=_shell(), stand=_stand())
+    return SPR[name]
 
 
 @register
-class GuijiaOmen(Omen):
+class GuijiaOmen(Base):
     id = "o.guijia"
     name = "龟卜"
-    desc = "龟腹甲施钻凿，荆火逐一灼之，爆出“卜”形兆纹：枝直为阳、分岔为阴、碎纹为变"
-    T = {"play": T0 + 6 * D + 0.25 + REVEAL}
+    desc = "龟腹甲立在木架上，小道士举燃烧的荆条灼钻窝；烧红冒烟，啪地炸裂出卜形兆纹，六兆成卦"
+    T = {"play": R0 + REVEAL}
 
-    def setup(self):
-        self.lines = cast_coins(self.rng)
+    def init(self):
+        self.side = [1 if x > MX else -1 for x, _ in PITS]
 
-    def shell(self, g: Gfx, dx: float = 0.0):
-        pts = [(x + dx, y) for x, y in SHELL]
-        g.d.polygon(pts, fill=0, outline=1)
-        # 千里路（微曲）与盾纹
-        prev = None
-        for y in range(3, 62, 3):
-            x = MX + dx + (noise(y * 0.2, 5) - 0.5) * 1.5
-            if prev:
-                g.d.line((prev[0], prev[1], x, y), fill=1)
-            prev = (x, y)
-        for y, s in SEAMS:  # 盾纹（虚线）
-            for x in range(67, 110, 2):
-                g.px(x + dx, y + s * 2 * abs(x - MX) / 21)
-
-    def pit(self, g: Gfx, i: int, p: float, burnt: bool, dx: float = 0.0):
-        """钻凿：长槽（凿）+ 圆窝（钻）"""
-        if p <= 0:
-            return
-        x, y = pit_pos(i)
+    def crack(self, g: Gfx, i: int, p: float, dx: float = 0):
+        """卜形兆纹：兆干（竖）+ 兆枝（向外：阳一道直出，阴分两岔，变爻再生碎纹）"""
+        x, y = PITS[i]
         x += dx
-        h = 3.5 * min(1, p)
-        g.d.rectangle((x - 1, y - h, x + 1, y + h), fill=1 if burnt else 0, outline=1)
-        side = -1 if i % 2 == 0 else 1
-        g.d.ellipse((x + side * 4 - 2, y - 2, x + side * 4 + 2, y + 2), outline=1, fill=1 if burnt else 0)
-
-    def crack(self, g: Gfx, i: int, p: float, dx: float = 0.0):
-        """“卜”形兆：兆干沿凿上下裂开，兆枝向外横出"""
-        if p <= 0:
-            return
-        x, y = pit_pos(i)
-        x += dx
+        s = self.side[i]
         v = self.lines[i]
-        side = -1 if i % 2 == 0 else 1
-        trunk = ease_out(clamp(p * 2))
-        g.d.line((x, y - 3 - 2 * trunk, x + rand(i, 3) - 0.5, y + 3 + 2 * trunk), fill=1)
-        b = ease_out(clamp(p * 2 - 0.6))
-        if b > 0:
-            ex, ey = x - side * (2 + 11 * b), y - 2 - 2 * b
-            mx_, my_ = x - side * (2 + 6 * b), y - 1 - b
-            if yang(v):
-                g.d.line((x, y - 1, mx_, my_, ex, ey), fill=1)
+        q = ease_out(p)
+        g.d.line((x, y - 1 - 5 * q, x, y + 1 + 3 * q), fill=1)          # 兆干（亮裂纹）
+        L = 9 * span(p, 0.3, 1.0)
+        if L <= 0:
+            return
+        if yang(v):
+            g.d.line((x, y - 2, x + s * L, y - 2 - L * 0.35), fill=1)
+        else:
+            g.d.line((x, y - 2, x + s * L * 0.55, y - 2 - L * 0.2), fill=1)
+            g.d.line((x + s * L * 0.55, y - 2 - L * 0.2, x + s * L, y - 2 - L * 0.55), fill=1)
+            g.d.line((x + s * L * 0.55, y - 2 - L * 0.2, x + s * L, y - 1 + L * 0.1), fill=1)
+        if changing(v) and p > 0.8:
+            g.d.line((x, y + 2, x - s * 3, y + 4), fill=1)
+            g.d.line((x + s * 3, y - 3, x + s * 4, y - 6), fill=1)
+
+    def pit(self, g: Gfx, i: int, state: str, t: float, dx: float = 0):
+        """钻凿：椭圆钻窝（亮圈）+ 旁边的凿口；burn = 烧红闪烁"""
+        x, y = PITS[i]
+        x += dx
+        g.d.ellipse((x - 2, y - 3, x + 2, y + 3), fill=0, outline=1)
+        if state == "burn":
+            if int(t * 16) % 2 == 0:
+                g.d.ellipse((x - 2, y - 3, x + 2, y + 3), fill=1)
             else:
-                g.d.line((x, y - 1, mx_, my_), fill=1)
-                if b > 0.5:
-                    q = (b - 0.5) * 2
-                    g.d.line((mx_, my_, mx_ - side * 5 * q, my_ - 4 * q), fill=1)
-                    g.d.line((mx_, my_, mx_ - side * 5 * q, my_ + 3 * q), fill=1)
-            if changing(v) and b > 0.7:  # 碎纹
-                q = (b - 0.7) / 0.3
-                for k in range(3):
-                    a = rand(i * 7 + k, 9) * 2 * math.pi
-                    L = 2 + 3 * q * rand(i * 7 + k, 10)
-                    sx, sy = lerp(x, ex, 0.4 + 0.3 * k / 2), lerp(y, ey, 0.4 + 0.3 * k / 2)
-                    g.d.line((sx, sy, sx + math.cos(a) * L, sy + math.sin(a) * L), fill=1)
+                g.d.line((x, y - 1, x, y + 1), fill=1)
+        g.d.line((x + self.side[i] * 4, y - 1, x + self.side[i] * 4, y + 1), fill=1)
 
     def play(self, g: Gfx, t: float):
-        T = self.T["play"]
-        R0 = T - REVEAL
+        self.tick(t)
+        floor(g, "earth")
+        slide = (1 - ease_out(span(t, 0, 0.55))) * 60
+        cur = int((t - T0) // D) if t >= T0 else -1
+        u = (t - T0) - cur * D if cur >= 0 else 0
+        cur = min(cur, 6)
+        if t < R0:
+            pix.blit(g, spr("stand"), MX - 17 + slide, FLOOR - 10)
+            pix.blit(g, spr("shell"), MX - 22 + slide, FLOOR - 63 + 6)
+            for i in range(6):
+                cracked = i < cur or (i == cur and u >= BURN)
+                burning = i == cur and 0.12 <= u < BURN
+                self.pit(g, i, "burn" if burning else "pit", t, slide)
+                if cracked:
+                    p = 1.0 if i < cur else span(u, BURN, BURN + 0.16)
+                    self.crack(g, i, p, slide)
+        # ---------------- 小道士 + 荆条
         if t >= R0:
             k = t - R0
-            dx = ease_in(span(k, 0, 0.4)) * 80
-            if dx < 70:
-                self.shell(g, dx)
-                for i in range(6):
-                    self.pit(g, i, 1, True, dx)
-                    self.crack(g, i, 1, dx)
-            reveal(g, self.lines, k)
-            return
-        dx = (1 - ease_out(span(t, 0, 0.55))) * 70
-        self.shell(g, dx)
-        # 钻凿逐一凿出
-        for i in range(6):
-            tb = T0 + i * D
-            self.pit(g, i, span(t, 0.5 + i * 0.06, 0.62 + i * 0.06), t >= tb + BURN, dx)
-            self.crack(g, i, span(t, tb + BURN, tb + D - 0.05))
-        if t < 0.9:
-            g.vtext(115, 6, "灼龟观兆"[: int(span(t, 0.3, 0.9) * 4 + 0.5)])
+            daoshi(g, DAO_X, FLOOR, "bow" if 0.5 < k < 1.1 else "gongshou", t, face="happy")
+        elif t < T0:  # 点火：举起荆条，火苗窜起
+            h = daoshi(g, DAO_X, FLOOR, "raise", t, face="wow" if t > 0.5 else "normal")["hand"]
+            tx, ty = h[0] + 4, h[1] - 6
+            g.d.line((h[0], h[1] + 2, tx, ty), fill=1, width=2)
+            if t > 0.45:
+                fl = pix.stretch(pix.anim(FLAME, t, 12), 1, 1 + span(t, 0.45, 0.6))
+                pix.blit(g, fl, tx - 1, ty - fl.h, outline=False)
+                if self.hit(t, 0.45):
+                    self.sparks.burst(tx, ty - 3, 10, 25, up=10, life=0.4, gravity=40)
         else:
-            g.vtext(115, 6, "灼龟观兆")
-        # 荆火：移到当前钻处，灼烧
-        i = int((t - T0) // D)
-        if 0 <= i < 6:
-            u = t - T0 - i * D
-            x, y = pit_pos(i)
-            side = -1 if i % 2 == 0 else 1
-            hx, hy = x + side * 4, y
-            if u < BURN:
-                come = ease_out(clamp(u / 0.12))
-                fx, fy = lerp(hx + side * 30, hx, come), lerp(hy + 20, hy + 1, come)
-                g.d.line((fx, fy, fx + side * 26, fy + 24), fill=1, width=2)
-                flame(g, fx, fy, 4, 7, t, i)
-                smoke_wisp(g, fx, fy - 6, 10, t, i, sway=2)
-                if u > 0.12:  # 灼热的红晕：钻窝闪亮
-                    g.d.ellipse((hx - 2, hy - 2, hx + 2, hy + 2), fill=1 if int(u * 30) % 2 else 0, outline=1)
-            elif u < BURN + 0.12:  # 爆裂：一圈白光、火棍抽开
-                k = (u - BURN) / 0.12
-                for j in range(8):
-                    a = j / 8 * 2 * math.pi
-                    r = 3 + k * 9
-                    g.px(x + math.cos(a) * r, y + math.sin(a) * r)
-                fx, fy = hx + side * (6 + k * 20), hy + 4 + k * 10
-                g.d.line((fx, fy, fx + side * 26, fy + 24), fill=1, width=2)
-            if u > BURN + 0.08:
-                v = self.lines[i]
-                label(g, 22, 46, YAO_NAME[v], u - BURN - 0.08)
-        done = 0.0
-        for n in range(6):
-            land = T0 + n * D + BURN + 0.2
-            if t >= land:
-                done = n + clamp((t - land) / 0.25)
-        hexa(g, self.lines, done)
-        # 点阵：爆裂时显示“卜”形，其余时候显示已成之爻
-        if 0 <= i < 6 and BURN <= t - T0 - i * D < BURN + 0.35:
-            g.mx[:, 3] = True
-            if yang(self.lines[i]):
-                g.mx[3, 4:7] = True
+            i = min(cur, 5)
+            a, at = arm("reach") if PITS[i][1] > 35 else arm("toss") if PITS[i][1] < 25 else ("offer", None)
+            if at is None:
+                h = figure(g, DAO_X, FLOOR, t, arm="offer", face="normal")["hand"]
             else:
-                g.mx[3, 4] = True
-                g.mx[2, 5:7] = True
-                g.mx[4, 5:7] = True
-            g.mx_level = 6 if t - T0 - i * D < BURN + 0.08 else 2
-        else:
-            mx_hexagram(g, self.lines, int(done))
-            if 0 <= i < 6 and t - T0 - i * D < BURN:
+                h = figure(g, DAO_X, FLOOR, t, arm=a, arm_at=at, face="wow" if u > BURN else "normal")["hand"]
+            px, py = PITS[i]
+            q = ease_in_out(span(u, 0, 0.12)) if cur < 6 else 1
+            prev = PITS[i - 1] if i > 0 else (h[0] + 20, h[1] - 10)
+            tx = lerp(prev[0], px, q) - 3 * (1 if u < BURN else 0) - (4 if u >= BURN else 0)
+            ty = lerp(prev[1], py, q) + (2 if u >= BURN else 0)
+            if cur >= 6:
+                tx, ty = px - 8, py + 4
+            g.d.line((h[0], h[1], tx, ty), fill=1, width=2)
+            fl = pix.anim(FLAME, t, 12)
+            pix.blit(g, fl, tx - 1, ty - fl.h)
+            if 0.12 <= u < BURN and cur < 6:  # 灼：青烟直冒
+                if int(t * 12) != int((t - self.dt) * 12):
+                    self.puffs.emit(px, py - 4, vy=-12, life=0.8, rmax=1.6, spread=1)
+        # ---------------- 啪
+        for i in range(6):
+            tb = T0 + i * D + BURN
+            if self.hit(t, tb):
+                x, y = PITS[i]
+                self.sparks.burst(x, y, 12, 35, up=6, life=0.5, gravity=60)
+                pix.shake(g, t, 2.0)
+            if tb < t < tb + 0.1:
+                pix.shake(g, t, 1.2)
+            if tb <= t < tb + 0.2:  # 一圈白光
+                x, y = PITS[i]
+                r = 3 + span(t, tb, tb + 0.2) * 9
+                for j in range(10):
+                    a = j / 10 * 2 * math.pi
+                    g.px(x + math.cos(a) * r, y + math.sin(a) * r)
+        self.particles(g, wind=2)
+        # ---------------- 标签、卦牌、点阵
+        done = 0
+        for i in range(6):
+            tb = T0 + i * D + BURN
+            if t >= tb + 0.12:
+                done = i + 1
+            if tb + 0.12 <= t < min(tb + 0.12 + D, R0):
+                self.pop(40, 6, YAO_NAME[self.lines[i]], t - tb - 0.12)
+        if t < R0:
+            gl = (t - (T0 + (done - 1) * D + BURN + 0.12)) / 0.3 if done else -1
+            tally(g, self.lines, done, glint=gl)
+            mx_hexagram(g, self.lines, done)
+            if 0 <= cur < 6 and BURN <= u < BURN + 0.2:  # 爆裂瞬间：点阵显示“卜”
+                g.mx[:] = False
+                g.mx[:, 3] = True
+                s = 1 if self.side[cur] > 0 else -1
+                if yang(self.lines[cur]):
+                    for k in range(1, 4):
+                        g.mx[3 - k // 2, 3 + s * k] = True
+                else:
+                    for k in range(1, 4):
+                        g.mx[3 - k, 3 + s * k] = True
+                        g.mx[3 + k // 2, 3 + s * k] = True
+                g.mx_level = 6
+            elif 0 <= cur < 6 and 0.12 <= u < BURN:
                 g.mx[7, int(t * 20) % 8] = True
-            elif done < 1:
-                g.mx[7, 2:6] = True
+        else:
+            self.reveal(g, t, R0)
+        self.flush(g)

@@ -1,330 +1,331 @@
-"""挑水：小道士肩挑扁担两只木桶，走在山道上（横向卷动：远山、松树、石碑、小木桥依次经过）。
-扁担随步子一颤一颤，水桶前后晃，偶尔泼出一滴。彩蛋：一只青蛙从前桶里跳出来；一只小鸟落在扁担头上搭一段顺风车。
-左侧竖写“上善若水”（《道德经》第八章：上善若水，水善利万物而不争）。
+"""挑水（像素风）：小道士挑着扁担、两只箍了铁箍的木桶走山路。画面横向卷动：远山、松树、路边石子草茎各按视差后退，
+路边轮流出现竹管引泉的石槽、山神小庙、一块大青石。扁担随步子一颤一颤，前后两只桶带着相位差晃，桶里水面跟着倾斜晃荡，
+颠得狠时溅出一滴。
+彩蛋：约每 47 秒一只青蛙从前桶里探出头来，他头上冒个感叹号，青蛙“噗”地跳到路上，被甩在身后；
+约每 71 秒一只小鸟落在后扁担头上搭一段顺风车，啄两下又飞走。
+右侧竖写“上善若水”（《道德经》八章：上善若水，水善利万物而不争）。
 """
 from __future__ import annotations
 
 import math
 
-from ..engine.anim import clamp, ease_in, ease_in_out, ease_out, lerp, noise, rand, span
+from ..engine import pix
+from ..engine.anim import ease_out, lerp, rand, span
 from ..engine.gfx import Gfx, Sprite
 from ..engine.scene import Rest, register
-from .x5_common import daoshi, event, fade_box
+from .x5_common import BANG, Clock, event, fade_out, mark, scroll, worker
 
-X = 58          # 道士在屏幕上的位置
-V = 9.0         # 走路速度（像素/秒）
-STEP_W = 4.6    # 步频（弧度/秒）
-LAND = 300      # 地标间距（世界坐标）
+FLOOR = 55
+DX = 52
+TEXT_X = 114
+STAGE = 110
+SPEED = 13.0
+POLE = 21                # 扁担半长
+ROPE = 9
 
-FROG = [Sprite("""
-.##.##.
-#.###.#
-.#####.
-##...##
-"""), Sprite("""
-.##.##.
-#.###.#
-#######
-##...##
-""")]
-FROG_JUMP = Sprite("""
-..##.##.
-..#.###.#
-.#######.
-#.......#
+BUCKET = Sprite("""
+   #####
+   #   #
+  ##   ##
+###########
+#.........#
+###########
+#.##.#.##.#
+#.##.#.##.#
+###########
+#.##.#.##.#
+ #########
 """)
-BIRD = [Sprite("""
-.##..
-####.
-.###.
-..#..
-"""), Sprite("""
-#...#
-.#.#.
-..#..
-""")]
+
+PINE = Sprite("""
+    #
+   ###
+  #.#.#
+   ###
+  #####
+ #.#.#.#
+  #####
+ #######
+#.#.#.#.#
+ #######
+    #
+    #
+   ###
+""")
+
+ROCK = Sprite("""
+     ######
+   ##......##
+  #..#####...#
+ #.##.....##..#
+#.#..........#.#
+#..#.#.......#.#
+#...........#..#
+################
+""")
+
+SHRINE = Sprite("""
+     #####
+  ###########
+#####.....#####
+  #.........#
+  #.#######.#
+  #.#.....#.#
+  #.#.###.#.#
+  #.#.#.#.#.#
+  ###########
+ #############
+""")
+
+SPRING = Sprite("""
+##
+##########
+##.......
+##
+##
+##
+##    ##########
+##    #........#
+##    ##########
+##     #.#  #.#
+""")
+
+FROG = pix.frames("""
+ #.#
+#####
+#.#.#
+---
+ #.# .
+##### .
+ ####
+#   #
+---
+#.#
+###
+""")
+
+BIRD = pix.frames("""
+  ##
+ #.##
+####.#
+ ####
+  # #
+---
+#     #
+##   ##
+ #.##.
+ ####
+""")
+
+DROP = Sprite("#\n#")
+
+CLOUD = Sprite("""
+    ####
+ ###....##
+#..........#
+ ##########
+""")
 
 
-def ground_y(wx: float) -> float:
-    return 56.5 + 2.2 * math.sin(wx * 0.013) + 1.2 * math.sin(wx * 0.037 + 1.0)
-
-
-def pine(g: Gfx, x: float, base: float, h: float):
-    g.d.line((x, base, x, base - h), fill=1)
-    for j in range(3):
-        y = base - h + j * h * 0.28
-        w = 3 + j * 2.5
-        g.d.polygon([(x, y - 2), (x - w, y + h * 0.3), (x + w, y + h * 0.3)], fill=0, outline=1)
-
-
-def bucket(g: Gfx, cx: float, top: float, ang: float, slosh: float):
-    """木桶：上口中心 (cx, top)，ang 摆角"""
-    c, s = math.cos(ang), math.sin(ang)
-
-    def p(x, y):
-        return cx + x * c - y * s, top + x * s + y * c
-    body = [p(-5, 0), p(5, 0), p(4, 8), p(-4, 8)]
-    g.d.polygon(body, fill=0, outline=1)
-    g.d.line((*p(-4.7, 2.5), *p(4.7, 2.5)), fill=1)   # 箍
-    g.d.line((*p(-4.2, 6), *p(4.2, 6)), fill=1)
-    g.d.line((*p(-5, 0), *p(5, 0)), fill=1)
-    # 水面一闪
-    if slosh > 0.5:
-        g.px(*p(-2 + slosh * 2, -1))
+def ridge(x: float) -> int:
+    return int(14 + 6 * math.sin(x * 0.045) + 3 * math.sin(x * 0.11 + 1.3))
 
 
 @register
 class Water(Rest):
     id = "x5.water"
     name = "挑水"
-    desc = "肩挑两桶水走在山道上，远山松树缓缓后退；青蛙从桶里跳出，小鸟落上扁担"
-    T = {"enter": 3.0, "exit": 1.3}
+    desc = "挑着扁担两只木桶走山路：远山松树往后退，扁担一颤一颤、桶里水面晃荡；青蛙从桶里跳出来，小鸟落在扁担头"
+    T = {"enter": 3.0, "exit": 1.2}
 
     def setup(self):
-        self.s = self.rng.randrange(1000)
-        self._ht = 0.0
+        self.clock = Clock()
+        self.s = self.seed * 17 + 1
 
-    # ------------------------------------------------------------ 背景
+    # ------------------------------------------------ 背景（视差）
 
-    def scenery(self, g: Gfx, sc: float, t: float):
-        # 远山（视差 0.2）
-        ridge = []
-        for x in range(-4, 136, 8):
-            wx = x + sc * 0.2
-            ridge.append((x, 18 + 12 * noise(wx * 0.025, self.s) + 3 * noise(wx * 0.09, self.s + 1)))
-        g.d.line(ridge, fill=1)
-        # 山脊下一层稀疏的点（远山的体积）
-        for j, (x, y) in enumerate(ridge[:-1]):
-            if j % 2 == 0:
-                g.px(x + 3, y + 4)
-            g.px(x + 6, y + 9 + (j % 3))
-        # 云一缕
-        cx = 140 - ((sc * 0.1 + 40) % 190)
-        g.d.line((cx, 12, cx + 18, 12), fill=1)
-        g.d.line((cx + 6, 10, cx + 22, 10), fill=1)
-        # 中景松树（视差 0.55）
-        m = sc * 0.55
-        i0 = int((m - 20) // 64)
-        for i in range(i0, i0 + 4):
-            wx = i * 64 + rand(i, self.s) * 30
-            x = wx - m
-            if -12 < x < 140:
-                pine(g, x, 43, 7 + rand(i + 7, self.s) * 5)
-        # 地面
-        pts = [(x, ground_y(x + sc)) for x in range(0, 132, 4)]
-        bridge = self.bridge_span(sc)
-        g.d.rectangle((0, 50, 127, 63), fill=0)
-        g.d.line(pts, fill=1)
-        for i in range(int((sc - 10) // 17), int((sc + 140) // 17) + 1):  # 石子、草
-            wx = i * 17 + rand(i, self.s + 3) * 12
-            x = wx - sc
-            y = ground_y(wx)
-            if bridge and bridge[0] - 2 < x < bridge[1] + 2:
-                continue
-            if rand(i, self.s + 4) < 0.5:
-                g.d.ellipse((x - 2, y + 2, x + 2, y + 4), outline=1)
-            else:
-                g.d.line((x, y, x - 1, y - 2), fill=1)
-                g.d.line((x + 1, y, x + 2, y - 3), fill=1)
-        # 地标
-        self.landmark(g, sc, t)
+    def scenery(self, g: Gfx, sc: float):
+        far = sc * 0.15
+        for x in range(0, STAGE, 2):  # 远山：山脊线 + 稀网点
+            y = ridge(x + far)
+            g.px(x, y)
+            g.px(x + 1, ridge(x + 1 + far))
+        for x in range(0, STAGE, 3):  # 山脊下一道阴影点、几处积雪
+            y = ridge(x + far)
+            g.px(x, y + 3 + (x // 3) % 2)
+        for x in range(0, STAGE, 2):  # 更远的一道山（虚线）
+            if (x // 2) % 2 == 0:
+                g.px(x, 22 + int(4 * math.sin((x + far * 0.5) * 0.07 + 2)))
+        cl = sc * 0.05
+        for i in range(-1, 3):  # 云
+            wx = (math.floor(cl / 70) + i) * 70
+            cx = wx - cl + 20
+            if -16 < cx < STAGE:
+                pix.blit(g, CLOUD, cx, 3 + int(rand(int(wx), 9) * 4))
+        mid = sc * 0.5
+        for i in range(-1, 6):  # 中景松树
+            wx = (math.floor(mid / 32) + i) * 32
+            sx = wx - mid + int(rand(int(wx), 3) * 14)
+            if -10 < sx < STAGE:
+                pix.blit(g, PINE, sx, FLOOR - 19 - int(rand(int(wx), 4) * 4))
+        # 地标：引泉石槽 / 山神庙 / 大青石
+        near = sc
+        for i in range(-1, 2):
+            wx = (math.floor(near / 230) + i) * 230 + 120
+            sx = wx - near
+            if -30 < sx < STAGE + 2:
+                kind = int(wx // 230) % 3
+                if kind == 0:
+                    pix.blit(g, SPRING, sx, FLOOR - 10)
+                    for j in range(3):  # 竹管里流出的水，落进石槽
+                        ph = (near * 0.0 + j) % 3
+                        g.px(sx + 10 + (j % 2), FLOOR - 7 + j)
+                elif kind == 1:
+                    pix.blit(g, SHRINE, sx, FLOOR - 10)
+                else:
+                    pix.blit(g, ROCK, sx, FLOOR - 8)
+        # 路面：一道线、石子、草茎
+        g.d.line((0, FLOOR, STAGE, FLOOR), fill=1)
+        for i in range(-1, 12):
+            wx = (math.floor(near / 12) + i) * 12
+            sx = wx - near
+            r = rand(int(wx), 7)
+            if 0 <= sx < STAGE - 2:
+                if r < 0.35:
+                    g.d.rectangle((sx, FLOOR + 2 + int(r * 10), sx + 2, FLOOR + 3 + int(r * 10)), fill=1)
+                elif r < 0.6:
+                    g.d.line((sx, FLOOR - 1, sx, FLOOR - 3), fill=1)
+                    g.px(sx - 1, FLOOR - 2), g.px(sx + 1, FLOOR - 4)
+                else:
+                    g.px(sx, FLOOR + 3 + int(r * 6))
+        pix.checker(g, (0, FLOOR + 6, STAGE, 64), 0.125)
 
-    def bridge_span(self, sc: float):
-        """如果当前地标是小木桥，返回桥的屏幕区间"""
-        for i in range(int((sc - 60) // LAND), int((sc + 160) // LAND) + 1):
-            if i % 3 == 1:
-                wx = i * LAND + 140
-                return wx - sc, wx - sc + 26
-        return None
+    # ------------------------------------------------ 担子
 
-    def landmark(self, g: Gfx, sc: float, t: float):
-        for i in range(int((sc - 60) // LAND), int((sc + 160) // LAND) + 1):
-            wx = i * LAND + 140
-            x = wx - sc
-            if not -40 < x < 150:
-                continue
-            kind = i % 3
-            if kind == 0:  # 石碑：灵泉
-                y = ground_y(wx + 7)
-                g.d.rectangle((x - 1, y - 2, x + 15, y), fill=1)
-                g.d.rectangle((x + 1, y - 28, x + 13, y - 2), fill=0, outline=1)
-                g.d.arc((x + 1, y - 32, x + 13, y - 24), 180, 360, fill=1)
-                g.vtext(x + 1, y - 26, "灵泉", gap=0)
-            elif kind == 1:  # 小溪 + 木桥
-                y = ground_y(wx)
-                y2 = ground_y(wx + 26)
-                g.d.rectangle((x, y - 1, x + 26, 63), fill=0)
-                g.d.line((x - 1, y - 1, x + 27, y2 - 1), fill=1)       # 桥板
-                g.d.line((x - 1, y, x + 27, y2), fill=1)
-                for px in (x + 3, x + 13, x + 23):
-                    g.d.line((px, y + 1, px, 63), fill=1)
-                for j in range(3):  # 流水
-                    yy = y + 4 + j * 2
-                    ph = (t * 6 + j * 3) % 6
-                    for xx in range(int(x + 1), int(x + 26), 6):
-                        g.d.line((xx + ph, yy, xx + ph + 2, yy), fill=1)
-            else:  # 一块大石头 + 草
-                y = ground_y(wx + 8)
-                g.d.polygon([(x, y), (x + 3, y - 7), (x + 10, y - 9), (x + 16, y - 4), (x + 18, y)], fill=0, outline=1)
-                g.d.line((x + 5, y - 5, x + 8, y - 6), fill=1)
-                g.d.line((x + 19, y, x + 21, y - 4), fill=1)
+    def load(self, g: Gfx, x: float, t: float, walking: bool, frog_q=None, bird_q=None):
+        """扁担与两桶（画在身后）；返回 (前桶口, 后桶口, 水面倾斜)"""
+        sh_y = FLOOR - 17 - ((int(t * 8) % 4) % 2 if walking else 0)
+        flex = math.sin(t * math.pi * 4 - 0.8) * 1.6 if walking else math.sin(t * 2) * 0.4
+        ends = []
+        for side in (1, -1):
+            ex = x + side * POLE
+            ey = sh_y + flex
+            ends.append((ex, ey))
+        # 扁担：微弯（两头往下坠）
+        (fx, fy), (bx, by) = ends
+        pts = [(lerp(bx, fx, k / 8), lerp(by, fy, k / 8) - math.sin(k / 8 * math.pi) * (1.5 - flex * 0.5))
+               for k in range(9)]
+        g.d.line(pts, fill=1, width=2)
+        g.d.line((bx - 1, by - 1, bx - 1, by + 1), fill=1)
+        g.d.line((fx + 1, fy - 1, fx + 1, fy + 1), fill=1)
+        tops = []
+        for j, (ex, ey) in enumerate(ends):
+            sw = math.sin(t * 2.6 + j * 1.9) * (2.2 if walking else 0.6)
+            cx, cy = ex + sw, ey + ROPE
+            g.d.line((ex, ey + 1, cx - 2, cy), fill=1)       # 两股绳
+            g.d.line((ex, ey + 1, cx + 2, cy), fill=1)
+            pix.blit(g, BUCKET, cx - 5, cy)
+            tilt = -sw * 0.5
+            for k in range(1, 10):  # 水面：波光往晃的方向挤，偶尔一道浪拍到桶沿
+                lit = (k + int(t * 7) + j * 2) % 4 == 0 or (tilt > 0.5 and k > 7) or (tilt < -0.5 and k < 3)
+                if lit:
+                    g.px(cx - 5 + k, cy + 4)
+            tops.append((cx, cy + 3))
+        if bird_q is not None:  # 小鸟搭在后扁担头上
+            bx, by = ends[1]
+            self.bird(g, bird_q, bx - 1, by - 5)
+        return tops, flex
 
-    # ------------------------------------------------------------ 人、扁担、水桶
+    def bird(self, g: Gfx, q: float, x, y):
+        if q < 1.2:
+            k = ease_out(q / 1.2)
+            pix.blit(g, pix.anim(BIRD[::-1], q, 10), lerp(x - 40, x, k), lerp(y - 26, y, k))
+        elif q < 7.0:
+            peck = (q * 1.7) % 1 < 0.15
+            pix.blit(g, BIRD[0], x - 1 + (1 if peck else 0), y + (1 if peck else 0))
+        else:
+            k = q - 7.0
+            pix.blit(g, pix.anim(BIRD[::-1], k, 12), x + k * 30, y - k * 30)
 
-    def carrier(self, g: Gfx, t: float, sc: float, x: float, walking: bool = True, look_back: bool = False,
-                eye: str | None = None):
-        stp = t * STEP_W if walking else None
-        gy = ground_y(x + sc)
-        bob = abs(math.sin(t * STEP_W)) * 1.2 if walking else 0.0
-        sway = math.sin(t * STEP_W * 0.5 - 0.8) * 0.13 if walking else 0.0
-        flex = math.sin(t * STEP_W * 2 - 1.2) * 1.3 if walking else 0.0   # 扁担的颤
-        if eye is None:
-            eye = "closed" if (t % 3.9) < 0.14 else "open"
-        sy = gy - 21 - (1 - bob) * 0  # daoshi 的肩
-        pole_y = gy - 22 + bob * 0.5
-        front, back = x + 22, x - 21
-        sag = 2.2 + flex
-        pts = [(back, pole_y + sag), (x - 8, pole_y + sag * 0.3), (x, pole_y), (x + 8, pole_y + sag * 0.3),
-               (front, pole_y + sag)]
-        # 后桶（在人后面）
-        bt = pole_y + sag + 7
-        bx = back + math.sin(sway) * 7
-        g.d.line((back, pole_y + sag, bx - 4, bt), fill=1)
-        g.d.line((back, pole_y + sag, bx + 4, bt), fill=1)
-        bucket(g, bx, bt, sway, noise(t * 3, 1))
-        pz = daoshi(g, x, gy, 1, hands=[(x + 9, pole_y + sag * 0.35 + 0.5), None], step=stp, lean=1.0, eye=eye,
-                    look=-1 if look_back else 0)
-        g.d.line(pts, fill=1)
-        g.d.line([(px, py + 1) for px, py in pts[1:4]], fill=1)
-        g.d.rectangle((x + 8, pole_y + sag * 0.35, x + 10, pole_y + sag * 0.35 + 1.5), fill=1)  # 近手压在扁担上
-        ft = pole_y + sag + 7
-        fx = front + math.sin(sway * 0.8 + 0.4) * 7
-        g.d.line((front, pole_y + sag, fx - 4, ft), fill=1)
-        g.d.line((front, pole_y + sag, fx + 4, ft), fill=1)
-        bucket(g, fx, ft, sway * 0.8 + 0.4 * (sway != 0) * 0, noise(t * 3, 2))
-        self._front = (fx, ft)
-        self._back = (back, pole_y + sag)
-        self._pz = pz
-        # 偶尔泼出一滴
-        if walking:
-            n = int(t * STEP_W / math.pi)
-            k = (t * STEP_W / math.pi) - n
-            if rand(n, self.s) < 0.3:
-                side = fx if rand(n + 1, self.s) < 0.6 else bx
-                g.px(side + 5 - k * 3, ft + k * k * 16)
-        return pz, sway
+    # ------------------------------------------------ 主循环
 
-    # ------------------------------------------------------------ 彩蛋
+    def frame(self, g: Gfx, t: float, text_k: float = 1.0):
+        self.clock.tick(t)
+        sc = t * SPEED
+        self.scenery(g, sc)
+        frog = event(t, 47.0, 7.0, self.s)
+        bird = event(t, 71.0, 8.5, self.s + 3)
+        face = "normal"
+        if frog and 1.2 < frog[1] < 2.6:
+            face = "wow"
+        elif frog and 2.6 <= frog[1] < 4.0:
+            face = "happy"
+        tops = {}
 
-    def frog(self, g: Gfx, t: float, sc: float, ev):
-        """青蛙从前桶跳出 → 落在路上 → 被甩到身后"""
-        n, k = ev
-        if k < 1.0:  # 在桶口探头
-            fx, ft = self._front
-            if int(k * 6) % 2:
-                g.blit(FROG[0], fx - 2, ft - 3)
-            else:
-                g.blit(FROG[0], fx - 2, ft - 2)
-            return False
-        jump_from = self._front
-        land_wx = getattr(self, "_frog_land", None)
-        if land_wx is None or getattr(self, "_frog_n", -1) != n:
-            # 落点（世界坐标）在前方 18 像素处：按事件开始时刻算，保持确定性
-            t_jump = t - (k - 1.0)
-            land_wx = (X + 40) + t_jump * V
-            self._frog_land, self._frog_n = land_wx, n
-        u = span(k, 1.0, 1.7)
-        lx = land_wx - sc
-        ly = ground_y(land_wx) - 4
-        if u < 1:
-            x = lerp(jump_from[0], lx, u)
-            y = lerp(jump_from[1] - 3, ly, u) - math.sin(u * math.pi) * 14
-            g.blit(FROG_JUMP, x - 3, y)
-        else:  # 蹲在路上，鼓腮，再跳两下
-            hop = (k - 1.7) % 2.0
-            if hop < 0.4:
-                y = ly - math.sin(hop / 0.4 * math.pi) * 5
-                g.blit(FROG_JUMP, lx - 3 - hop * 8, y)
-            else:
-                g.blit(FROG[int(k * 3) % 2], lx - 3 - min(hop, 0.4) * 8, ly)
-        return 1.0 <= k < 2.2
+        def back(gg, h1, h2):
+            tp, flex = self.load(gg, DX, t, True, bird_q=bird[1] if bird else None)
+            tops["t"] = tp
+            tops["f"] = flex
 
-    def bird(self, g: Gfx, t: float, ev):
-        n, k = ev
-        bx, by = self._back
-        if k < 1.2:  # 飞来
-            u = ease_out(k / 1.2)
-            x, y = lerp(-8, bx, u), lerp(8, by - 4, u) - math.sin(u * math.pi) * 6
-            g.blit(BIRD[1 if int(k * 8) % 2 else 0], x - 2, y)
-        elif k < 7.0:  # 站在扁担头上，偶尔啄一下
-            peck = 1 if (k % 1.7) < 0.15 else 0
-            g.blit(BIRD[0], bx - 2, by - 4 + peck)
-        else:  # 飞走
-            u = ease_in(span(k, 7.0, 8.5))
-            g.blit(BIRD[1 if int(k * 8) % 2 else 0], bx - 2 + u * 40, by - 4 - u * 30)
+        worker(g, DX, FLOOR, t, hand=(DX + 9, FLOOR - 18), legs="walk", back_tool=back, face=face, fist=True)
+        tp = tops["t"]
+        # 颠得狠时，从前桶泼出一滴
+        k = t % 2.3
+        if k < 0.5:
+            fx, fy = tp[0]
+            pix.blit(g, DROP, fx + 5 + k * 10, fy - 3 + k * k * 40, outline=False)
+        if frog:
+            self.frog(g, frog[1], tp[0], sc)
+        self.matrix(g, t, tops["f"])
+        scroll(g, TEXT_X, "上善若水", k=text_k, side="right")
 
-    # ------------------------------------------------------------ 阶段
+    def frog(self, g: Gfx, q: float, top, sc: float):
+        fx, fy = top
+        if q < 1.0:  # 从桶里慢慢探出头
+            pix.blit(g, FROG[2], fx - 1, fy - 1 - int(q * 2))
+        elif q < 2.4:
+            pix.blit(g, FROG[0], fx - 2, fy - 4)
+            mark(g, BANG, DX + 10, FLOOR - 44)
+        elif q < 3.2:  # 跳到路上
+            k = (q - 2.4) / 0.8
+            x = lerp(fx - 2, fx + 14, k)
+            y = lerp(fy - 4, FLOOR - 3, k) - math.sin(k * math.pi) * 10
+            pix.blit(g, FROG[1], x, y)
+        else:  # 落在路上，跳两下，被甩在身后
+            k = q - 3.2
+            land = fx + 14 - k * SPEED
+            hop = abs(math.sin(k * 3.0)) * 4 if k < 2 else 0
+            pix.blit(g, FROG[1] if hop > 1 else FROG[0], land + min(k, 2) * 6, FLOOR - 3 - hop)
 
-    def text(self, g: Gfx, a: float = 1.0):
-        g.d.rectangle((0, 0, 14, 63), fill=0)
-        s = "上善若水"
-        g.vtext(2, 2, s[:int(round(len(s) * clamp(a)))])
-
-    def mx(self, g: Gfx, t: float, sway: float):
-        # 水桶剖面：桶壁 + 晃动的水面
+    def matrix(self, g: Gfx, t: float, flex: float):
+        """点阵：水桶剖面，水面随晃动倾斜，水里一个亮点流动"""
         for y in range(2, 8):
-            g.mx_set(0, y)
-            g.mx_set(7, y)
-        g.mx[7, :] = True
-        tilt = sway * 14
+            g.mx_set(0, y), g.mx_set(7, y)
+        for x in range(8):
+            g.mx_set(x, 7)
+        tilt = math.sin(t * 2.6) * 1.2
         for x in range(1, 7):
-            lvl = 3.5 + (x - 3.5) * tilt * 0.35 + math.sin(t * 5 + x) * 0.3
-            yy = int(round(lvl))
-            g.mx_set(x, yy)
-            for y in range(yy + 1, 7):
-                if (x + y + int(t * 4)) % 3 == 0:
-                    g.mx_set(x, y)
-
-    def scene(self, g: Gfx, t: float, sc: float, x: float = X, walking: bool = True):
-        self.scenery(g, sc, t)
-        ev_f = event(t, 47.0, 9.0, self.s + 1)
-        ev_b = event(t + 20, 71.0, 8.5, self.s + 2)
-        surprised = False
-        pz, sway = self.carrier(g, t, sc, x, walking, eye="closed" if ev_f and 2.2 < ev_f[1] < 4 else None)
-        if ev_f and walking:
-            if self.frog(g, t, sc, ev_f):
-                surprised = True
-        if ev_b and walking:
-            self.bird(g, t, ev_b)
-        if surprised:
-            hx, hy = pz.head
-            g.d.line((hx + 3, hy - 13, hx + 3, hy - 10), fill=1)
-            g.px(hx + 3, hy - 8)
-        self.text(g)
-        self.mx(g, t, sway)
+            h = 3 + int(round((x - 3.5) / 3.5 * tilt))
+            g.mx_set(x, h)
+        bx = 1 + int(t * 3) % 6
+        g.mx_set(bx, 5)
 
     def enter(self, g: Gfx, t: float):
-        T = self.T["enter"]
-        p = span(t, 0, T)
-        x = lerp(-26, X, ease_out(p) * 0.4 + p * 0.6)
-        self.scenery(g, 0, t)
-        self.carrier(g, t, 0, x, True)
-        self.text(g, span(t, 1.2, T - 0.3))
-        self.mx(g, t, math.sin(t * STEP_W * 0.5 - 0.8) * 0.13)
+        """挑着担子从左边走进来，题字逐字写出"""
+        self.clock.tick(t)
+        self.scenery(g, 0)
+        x = lerp(-28, DX, ease_out(span(t, 0, 2.6)))
+
+        def back(gg, h1, h2):
+            self.load(gg, x, t, True)
+
+        worker(g, x, FLOOR, t, hand=(x + 9, FLOOR - 18), legs="walk", back_tool=back, fist=True)
+        self.matrix(g, t, 0)
+        scroll(g, TEXT_X, "上善若水", k=span(t, 0.5, 2.6), side="right")
 
     def hold(self, g: Gfx, t: float):
-        self._ht = t
-        # 入场是人走进画面（背景不动），持续阶段镜头跟着走：从 t=0 起背景缓缓后退
-        sc = V * t
-        self.scene(g, t, sc)
+        self.frame(g, t)
 
     def exit(self, g: Gfx, t: float):
-        t0 = self._ht
-        # 收住脚步：停下、放平扁担
-        self.scenery(g, V * t0, t0)
-        self.carrier(g, t0 + t * 0.3, V * t0, X, walking=t < 0.3, eye="closed" if t > 0.4 else None)
-        self.text(g)
-        self.mx(g, t0, 0)
-        fade_box(g, 1 - ease_in(span(t, 0.3, self.T["exit"])))
-        if t > 0.7:
-            g.mx[:] = False
+        self.frame(g, self.hold_t + t)
+        fade_out(g, span(t, 0.1, self.T["exit"]))

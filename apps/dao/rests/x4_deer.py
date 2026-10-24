@@ -1,311 +1,501 @@
-"""白鹿衔芝：千岁白鹿在松下，灵芝破土，鹿低头衔起。
+"""白鹿衔芝（歇）：老松下一头 Q 版白鹿，小道士在一旁，灵芝破土，小道士采来喂鹿，鹿衔芝而立。
 
 依据：葛洪《抱朴子·内篇·对俗》“虎及鹿、兔，皆寿千岁，寿满五百岁者，其毛色白。”
-      灵芝是《抱朴子·仙药》里的“芝”，仙药上品；白鹿常作寿星、仙人的坐骑，“鹿衔灵芝”是传统的长寿图样。
-入场：松树与山石先显出来，白鹿从右边轻步走进松下站定，抬头。
-持续：白鹿静立，耳朵不时抖一下、短尾一翘、偶尔低头啃草、眨眼。
-      每 45 秒：鹿前的地上冒出一株灵芝（菌盖一圈圈长开、闪光），鹿低头把它衔起，抬头衔着站一会儿，
-      最后灵芝化作一圈光点散入鹿身，鹿身微微放光。
-收场：白鹿抬头，小跑着往左隐进松林，画面收拢。
+      灵芝即《抱朴子·仙药》所列之“芝”，仙药上品；白鹿是寿星、仙人的坐骑，“鹿衔灵芝”是传统的长寿图样。
+画面：左边一棵老松（弯干、树皮网点、三团针叶），松下山石；白鹿侧身朝右（枝角、大眼、短尾、细腿），
+      右边小道士朝左站着；远处两座小山。
+入场：白鹿从左边轻步走进松下站定，抬头；右上“鹿寿千岁”。
+持续：白鹿呼吸、眨眼、耳朵一抖、短尾一翘；小道士呼吸眨眼，不时拱手。
+      每 23 秒：白鹿低头啃一口草（脖子放低、嚼），再抬头。
+      每 31 秒：松枝上掉下一颗松果，弹两下滚到鹿脚边，鹿竖耳低头闻一闻。
+      每 45 秒（从 14 秒起）：两者之间的地上冒出一株灵芝（菌柄长出、菌盖一圈圈张开、闪光）→
+      小道士弯腰采起、双手捧着递过去 → 白鹿上前两步低头衔住 → 退回原地衔芝而立（右上“白鹿衔芝”）→
+      灵芝化作光点沿颈飘入鹿身，鹿身一圈微光。
+收场：白鹿转身小跑，往左隐进松后。
+点阵：平时是鹿角（眨眼时两点）；灵芝出现后换成灵芝（自下而上长出），化光时亮度一冲并荡开一圈。
 """
 from __future__ import annotations
 
 import math
 
-from ..engine.anim import blink, clamp, ease_in, ease_in_out, ease_out, ease_out_back, lerp, noise, rand, span
+from ..engine import pix
+from ..engine.anim import ease_in, ease_in_out, ease_out, ease_out_back, lerp, span
+from ..engine.chars import Part, daoshi
 from ..engine.gfx import Gfx, Sprite
 from ..engine.scene import Rest, register
-from .x4_common import Bake, mx_sprite
+from .x4_common import Clock, ev, label, mx_art, sparkle
 
-G = 58
-NECK = (55, 37)      # 颈根
-ZX = 43              # 灵芝长出来的位置
-EV0, EV_P = 14.0, 45.0
+FLOOR = 58
+DX = 32             # 鹿身左上角 x（站定）
+DY = FLOOR - 17     # 鹿身左上角 y
+DAO_X = 106         # 小道士
+ZX = 84             # 灵芝长出来的位置
+GRAZE_S, GRAZE_P, GRAZE_D = 9.0, 23.0, 5.0
+CONE_S, CONE_P, CONE_D = 20.0, 31.0, 5.0
+ZHI_S, ZHI_P, ZHI_D = 14.0, 45.0, 26.0
+
+# ---------------------------------------------------------------- 鹿（朝右）
+
+HEAD = Sprite("""
+ #   #      #   #
+ #   #     #   #
+  #  #  # #   #
+  ## # #  #  # #
+   ###  # #  ##
+     #   ## ##
+     ##   ###
+      ######
+  ##  ########
+ #.##.#########
+  ##############
+   ######..######
+    #####..#######
+    #####.########.
+     ##############
+      ######.###.
+""")
+
+HEAD_BLINK = Sprite("""
+ #   #      #   #
+ #   #     #   #
+  #  #  # #   #
+  ## # #  #  # #
+   ###  # #  ##
+     #   ## ##
+     ##   ###
+      ######
+  ##  ########
+ #.##.#########
+  ##############
+   ##############
+    ######.#######
+    ######..######.
+     ##############
+      ######.###.
+""")
+
+HEAD_EAR = Sprite("""
+ #   #      #   #
+ #   #     #   #
+  #  #  # #   #
+  ## # #  #  # #
+#  ###  # #  ##
+.#   #   ## ##
+ ##  ##   ###
+  ##  ######
+   ## ########
+    ##.########
+  ##############
+   ######..######
+    #####..#######
+    #####.########.
+     ##############
+      ######.###.
+""")
+
+NECK = Sprite("""
+ #####
+######
+######
+#######
+#######
+""")
+
+BODY = Sprite("""
+       ###########
+    ##################
+  ######################
+ ########################
+##########################
+##########################
+##########################
+ ########################
+  #.#.#.#.#.#.#.#.#.#.##
+    .#.#.#.#.#.#.#.#.#
+""")
+
+LEG = pix.frames("""
+##
+##
+##
+##
+ ##
+ ##
+ ##
+ ##
+ #.
+---
+##
+##
+ ##
+ ##
+  ##
+  ##
+  #.
+""")
+
+TAIL = pix.frames("""
+ ##
+###
+ ##
+---
+##
+###
+ #
+""")
+
+ZHI = pix.frames("""
+ #
+ #
+---
+  ##
+ ####
+  #
+  #
+---
+   ###
+ ##...##
+#########
+    #
+    #
+---
+   #####
+ ##.....##
+#..#####..#
+#.#.....#.#
+ #########
+     ##
+     ##
+    ####
+""")
+
+ZHI_SMALL = Sprite("""
+ ###
+#...#
+#####
+  #
+""")
+
+CONE = Sprite("""
+ ##
+#.##
+##.#
+ ##
+""")
 
 
 def _pine() -> Sprite:
-    """左边的老松：弯干 + 三层针叶团。宽 40，高 58"""
-    b = Bake(40, 58)
-    trunk = [(10, 57), (13, 44), (11, 32), (15, 20), (19, 10), (22, 10), (18, 21), (15, 33), (18, 45), (17, 57)]
-    b.poly(trunk, 0.0)
-    for y in (24, 36, 48):                                       # 树皮鳞纹
-        b.line([(13, y), (15, y + 2)])
-    b.line([(15, 26), (5, 20)])                                  # 横枝
-    b.line([(17, 15), (30, 12)])
-
-    def clump(cx, cy, w, h):
-        """一簇松针：扁圆的顶 + 从枝头放射的针叶"""
-        pts = [(cx + math.cos(math.pi * i / 10) * w, cy - math.sin(math.pi * i / 10) * h) for i in range(11)]
-        b.poly(pts, 0.0)
-        for i in range(1, 10):
-            a = math.pi * i / 10
-            b.line([(cx + math.cos(a) * w * 0.25, cy - 1), (cx + math.cos(a) * (w - 2), cy - math.sin(a) * (h - 2))])
-    clump(6, 21, 7, 5)
-    clump(30, 13, 9, 5)
-    clump(19, 6, 8, 5)
-    return b.sprite()
+    """老松 46×52：弯干（树皮网点、节疤）+ 三团扁平的针叶（短横阴线）"""
+    p = Part(46, 52)
+    trunk = [(6, 51), (8, 40), (6, 30), (9, 20), (13, 12), (17, 9), (19, 11), (14, 20), (12, 30), (14, 40), (13, 51)]
+    p.shape("polygon", trunk, fill=1)
+    p.shape("polygon", [(13, 22), (24, 17), (32, 17), (32, 19), (24, 20), (15, 25)], fill=1)  # 横枝
+    p.dither([(10, 22), (14, 22), (14, 51), (10, 51)], 0.5, 0)
+    for y in (27, 35, 44):
+        p.d.line((8, y, 10, y - 1), fill=0)
+    p.d.ellipse((8, 37, 10, 39), fill=0)            # 节疤
+    p.px(9, 38, 1)
+    p.shape("polygon", [(4, 51), (6, 47), (14, 47), (17, 51)], fill=1)  # 根
+    for box in ((0, 3, 26, 11), (16, 0, 40, 8), (24, 12, 45, 19)):
+        x0, y0, x1, y1 = box
+        p.shape("ellipse", box, fill=1)
+        for yy in range(y0 + 2, y1 - 1, 2):          # 针叶纹
+            for xx in range(x0 + 3 + (yy % 4), x1 - 3, 4):
+                p.d.line((xx, yy, xx + 1, yy), fill=0)
+        p.d.line((x0 + 3, y1 - 1, x1 - 3, y1 - 1), fill=0)
+    return p.sprite()
 
 
 def _rock() -> Sprite:
-    b = Bake(26, 16)
-    b.poly([(0, 15), (3, 6), (9, 1), (16, 2), (22, 7), (25, 15)], 0.0)
-    b.line([(9, 1), (11, 7), (8, 15)])
-    b.line([(16, 2), (17, 8)])
-    b.line([(4, 9), (7, 10)])
-    return b.sprite()
+    p = Part(20, 9)
+    p.shape("polygon", [(0, 8), (2, 3), (7, 0), (13, 1), (18, 4), (19, 8)], fill=1)
+    p.d.line((7, 1, 9, 5), fill=0)
+    p.d.line((9, 5, 8, 8), fill=0)
+    p.dither([(12, 4), (19, 7), (19, 8), (11, 8)], 0.5, 0)
+    return p.sprite()
 
 
-PINE = _pine()
-ROCK = _rock()
-
-MX_ANTLER = """
-#.#..#.#
-.##..##.
-..#..#..
-..####..
-..#..#..
-...##...
-...##...
-........
-"""
-MX_ZHI = """
-..####..
-.######.
-########
-.#.##.#.
-...##...
-...#....
-...##...
-........
-"""
+def _hills() -> Sprite:
+    """远处两座小山（只有山脊线和背光坡的竖点）"""
+    p = Part(44, 12)
+    p.d.line((0, 11, 10, 4), fill=1)
+    p.d.line((10, 4, 16, 7), fill=1)
+    p.d.line((16, 7, 26, 0), fill=1)
+    p.d.line((26, 0, 40, 11), fill=1)
+    for x in range(28, 39, 3):
+        y0 = (x - 26) * 11 // 14 + 2
+        p.d.line((x, y0, x, min(y0 + 2, 11)), fill=1)
+    for x in range(12, 16, 2):
+        p.px(x, 7)
+    on = __import__("numpy").array(p.on, bool)
+    return Sprite(on=on, mask=on.copy())
 
 
-def rot(pts, phi, ox, oy):
-    c, s = math.cos(phi), math.sin(phi)
-    return [(ox + x * c - y * s, oy + x * s + y * c) for x, y in pts]
+_S: dict = {}
 
 
-SKULL = [(4, -3), (0, -3), (-5, -2), (-9, 0), (-9, 2), (-5, 3), (2, 3), (5, 1)]
-EAR = [(3, -3), (8, -6), (6, -2)]
-ANTLER = [[(2, -3), (3, -8), (6, -13), (9, -15)], [(3, -8), (0, -11)], [(5, -11), (3, -15)], [(6, -13), (7, -18)]]
+def S(name):
+    if not _S:
+        _S.update(pine=_pine(), rock=_rock(), hills=_hills())
+    return _S[name]
 
 
-def lingzhi(g: Gfx, x: float, y: float, p: float = 1.0, glow: float = 0.0):
-    """灵芝：(x, y) 为菌柄根部，p 0..1 生长"""
-    if p <= 0:
-        return
-    sh = 7 * clamp(p * 1.6)
-    g.d.line((x, y, x + 1, y - sh * 0.6, x, y - sh), fill=1)
-    cp = clamp((p - 0.3) / 0.7)
-    if cp > 0:
-        w, h = 6 * cp, 4 * cp
-        cx, cy = x, y - sh
-        g.d.chord((cx - w, cy - h, cx + w, cy + h), 180, 360, fill=0, outline=1)
-        if cp > 0.6:   # 菌盖的同心云纹
-            g.d.arc((cx - w + 2, cy - h + 2, cx + w - 2, cy + h - 2), 200, 340, fill=1)
-            g.px(cx, cy - 1)
-    if glow > 0:
-        for i in range(5):
-            if blink(glow * 3 + i * 0.37, 0.9, 0.5):
-                a = rand(i, 3) * 2 * math.pi
-                r = 7 + rand(i, 4) * 5
-                px, py = x + math.cos(a) * r, y - sh + math.sin(a) * r * 0.7
-                g.px(px, py)
-                if rand(i, 5) > 0.5:
-                    g.px(px - 1, py)
-                    g.px(px + 1, py)
-                    g.px(px, py - 1)
-                    g.px(px, py + 1)
+# ---------------------------------------------------------------- 画鹿
+
+def deer(g: Gfx, x: float, t: float, head="up", walk: float | None = None, tail_up=False, ear=False,
+         blink=False, low: float = 0.0, chew=False, zhi=False, flip=False, breath=True):
+    """x：鹿身左上角；low ∈ [0,1] 低头程度；walk：步态相位（None 站定）；返回嘴的位置"""
+    x = int(round(x))
+    b = 1 if breath and walk is None and (t * 0.6) % 1 < 0.5 else 0
+    y = DY
+
+    def X(ox, w=0):  # 朝左时镜像（以鹿身 26 宽为轴）
+        return x + ox if not flip else x + 26 - ox - w
+
+    def leg(ox, ph, top):
+        if walk is None:
+            pix.blit(g, LEG[0], X(ox, 2), top, flip=flip)
+            return
+        k = (walk + ph) % 1
+        fr = 1 if k < 0.4 else 0
+        dx = (1 if k < 0.4 else int(round(lerp(1, -1, (k - 0.4) / 0.6))))
+        pix.blit(g, LEG[fr], X(ox + dx, 2), top, flip=flip)
+
+    bob = 0 if walk is None else (1 if (walk * 2) % 1 < 0.4 else 0)
+    leg(7, 0.5, y + 8 - bob)
+    leg(23, 0.0, y + 8 - bob)
+    pix.blit(g, TAIL[1 if tail_up else 0], X(-2, 3), y + 1 - b - bob, flip=flip)
+    # 脖子 + 头：low=0 竖直抬头，low=1 前伸低头到地面
+    hx = lerp(14, 21, low)
+    hy = lerp(-18, -1, ease_in_out(low))
+    nx0, ny0 = X(18, 0), y + 3 - bob
+    hxs = X(int(round(hx)), HEAD.w)
+    hys = y + int(round(hy)) - b - bob
+    neck_top = (X(int(round(hx)) + 5, 0), hys + 15)
+    if low > 0.05:
+        g.d.polygon([(nx0 - 3, ny0), (nx0 + 3, ny0), (neck_top[0] + 3, neck_top[1]), (neck_top[0] - 3, neck_top[1])],
+                    fill=1)
+    pix.blit(g, BODY, X(0, BODY.w), y - b - bob, flip=flip)
+    if low <= 0.05:
+        pix.blit(g, NECK, X(18, NECK.w), y - 4 - b - bob, flip=flip)
+    leg(4, 0.0, y + 9 - bob)
+    leg(20, 0.5, y + 9 - bob)
+    spr = HEAD_EAR if ear else (HEAD_BLINK if blink or chew else HEAD)
+    hys += 1 if chew and int(t * 6) % 2 else 0
+    pix.blit(g, spr, hxs, hys, flip=flip)
+    mouth = (hxs + (15 if not flip else 1), hys + 15)
+    if zhi:
+        pix.blit(g, ZHI_SMALL, mouth[0] - 1 if not flip else mouth[0] - 4, mouth[1] - 3, flip=flip)
+    return mouth
 
 
-def deer(g: Gfx, x: float, t: float, graze: float = 0.0, ear: float = 0.0, tail: float = 0.0, step: float = 0.0,
-         hold_zhi: bool = False, blinking: bool = False, glow: float = 0.0, face: int = 1, seed: int = 0):
-    """白鹿（朝左）。x = 平移量；graze 0 抬头 → 1 嘴到地面；step 走路的相位（0 = 站定）"""
-    def X(v):
-        return x + v
-    bob = abs(math.sin(step * math.pi)) * 1.0 if step else 0
-    # 腿：前腿一对、后腿一对（远侧的细）
-    legs = ((54, 0.0, 1), (58, math.pi, 0), (72, math.pi, 1), (76, 0.0, 0))
-    for lx, p0, near in legs:
-        sw = math.sin(step * math.pi * 2 + p0) * 3 if step else 0
-        top = 43 - bob
-        kx = X(lx) + sw * 0.4
-        fx = X(lx) + sw
-        hock = 1 if lx > 65 else -1   # 后腿有反关节
-        g.d.line((X(lx), top, kx + hock, 51, fx, G - 1), fill=1)
-        if near:
-            g.d.line((X(lx) + 1, top, kx + hock + 1, 51), fill=1)
-        g.d.line((fx - 1, G, fx + 1, G), fill=1)
-    # 身体
-    by = -bob
-    g.d.ellipse((X(50), 33 + by, X(80), 46 + by), fill=0, outline=1)
-    g.d.line((X(56), 44 + by, X(74), 44 + by), fill=0)
-    for i in range(5):  # 背上的淡斑（白鹿的毛，稀疏的点）
-        g.px(X(58 + i * 4), 37 + by + (i % 2))
-    # 尾巴
-    tl = 3 + tail * 2
-    g.d.line((X(79), 36 + by, X(81), 36 + by - tl), fill=1)
-    g.d.line((X(80), 36 + by, X(82), 36 + by - tl + 1), fill=1)
-    # 颈 + 头：颈根 NECK，头随 graze 从上方转到地面
-    nx, ny = X(NECK[0]), NECK[1] + by
-    a = lerp(-2.1, -3.7, ease_in_out(graze))          # 颈的方向（弧度，0 = 向右）
-    ln = lerp(13, 15, graze)
-    hx, hy = nx + math.cos(a) * ln, ny + math.sin(a) * ln * 1.0 + (graze * 2)
-    phi = lerp(0.15, -0.95, ease_in_out(graze))       # 头的朝向：0 = 嘴朝左
-    nk = [(nx - 4, ny + 3), (nx + 3, ny - 2), (hx + 3, hy - 1), (hx - 1, hy + 3)]
-    g.d.polygon(nk, fill=0, outline=1)
-    g.d.polygon([(nx - 3, ny + 2), (nx + 2, ny - 1), (hx + 2, hy - 1), (hx, hy + 2)], fill=0)
-    # 鹿角（在头后面先画）
-    for br in ANTLER:
-        g.d.line(rot(br, phi, hx, hy), fill=1)
-        g.d.line(rot([(px + 2, py) for px, py in br], phi, hx, hy), fill=1)
-    skull = rot(SKULL, phi, hx, hy)
-    g.d.polygon(skull, fill=0, outline=1)
-    # 耳朵：不时一抖
-    e = [(3, -3), (8 - ear * 2, -6 - ear * 2), (6, -2)]
-    g.d.polygon(rot(e, phi, hx, hy), fill=0, outline=1)
-    ex, ey = rot([(-2, -1)], phi, hx, hy)[0]
-    if not blinking:
-        g.px(ex, ey)
-        g.px(ex + 1, ey)
-    nx_, ny_ = rot([(-9, 1)], phi, hx, hy)[0]
-    g.px(nx_, ny_)
-    if hold_zhi:   # 嘴里衔着灵芝：菌柄横在嘴里，菌盖朝前下
-        mx_, my_ = rot([(-7, 3)], phi, hx, hy)[0]
-        g.d.line((mx_ + 2, my_, mx_ - 3, my_ + 2), fill=1)
-        g.d.chord((mx_ - 9, my_ - 1, mx_ - 1, my_ + 7), 90, 270, fill=0, outline=1)
-        g.d.arc((mx_ - 7, my_ + 1, mx_ - 3, my_ + 5), 110, 250, fill=1)
-    if glow > 0:   # 鹿身放光：一圈光点
-        for i in range(10):
-            if rand(i + int(t * 6), seed) < glow:
-                a = rand(i, 11) * 2 * math.pi
-                g.px(X(65) + math.cos(a) * (18 + rand(i, 12) * 4), 38 + math.sin(a) * 10)
-    return hx, hy, phi
+def scenery(g: Gfx, t: float):
+    pix.blit(g, S("hills"), 66, FLOOR - 15, outline=False)
+    g.d.line((0, FLOOR, 127, FLOOR), fill=1)
+    for x in range(3, 128, 9):
+        g.px(x, FLOOR + 2), g.px(x + 4, FLOOR + 4)
+    pix.checker(g, (0, FLOOR + 1, 128, 64), 0.125)
+    pix.blit(g, S("pine"), -4, FLOOR - 51)
+    pix.blit(g, S("rock"), 12, FLOOR - 8)
+    for x, k in ((70, 0), (96, 1), (122, 2)):
+        spr = pix.anim(GRASS_FR, t * 0.7 + k * 0.4, 1.2)
+        pix.blit(g, spr, x, FLOOR - spr.h)
+
+
+GRASS_FR = pix.frames("""
+ # #
+# ##
+ ##
+---
+  # #
+ # ##
+  ##
+""")
+
+
+def mx_antler(g: Gfx, blink: bool):
+    rows = ["#.#..#.#", "#.#..#.#", ".##..##.", "..#..#..", "...##...", "..####..",
+            ".#.##.#." if not blink else ".######.", "..####.."]
+    mx_art(g, rows)
+
+
+def mx_zhi(g: Gfx, k: float, t: float):
+    rows = ["..####..", ".#....#.", "#.####.#", "#.#..#.#", ".######.", "...##...", "...##...", "..####.."]
+    n = int(k * 8 + 0.999)
+    for y in range(8):
+        if y >= 8 - n:
+            mx_art(g, [rows[y]], 0, y)
 
 
 @register
-class WhiteDeer(Rest):
+class Deer(Rest):
     id = "x4.deer"
     name = "白鹿衔芝"
-    desc = "千岁白鹿立在老松下抖耳啃草；灵芝破土发光，鹿低头衔起，灵芝化光入鹿身"
-    T = {"enter": 3.0, "exit": 1.2}
+    desc = "老松下的 Q 版白鹿与小道士：鹿眨眼抖耳翘尾、低头啃草；灵芝破土，小道士采来喂鹿，鹿衔芝而立，化光入身"
+    T = {"enter": 3.0, "exit": 1.4}
 
     def setup(self):
-        self.ear_p = self.rng.uniform(4.5, 7.0)
+        self.clock = Clock()
+        self.sparks = pix.Sparks(self.seed)
+        self.glow = pix.Sparks(self.seed + 1)
 
-    # ------------------------------------------------------------ 布景
+    # ------------------------------------------------------------ 一帧
 
-    def scenery(self, g: Gfx, t: float, a: float = 1.0):
-        g.d.line((0, G, 127, G), fill=1)
-        g.blit(PINE, 0, G - 57)
-        g.blit(ROCK, 88, G - 15)
-        for i, gx in enumerate((32, 46, 84, 108, 118)):   # 草丛
-            sw = math.sin(t * 0.8 + i) * 1
-            g.d.line((gx, G, gx - 1 + sw, G - 4), fill=1)
-            g.d.line((gx + 2, G, gx + 3 + sw, G - 5), fill=1)
-        if a > 0:
-            s = "鹿寿千岁"
-            g.vtext(114, 2, s[:int(round(a * len(s)))])
+    def scene(self, g: Gfx, t: float, dt: float, deer_x=DX, walk=None, text=None, flip=False, events=True,
+              pine_front=False):
+        scenery(g, t)
+        blink = (t % 3.6) < 0.14
+        ear = (t % 6.1) < 0.35
+        tail_up = (t % 4.7) < 0.4
+        low, chew, zhi_mouth = 0.0, False, False
+        dpose, dface, held = "idle", "normal", None
+        mxmode, mxk = "antler", 0.0
+        zstage = None    # 地上灵芝的生长阶段
+        cone_xy = None
+        dx = 0.0
+        glow_k = None
+        dao_dx, dao_walk, dao_flip = 0.0, False, True
+        if events:
+            zh = ev(t, ZHI_P, ZHI_S, ZHI_D)
+            gz = ev(t, GRAZE_P, GRAZE_S, GRAZE_D) if not zh else None
+            cn = ev(t, CONE_P, CONE_S, CONE_D) if not zh else None
+            if gz:
+                L = gz[1]
+                low = ease_in_out(span(L, 0, 0.8)) * (1 - ease_in_out(span(L, 4.0, 4.8)))
+                chew = 1.0 < L < 4.0
+            if cn:
+                L = cn[1]
+                # 松果：从松枝落下，弹两下滚到鹿鼻子前
+                if L < 0.7:
+                    cx, cy = 40, lerp(22, FLOOR - 4, ease_in(L / 0.7))
+                elif L < 1.6:
+                    q = (L - 0.7) / 0.9
+                    cx = lerp(40, 66, q)
+                    cy = FLOOR - 4 - abs(math.sin(q * math.pi * 2)) * 7 * (1 - q)
+                else:
+                    cx, cy = 66 + min(L - 1.6, 0.5) * 4, FLOOR - 4
+                cone_xy = (cx, cy)
+                if 0.7 < L < 3.5:
+                    ear = True
+                if 2.0 < L < 3.6:
+                    low = ease_in_out(span(L, 2.0, 2.5)) * (1 - ease_in_out(span(L, 3.1, 3.6))) * 0.7
+            if zh:
+                L = zh[1]
+                # 小道士：3.0–3.6 走过去，8.6–9.4 走回来
+                dao_dx = -10 * ease_in_out(span(L, 3.0, 3.6)) * (1 - ease_in_out(span(L, 8.6, 9.4)))
+                dao_walk = 3.0 < L < 3.6 or 8.6 < L < 9.4
+                dao_flip = not (8.6 < L < 9.4)
+                if L < 3.0:                                   # 破土长大
+                    zstage = min(3, int(L / 0.75))
+                    mxmode, mxk = "zhi", span(L, 0, 3.0)
+                    if int(L * 3) != int((L - dt) * 3):
+                        self.sparks.burst(ZX, FLOOR - 6, 2, 12, up=6, life=0.6, gravity=-6)
+                elif L < 4.6:                                 # 小道士走过去弯腰采
+                    zstage = 3 if L < 4.0 else None
+                    dpose = "bow" if L > 3.4 else "idle"
+                    held = L >= 4.0
+                    mxmode, mxk = "zhi", 1.0
+                elif L < 8.6:                                 # 捧着递过去；鹿上前衔住
+                    dpose, held, dface = "offer", True, "happy"
+                    mxmode, mxk = "zhi", 1.0
+                    dx = ease_in_out(span(L, 5.2, 6.6)) * 12
+                    if 5.2 < L < 6.6:
+                        walk = (L - 5.2) * 1.6
+                    if L > 6.6:
+                        low = ease_in_out(span(L, 6.6, 7.2)) * 0.45 * (1 - ease_in_out(span(L, 7.6, 8.2)))
+                    if L > 7.4:
+                        held, zhi_mouth = False, True
+                elif L < 22.0:                                # 鹿退回原地，衔芝而立
+                    zhi_mouth = True
+                    dx = 12 * (1 - ease_in_out(span(L, 8.6, 10.0)))
+                    if L < 10.0:
+                        walk = -(L - 8.6) * 1.6
+                    dpose = "gongshou" if L < 17 else "idle"
+                    dface = "happy" if L < 12 else "normal"
+                    mxmode, mxk = "zhi", 1.0
+                    if L > 10.5:
+                        text = "白鹿衔芝"
+                    if L > 19.0:                              # 化作光点飘入鹿身
+                        zhi_mouth = L < 19.6
+                        glow_k = span(L, 19.0, 22.0)
+                        mxmode = "glow"
+                else:
+                    glow_k = 1.0 if L < 23.0 else None
+                    mxmode = "glow" if L < 23.0 else "antler"
+        mouth = deer(g, deer_x + dx, t, walk=walk, tail_up=tail_up, ear=ear, blink=blink and not chew, low=low,
+                     chew=chew, zhi=zhi_mouth, flip=flip)
+        if cone_xy:
+            pix.blit(g, CONE, cone_xy[0], cone_xy[1])
+        if pine_front:  # 进出场：鹿从松树后面走出来 / 隐进松后
+            pix.blit(g, S("pine"), -4, FLOOR - 51)
+            pix.blit(g, S("rock"), 12, FLOOR - 8)
+        if zstage is not None:
+            spr = ZHI[zstage]
+            pix.blit(g, spr, ZX - spr.w // 2, FLOOR - spr.h)
+        h = daoshi(g, DAO_X + dao_dx, FLOOR, "walk" if dao_walk else dpose, t, flip=dao_flip, face=dface)
+        if held:
+            hx, hy = h["hand"]
+            pix.blit(g, ZHI_SMALL, hx - 4, hy - 4)
+        if glow_k is not None:  # 光点从嘴边沿脖子飘进身体，最后一圈微光
+            mx_, my_ = mouth
+            if glow_k < 0.7:
+                for i in range(5):
+                    q = (glow_k / 0.7 + i * 0.13) % 1
+                    px = lerp(mx_, deer_x + 13, q) + math.sin(q * 9 + i) * 2
+                    py = lerp(my_, DY + 4, q)
+                    g.px(px, py)
+                    if i == 0:
+                        sparkle(g, px, py, 1)
+            else:
+                r = (glow_k - 0.7) / 0.3
+                cx, cy = deer_x + 13 + dx, DY + 1
+                for a in range(0, 360, 30):
+                    rr = 14 + r * 6
+                    g.px(cx + math.cos(math.radians(a + t * 40)) * rr, cy + math.sin(math.radians(a + t * 40)) * rr * 0.6)
+        if zstage == 3 or held or zhi_mouth:  # 灵芝的小闪光
+            if int(t * 3) % 2 == 0:
+                if held:
+                    sx, sy = h["hand"][0] - 3, h["hand"][1] - 7
+                elif zhi_mouth:
+                    sx, sy = mouth[0] + 4, mouth[1] - 6
+                else:
+                    sx, sy = ZX + 5, FLOOR - 11
+                sparkle(g, sx, sy, 1)
+        self.sparks.step(dt)
+        self.sparks.draw(g, trail=False)
+        # 点阵
+        if mxmode == "zhi":
+            mx_zhi(g, mxk, t)
+        elif mxmode == "glow":
+            mx_zhi(g, 1.0, t)
+            r = (t * 3) % 4
+            for yy in range(8):
+                for xx in range(8):
+                    if abs(math.hypot(xx - 3.5, yy - 3.5) - r) < 0.6:
+                        g.mx[yy, xx] = True
+            g.mx_level = 6
+        else:
+            mx_antler(g, blink)
+        if text:
+            label(g, 125, 3, text, align="right")
 
-    # ------------------------------------------------------------ 日常 + 事件
-
-    def state(self, t: float):
-        """返回 dict：graze, zhi_p, zhi_glow, hold, absorb, glow"""
-        st = dict(graze=0.0, zhi=0.0, zglow=0.0, hold=False, absorb=-1.0, glow=0.0)
-        k = (t + 6) % 23            # 平常：偶尔低头啃草
-        if k < 4.0:
-            st["graze"] = ease_in_out(span(k, 0, 1.0)) * (1 - ease_in_out(span(k, 3.0, 4.0))) * 0.9
-        if t >= EV0:
-            k = (t - EV0) % EV_P
-            if k < 22:
-                st["graze"] = 0.0
-            if k < 3.0:            # 灵芝破土、长开
-                st["zhi"] = ease_out(span(k, 0, 2.5))
-                st["zglow"] = k
-            elif k < 5.5:          # 鹿低头去衔
-                st["zhi"] = 1.0
-                st["zglow"] = k
-                st["graze"] = ease_in_out(span(k, 3.0, 4.6))
-                if k > 4.8:
-                    st["zhi"] = 0.0
-                    st["hold"] = True
-                    st["graze"] = 1 - ease_in_out(span(k, 4.8, 5.5)) * 0.0
-            elif k < 7.0:          # 衔着抬起头
-                st["hold"] = True
-                st["graze"] = 1 - ease_in_out(span(k, 5.5, 7.0))
-            elif k < 19.0:         # 衔芝而立
-                st["hold"] = True
-            elif k < 21.0:         # 灵芝化光入鹿身
-                st["absorb"] = (k - 19.0) / 2.0
-                st["glow"] = 1.0
-            elif k < 24.0:
-                st["glow"] = 1 - (k - 21.0) / 3.0
-        return st
-
-    def mx(self, g: Gfx, t: float, st):
-        if st["zhi"] > 0 or st["hold"] or st["absorb"] >= 0:
-            mx_sprite(g, MX_ZHI)
-            if st["zhi"] > 0 and st["zhi"] < 1:      # 自下而上长出来
-                g.mx[:int(7 - st["zhi"] * 7), :] = False
-            if st["absorb"] >= 0:
-                g.mx_level = 1 + int(6 * math.sin(st["absorb"] * math.pi))
-                if st["absorb"] > 0.5:
-                    g.mx[:] = False
-                    r = (st["absorb"] - 0.5) * 10
-                    for y in range(8):
-                        for x in range(8):
-                            if abs(math.hypot(x - 3.5, y - 3.5) - r) < 0.7:
-                                g.mx[y, x] = True
-            return
-        mx_sprite(g, MX_ANTLER)
-        if st["glow"] > 0 and blink(t, 0.4):
-            g.mx[7, :] = True
-
-    def draw(self, g: Gfx, t: float, x: float = 0.0, step: float = 0.0, text: float = 1.0, st=None):
-        st = st or self.state(t)
-        self.scenery(g, t, text)
-        k = (t % self.ear_p)
-        ear = 1.0 if k < 0.25 else 0.0
-        tail = 1.0 if (t + 2) % 9.0 < 0.4 else 0.0
-        blinking = (t % 3.7) < 0.12
-        if st["zhi"] > 0:
-            lingzhi(g, ZX, G, st["zhi"], st["zglow"])
-        hx, hy, phi = deer(g, x, t, st["graze"], ear, tail, step, st["hold"], blinking, st["glow"], seed=self.seed)
-        if st["absorb"] >= 0:   # 衔着的灵芝缩成光点，沿颈飘进身体
-            p = st["absorb"]
-            mx_, my_ = rot([(-11, 5)], phi, hx, hy)[0]
-            for i in range(6):
-                q = clamp(p * 1.3 - i * 0.05)
-                px = lerp(mx_, 65 + x, q) + math.sin(q * 6 + i) * 3
-                py = lerp(my_, 40, q) + math.cos(q * 5 + i) * 3
-                g.px(px, py)
-                if i % 2 == 0:
-                    g.px(px + 1, py)
-            if p < 0.3:
-                g.d.chord((mx_ - 3, my_ - 3, mx_ + 3, my_ + 3), 180, 360, fill=0, outline=1)
-        self.mx(g, t, st)
-
-    def hold(self, g: Gfx, t: float):
-        self.draw(g, t)
+    # ------------------------------------------------------------ 阶段
 
     def enter(self, g: Gfx, t: float):
-        T = self.T["enter"]
-        p = span(t, 0.2, 2.4)
-        x = lerp(70, 0, ease_out(p))
-        step = t * 1.3 if p < 1 else 0.0
-        st = dict(graze=0.0, zhi=0.0, zglow=0.0, hold=False, absorb=-1.0, glow=0.0)
-        self.draw(g, t, x, step, span(t, 1.4, T), st)
+        dt = self.clock.dt(t)
+        q = ease_out(span(t, 0, 2.4))
+        x = lerp(-40, DX, q)
+        walk = t * 1.8 if t < 2.4 else None
+        self.scene(g, t, dt, deer_x=x, walk=walk, text="鹿寿千岁" if t > 1.0 else None, events=False,
+                   pine_front=True)
+
+    def hold(self, g: Gfx, t: float):
+        dt = self.clock.dt(t)
+        self.scene(g, t, dt, text="鹿寿千岁" if t < 6.0 else None)
 
     def exit(self, g: Gfx, t: float):
-        T = self.T["exit"]
-        t0 = self.hold_t
-        st = self.state(t0)
-        st["graze"] *= 1 - span(t, 0, 0.3)
-        p = ease_in(span(t, 0.15, T))
-        # 小跑着往左，隐进松林
-        x = -p * 110
-        self.scenery(g, t0 + t, 1 - span(t, 0, 0.6))
-        hx, hy, phi = deer(g, x, t0 + t, st["graze"], 0, 1.0, t * 3 if p > 0 else 0, st["hold"], False, 0.0,
-                           seed=self.seed)
-        self.mx(g, t0 + t, st)
-        g.fade(1 - span(t, T * 0.6, T))
+        dt = self.clock.dt(t)
+        q = ease_in(span(t, 0.2, self.T["exit"]))
+        x = DX - q * 80
+        self.scene(g, self.hold_t + t, dt, deer_x=x, walk=t * 3.0, flip=True, events=False,
+                   pine_front=True)

@@ -78,10 +78,12 @@ class Probe:
                 if x0 < u1 and u0 < x1 and y0 < v1 and v0 < y1:
                     k = f"文字重叠：「{s1}」与「{s2}」"
                     self.text_issues[k] = self.text_issues.get(k, 0) + 1
-            if x0 < 0 or y0 < 0 or x1 > 128 or y1 > 64:
+            if x0 - ox < 0 or y0 - oy < 0 or x1 - ox > 128 or y1 - oy > 64:  # 按未震屏的位置判断
                 k = f"文字出屏：「{s1}」"
                 self.text_issues[k] = self.text_issues.get(k, 0) + 1
                 continue
+            if x0 < 0 or y0 < 0 or x1 > 128 or y1 > 64:
+                continue  # 震屏把字推出了边：不算
             ix, iy, size, scale = boxes[i][5:]
             glyph = np.array(_text_img(s1, size, scale), dtype=bool)
             region = a[y0:y1, x0:x1].copy()
@@ -208,6 +210,9 @@ def main():
     for mod, err in LOAD_ERRORS.items():
         fname = mod.rsplit(".", 1)[-1]  # 如 r2_zhufu；前缀 r2. 对应文件名 r2_
         if a.prefix and not fname.startswith(a.prefix.rstrip(".").replace(".", "_")):
+            continue
+        if a.ids:  # 指定了场景：别的文件导入失败只提示
+            print(f"! 导入失败（与所查场景无关可忽略）{mod}")
             continue
         print(f"✗ 导入失败 {mod}\n    " + err.strip().replace("\n", "\n    "))
         bad += 1

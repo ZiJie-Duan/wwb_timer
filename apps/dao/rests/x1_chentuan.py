@@ -1,355 +1,347 @@
-"""陈抟高卧：华山石崖下，希夷先生侧身而卧（蛰龙睡），一睡百余日。
+"""陈抟高卧：华山石室的岩檐下，小道士学希夷先生侧身支颐而卧（蛰龙睡），一睡就是百余日。
 
-依据：《宋史·隐逸传·陈抟》：“移居华山云台观，又止少华石室，每寝处，多百余日不起。”太宗赐号“希夷先生”。
+依据：《宋史·隐逸传·陈抟》：“移居华山云台观，又止少华石室，每寝处，多百余日不起。”太宗赐号“希夷先生”；
 后世称“睡仙”，其睡法为侧身屈膝的“蛰龙睡”。周世宗、宋太宗都曾召他入朝。
+
+入场：小道士坐在卧石上，张大嘴打个哈欠，往旁边一倒，侧卧支颐，扬起一点尘土，Z 冒起来。
+持续：岩檐、石壁、卧石、远处华山三峰。40 秒为“一日”：太阳从右往左走，入夜换弯月和星，天明时右上写“第几日”；
+      每 3 日换一季：春落花、夏萤火、秋落叶、冬下雪。他随呼吸起伏、一直冒 Z。
+      小事件（每 150 秒一轮）：仙鹤衔诏飞来，诏书落在脚边，鹤站着等——一声大鼾把诏书和鹤一起吹飞（61s）；
+      鼾声如雷，山摇，岩檐落下碎石（100s）；“多百余日不起”逐字竖写出来（127s）。
+退场：睁眼，Z 散去，画面收拢到他脸上。
 """
 from __future__ import annotations
 
 import math
 
-from ..engine.anim import clamp, ease_in, ease_in_out, ease_out, ease_out_bounce, lerp, noise, rand, span
+from ..engine import pix
+from ..engine.anim import ease_in, ease_in_out, ease_out, lerp, rand, span
+from ..engine.chars import Part, daoshi
 from ..engine.cn import cn_num
-from ..engine.fx import stars, typewriter
-from ..engine.gfx import Gfx, Sprite
+from ..engine.gfx import Gfx
 from ..engine.scene import Rest, register
-from .x1_common import Pen, backdrop, breathe, ev, halo, iris, mx_zzz, z_glyph, zzz
+from .x1_common import CRANE_STAND, cached, crane_fly, ev, iris, plate, recline, twinkle, vplate, zzz
 
 SLAB = 50          # 卧石面
-FX, FY = 20, SLAB - 26   # 卧像左上角
-DAY = 40.0         # 画面里的“一日”
-SEASON = 25        # 每季的日数
-FACE = (FX + 17, FY + 6)  # 鼻尖附近（Z 从这里冒出）
+MAN_X = 14
+DAY = 40.0
+SEASON_DAYS = 3
+EV = 150.0
 
 
-def _bg():
-    p = Pen()
-    # 右：华山三峰（远，稀疏抖动）
-    p.poly([(78, 64), (88, 38), (92, 41), (101, 15), (108, 31), (114, 25), (128, 44), (128, 64)], fill=0.13)
-    p.line([(101, 15), (99, 26), (102, 36)])
-    p.line([(114, 25), (112, 35)])
-    # 左：石崖，顶上探出一片岩檐（石室）
-    p.poly([(0, 0), (44, 0), (40, 4), (30, 6), (20, 9), (14, 14), (11, 24), (9, 36), (11, 50), (8, 64), (0, 64)],
-           fill=0.4)
-    p.line([(4, 18), (9, 26)])
-    p.line([(2, 40), (6, 46)])
-    p.line([(22, 3), (34, 3)], 0)
-    # 卧石
-    p.poly([(14, SLAB), (18, SLAB - 1), (94, SLAB - 1), (100, SLAB + 1), (98, SLAB + 6), (12, SLAB + 6)], fill=0.3)
-    p.line([(15, SLAB), (98, SLAB)], 1)
-    # 地面与草
-    p.line([(0, 58), (128, 58)])
-    for x in (6, 104, 118):
-        p.line([(x, 58), (x - 2, 54)])
-        p.line([(x + 1, 58), (x + 2, 55)])
-    for i in range(12):
-        p.px(int(rand(i, 41) * 128), 60 + int(rand(i, 42) * 4))
-    return p.image()
-
-
-def _lying(b: int) -> tuple[Sprite, list[int]]:
-    """侧卧（头在左，以手支颐，屈膝）。b = 吸气时背脊抬起的像素。返回 (像素画, 每列顶端 y)"""
-    p = Pen(64, 26)
-    y0 = 25
-    # 道袍身子：肩 → 背 → 胯（最高）→ 膝 → 脚
-    p.poly([(16, 13), (24, 9 - b), (34, 7 - b), (42, 6 - b), (49, 7), (56, 11), (61, 16), (63, 21), (63, y0),
-            (16, y0)], fill=0.2)
-    p.line([(33, 8 - b), (31, y0)])                         # 腰带
-    p.line([(35, 8 - b), (33, y0)])
-    p.line([(44, 8 - b), (46, 16), (45, y0)])               # 衣褶
-    p.line([(51, 9), (54, 17), (53, y0)])                   # 屈膝
-    p.line([(40, 22), (50, 22)])
-    p.rect((58, 20, 63, y0), fill=1)                        # 鞋
-    # 搭在身上的手臂与宽袖
-    p.poly([(18, 13 - b), (30, 10 - b), (40, 12 - b), (41, 18), (36, 22), (28, 21), (21, 18)], fill=0)
-    p.line([(37, 14 - b), (38, 20)])
-    p.line([(34, 16), (35, 21)])
-    # 支颐的手臂（肘撑在石上）
-    p.poly([(0, y0), (2, 18), (6, 15), (11, 17), (12, y0)], fill=0)
-    p.line([(3, 21), (9, 20)])
-    # 头：脸朝外，向手一侧歪
-    p.ellipse((5, 3, 18, 16), fill=0)
-    p.ellipse((2, 0, 9, 6), fill=1)                         # 发髻
-    p.line([(0, 5), (11, 0)], 0)                            # 簪（黑线划过发髻）
-    p.line([(8, 8), (10, 8)])                               # 白眉
-    p.line([(13, 8), (15, 8)])
-    p.line([(8, 10), (9, 11), (10, 10)])                    # 合着的眼
-    p.line([(13, 10), (14, 11), (15, 10)])
-    p.px(11, 12)
-    # 长须垂到石上
-    p.poly([(8, 13), (15, 13), (21, y0), (10, y0)], fill=1)
-    p.line([(12, 16), (13, y0 - 1)], 0)
-    p.line([(16, 17), (18, y0 - 1)], 0)
-    spr = p.sprite()
-    top = []
-    for x in range(spr.w):
-        col = spr.mask[:, x].nonzero()[0]
-        top.append(int(col[0]) if len(col) else 99)
-    return spr, top
-
-
-def _sitting(yawn: bool) -> Sprite:
-    """盘坐（入场用）；yawn：伸懒腰"""
-    p = Pen(30, 30)
-    p.poly([(4, 29), (8, 16), (22, 16), (26, 29)], fill=0.28)       # 袍
-    p.ellipse((1, 24, 29, 29), fill=0.5)                             # 盘起的腿
-    p.ellipse((10, 5, 20, 15), fill=0)                               # 头
-    p.ellipse((13, 1, 17, 5), fill=1)                                # 发髻
-    p.line([(10, 3), (20, 3)])                                       # 簪
-    p.poly([(12, 13), (18, 13), (17, 22), (15, 24), (13, 22)], fill=1)  # 须
-    if yawn:
-        p.poly([(8, 17), (3, 8), (1, 0), (4, 0), (7, 8), (11, 16)], fill=0.6)    # 两臂上举
-        p.poly([(22, 17), (27, 8), (29, 0), (26, 0), (23, 8), (19, 16)], fill=0.6)
-        p.ellipse((14, 10, 16, 13), fill=0)                          # 张嘴
-        p.line([(12, 9), (14, 9)])
-        p.line([(16, 9), (18, 9)])
-    else:
-        p.poly([(8, 17), (4, 26), (14, 27), (12, 20)], fill=0.6)
-        p.poly([(22, 17), (26, 26), (16, 27), (18, 20)], fill=0.6)
-        p.line([(12, 9), (14, 9)])
-        p.line([(16, 9), (18, 9)])
+def _rock():
+    """整屏的石头：左边石壁、顶上岩檐（下沿垂着石乳和草）、卧石、地面、远处华山三峰"""
+    p = Part(128, 64)
+    # 石壁 + 岩檐（暗心白边）
+    p.shape("polygon", [(0, 0), (86, 0), (82, 3), (73, 5), (62, 7), (50, 8), (38, 9), (28, 11), (19, 14), (14, 19),
+                        (11, 28), (9, 40), (9, 50), (6, 58), (0, 58)], fill=0)
+    p.d.line([(86, 0), (82, 3), (73, 5), (62, 7), (50, 8), (38, 9), (28, 11), (19, 14), (14, 19), (11, 28), (9, 40),
+              (9, 50), (6, 58)], fill=1)
+    p.dither([(80, 1), (73, 4), (50, 7), (28, 10), (19, 13), (14, 18), (11, 27), (9, 40), (8, 48), (5, 48), (6, 40),
+              (8, 27), (11, 17), (16, 11), (26, 8), (48, 5), (72, 2), (82, 0)], 0.25, 1)
+    p.d.line([(78, 0), (72, 3), (61, 5), (49, 6), (37, 7), (27, 9), (18, 12), (12, 18), (9, 27), (7, 40), (7, 49)],
+             fill=0)                                                    # 边沿内侧一道暗线，让亮边更利落
+    for pts in (((30, 2), (36, 5), (44, 4)), ((56, 1), (60, 4)), ((3, 12), (6, 20), (4, 26)), ((2, 36), (5, 44)),
+                ((14, 4), (20, 7))):
+        p.d.line(pts, fill=1)
+    for x, y, n in ((44, 9, 3), (58, 8, 2), (24, 12, 2), (70, 6, 2)):   # 石乳
+        p.d.line((x, y, x, y + n), fill=1)
+    for x, y in ((33, 10), (66, 7), (17, 16)):                          # 垂下的草
+        p.d.line((x, y, x - 1, y + 3), fill=1), p.d.line((x + 1, y, x + 2, y + 2), fill=1)
+    # 卧石：上面一道亮面，前脸暗，带几道石纹
+    p.shape("polygon", [(10, SLAB), (78, SLAB), (82, SLAB + 3), (79, 58), (8, 58)], fill=0)
+    p.d.line((10, SLAB, 78, SLAB), fill=1)
+    p.d.line((11, SLAB + 1, 77, SLAB + 1), fill=1)
+    p.d.line([(78, SLAB), (82, SLAB + 3), (79, 58)], fill=1)
+    p.dither([(11, SLAB + 2), (79, SLAB + 2), (79, SLAB + 3), (11, SLAB + 3)], 0.5, 1)
+    for x0, x1, y in ((16, 26, 54), (40, 46, 55), (60, 72, 54)):
+        p.d.line((x0, y, x1, y), fill=1)
+    # 地面
+    p.shape("line", (0, 58, 127, 58), fill=1)
+    p.dither([(0, 60), (128, 60), (128, 64), (0, 64)], 0.25, 1)
+    # 华山三峰（远，只勾线）：西峰、中峰、东峰，峰上一棵小松
+    p.d.line([(80, 58), (86, 44), (90, 46), (98, 20), (101, 24), (104, 30), (108, 26), (112, 18), (116, 30),
+              (122, 36), (127, 40)], fill=1)
+    for pts in (((98, 20), (97, 30), (99, 40)), ((112, 18), (111, 28)), ((101, 24), (103, 34)), ((88, 46), (87, 52))):
+        p.d.line(pts, fill=1)
+    p.d.line((110, 21, 108, 23), fill=1), p.d.line((110, 21, 112, 23), fill=1)
     return p.sprite()
 
 
-_CR = [Sprite("""
-  ........##.........
-  .......###.........
-  ......####.........
-  .....####..........
-  ##..#######........
-  .###############...
-  ....#########..####
-  .......##..........
-"""), Sprite("""
-  ...................
-  ##.................
-  .##############....
-  ....##########.####
-  .....######........
-  ......####.........
-  .......###.........
-  ........#..........
-""")]
-CRANE = [halo(s) for s in _CR]           # 朝左飞
-CRANE_R = [s.flip() for s in CRANE]      # 朝右飞
+SUN = pix.frames("""
+  # # #
+   ###
+ #.###.#
+ #######
+ #.###.#
+   ###
+  # # #
+---
+   # #
+ # ### #
+  .###.
+ #######
+  .###.
+ # ### #
+   # #
+""")
 
-_BG = None
-_LIE: list = []
+MOON = pix.sprite("""
+  ###
+ ##.
+##.
+##.
+##.
+ ##.
+  ###
+""")
+
+SCROLL = pix.frames("""
+#.###.#
+#.###.#
+---
+ #
+###
+ #
+.#.
+ #
+###
+ #
+""")
+
+PETAL = pix.frames("""
+ #
+#.#
+ #
+---
+#
+ #
+""")
+
+LEAF = pix.frames("""
+ ##
+###
+#
+---
+#
+##
+ ##
+---
+##
+ ##
+  #
+""")
+
+PEBBLE = pix.sprite("""
+##
+##
+""")
 
 
-def _assets():
-    global _BG, _LIE
-    if _BG is None:
-        _BG = _bg()
-        _LIE = [_lying(0), _lying(1)]
-    return _BG, _LIE
+def drift(i: int, t: float, seed: int, fall: float, x0: float = 20, x1: float = 128, y0: float = 6):
+    """确定性飘落：第 i 片从上面落到地面（只依赖 t）"""
+    period = 64.0 / fall
+    ph = rand(i, seed) * period
+    k = ((t + ph) % period) / period
+    x = x0 + rand(i, seed + 1) * (x1 - x0) + math.sin(t * 1.3 + i) * 3 - k * 10
+    return x, y0 + k * 52
 
 
 @register
-class ChenTuan(Rest):
+class ChenTuanRest(Rest):
     id = "x1.chentuan"
     name = "陈抟高卧"
-    desc = "华山石崖下希夷先生侧身而卧，日月轮转、四季更替，一睡百余日；仙鹤衔诏来请，被一声鼾吹走"
+    desc = "华山石室岩檐下，小道士侧身支颐而卧（蛰龙睡），日月轮转、四季更替，仙鹤衔诏来也被一声大鼾吹走"
     T = {"enter": 3.0, "exit": 1.3}
 
     def setup(self):
-        self.day0 = 1 + self.rng.randrange(0, 4 * SEASON)  # 从哪个季节睡起
-        self._ht = 0.0
-        _assets()
+        self.season0 = self.rng.randrange(4)
 
-    # ------------------------------------------------------------ 零件
-
-    def day(self, t: float) -> int:
-        return self.day0 + int(t // DAY)
+    # ------------------------------------------------------------ 天
 
     def sky(self, g: Gfx, t: float):
-        p = (t % DAY) / DAY
-        if p < 0.6:  # 白天：太阳从右往左
-            k = p / 0.6
-            x, y = lerp(120, 50, k), 30 - math.sin(k * math.pi) * 24
-            g.d.ellipse((x - 3, y - 3, x + 3, y + 3), outline=1, fill=0)
-            for i in range(8):
-                a = i * math.pi / 4 + t * 0.3
-                g.d.line((x + math.cos(a) * 5, y + math.sin(a) * 5, x + math.cos(a) * 6.5, y + math.sin(a) * 6.5), fill=1)
-        else:        # 夜：月亮与星
-            k = (p - 0.6) / 0.4
-            stars(g, t, self.seed, n=14, box=(46, 2, 126, 22), twinkle=0.35 + 0.3 * abs(k - 0.5))
-            x, y = lerp(120, 50, k), 30 - math.sin(k * math.pi) * 24
-            g.d.ellipse((x - 3, y - 3, x + 3, y + 3), fill=1)
-            g.d.ellipse((x - 1, y - 4, x + 4, y + 2), fill=0)
+        k = (t % DAY) / DAY
+        if k < 0.6:   # 白天：太阳从右往左
+            q = k / 0.6
+            x, y = lerp(122, 78, q), 24 - math.sin(q * math.pi) * 18
+            pix.blit(g, pix.anim(SUN, t, 2), x - 3, y - 3)
+        else:         # 夜里：弯月 + 星
+            q = (k - 0.6) / 0.4
+            x, y = lerp(122, 80, q), 22 - math.sin(q * math.pi) * 14
+            pix.blit(g, MOON, x - 2, y - 3)
+            for i in range(9):
+                sx, sy = 74 + int(rand(i, 3) * 52), 3 + int(rand(i, 4) * 16)
+                if abs(sx - x) > 4 or abs(sy - y) > 5:
+                    twinkle(g, sx, sy, t, i, big=i % 4 == 0)
+        return k
 
-    def season(self, g: Gfx, t: float, dx: int = 0):
-        s = ((self.day(t) - 1) // SEASON) % 4
-        for i in range(14 if s != 1 else 6):
-            sp = 0.6 + 0.6 * rand(i, 7)
-            if s == 3:      # 冬：雪
-                x = (rand(i, 3) * 140 + noise(t * 0.3 + i, 5) * 8) % 132
-                y = (rand(i, 4) * 70 + t * 9 * sp) % 70 - 3
-                g.px(x + dx, y)
-            elif s == 2:    # 秋：落叶翻飞
-                x = (rand(i, 3) * 160 - t * 7 * sp) % 150 - 10
-                y = (rand(i, 4) * 70 + t * 6 * sp) % 70 - 3
-                f = int(t * 3 + i) % 2
-                g.d.line((x + dx, y, x + dx + 2, y + (1 if f else -1)), fill=1)
-            elif s == 0:    # 春：花瓣
-                x = (rand(i, 3) * 160 - t * 10 * sp) % 150 - 10
-                y = (rand(i, 4) * 70 + t * 5 * sp + math.sin(t + i) * 3) % 70 - 3
-                g.d.rectangle((x + dx, y, x + dx + 1, y), fill=1)
-            else:           # 夏：萤火
-                x = 20 + rand(i, 3) * 100 + math.sin(t * 0.7 + i * 2) * 6
-                y = 50 + rand(i, 4) * 10 + math.sin(t * 1.1 + i) * 3
-                if noise(t * 1.5 + i * 3, 9) > 0.55:
-                    g.px(x + dx, y)
-        if s == 3:  # 冬：人身上、石上积一层雪
-            spr, top = _LIE[0]
-            for x in range(0, spr.w, 1):
-                if top[x] < 99 and (x * 7) % 5 < 3:
-                    g.px(FX + x + dx, FY + top[x] - 1)
-            for x in range(16, 98, 2):
-                g.px(x + dx, SLAB - 2 + (x // 2) % 2)
+    def season(self, g: Gfx, t: float, night: bool):
+        s = (int(t // (DAY * SEASON_DAYS)) + self.season0) % 4
+        if s == 0:      # 春：落花
+            for i in range(5):
+                x, y = drift(i, t, 21, 6.0)
+                pix.blit(g, pix.anim(PETAL, t + i, 2), x, y, outline=False)
+        elif s == 1:    # 夏：萤火（夜里）/ 飞虫
+            for i in range(3 if night else 0):
+                x = 40 + i * 25 + math.sin(t * 0.5 + i * 2) * 10
+                y = 38 + math.sin(t * 0.8 + i) * 6
+                if (t * 0.6 + i * 0.33) % 1 < 0.5:
+                    g.px(x, y), g.px(x + 1, y), g.px(x, y + 1), g.px(x - 1, y), g.px(x, y - 1)
+        elif s == 2:    # 秋：落叶
+            for i in range(4):
+                x, y = drift(i, t, 31, 5.0)
+                pix.blit(g, pix.anim(LEAF, t * 0.7 + i, 3), x, y, outline=False)
+        else:           # 冬：雪
+            for i in range(14):
+                x, y = drift(i, t, 41, 4.0, 14, 128, 8)
+                g.px(x, y)
+                if i % 3 == 0:
+                    g.px(x + 1, y), g.px(x, y + 1), g.px(x - 1, y), g.px(x, y - 1)
+        return s
 
-    def counter_a(self, t: float) -> float:
-        """每到天明报一次日数（入场时已经显示着，第一天不再淡入）"""
-        k = t % DAY
-        return (1.0 if t < DAY else span(k, 0, 0.6)) * (1 - span(k, 4.2, 5.0))
+    # ------------------------------------------------------------ 画面
 
-    def counter(self, g: Gfx, t: float, a: float = 1.0):
-        """“第几日”：天明时在天上显出来"""
-        if a <= 0:
-            return
-        s = f"第{cn_num(self.day(t))}日"
-        n = max(1, int(round(len(s) * a)))
-        g.text(86, 1, s[:n], size=12, align="center")
-
-    def sleeper(self, g: Gfx, t: float, dx: int = 0, dy: float = 0):
-        spr, _ = _LIE[1 if breathe(t) > 0.5 else 0]
-        g.blit(spr, FX + dx, FY + dy)
-
-    def mx(self, g: Gfx, t: float):
-        g.mx[7, :] = True
-        mx_zzz(g, t)
-
-    # ------------------------------------------------------------ 阶段
-
-    def enter(self, g: Gfx, t: float):
-        backdrop(g, _BG)
-        self.sky(g, 0)
-        g.mx[7, :] = True
-        if t < 1.9:
-            yawn = 0.55 < t < 1.5
-            g.blit(_SIT_YAWN if yawn else _SIT, FX - 2, SLAB - 30)
-            if yawn and t > 0.8:
-                g.text(FX + 30, SLAB - 34, "哈——", size=8)
-            g.mx_set(3, 6)
-            g.mx_set(4, 6)
-            g.mx_set(3, 5)
-            g.mx_set(4, 5)
-        else:
-            k = span(t, 1.9, 2.4)
-            self.sleeper(g, 0, dy=-4 * (1 - ease_out_bounce(k)))
-            if t > 2.4:
-                zzz(g, *FACE, t - 2.4, self.seed)
-                mx_zzz(g, t - 2.4)
-        self.season(g, 0)
-        self.counter(g, 0)
-        if t < 0.7:
-            iris(g, 50, 40, ease_out(t / 0.7) * 150, 0.8)
+    def stage(self, g: Gfx, t: float, shake: float = 0.0):
+        k = self.sky(g, t)
+        pix.blit(g, cached("rock", _rock), 0, 0, outline=False)
+        return k
 
     def hold(self, g: Gfx, t: float):
-        self._ht = t
-        dx = 0
-        snore = ev(t, 89.0, 2.6, 45.0)       # 鼾声如雷：山摇、落石
-        if snore and snore[1] < 1.6:
-            dx = (1 if int(snore[1] * 20) % 2 else -1)
-        g.img.paste(_BG, (dx, 0))
-        self.sky(g, t)
-        quote = ev(t, 127.0, 9.0, 12.0)
-        if quote:
-            g.d.rectangle((44, 0, 127, 13), fill=0)
-            typewriter(g, 46, 1, "多百余日不起", quote[1], cps=4)
+        self.draw(g, t)
+
+    def draw(self, g: Gfx, t: float, awake: float = 0.0):
+        k = self.stage(g, t)
+        night = k >= 0.6
+        thunder = ev(t, EV, 100.0, 3.2)
+        crane = ev(t, EV, 61.0, 11.0)
+        blow = crane is not None and crane > 7.0
+        face = "sleep"
+        if awake > 0:
+            face = "normal"
+        elif thunder is not None or blow:
+            face = "wow" if (thunder or 0) % 0.6 < 0.3 or blow else "sleep"
+        h = recline(g, MAN_X, SLAB, t, face=face)
+        if crane is not None:
+            self.crane_event(g, t, crane, h)
+        if thunder is not None:
+            self.thunder(g, t, thunder, h)
+        s = self.season(g, t, night)
+        if awake <= 0:
+            big = thunder is not None
+            zzz(g, h["mouth"][0] + 3, h["mouth"][1] - 4, t, n=3 if not big else 4, period=2.6 if not big else 1.2,
+                dx=20 if not big else 28, dy=-12)
+        self.words(g, t, k, thunder)
+        self.matrix(g, t, h, crane, thunder)
+        return h
+
+    def crane_event(self, g: Gfx, t: float, c: float, h: dict):
+        """仙鹤衔诏飞来 → 诏书落在脚边 → 站着等、点脚 → 大鼾一吹，诏书和鹤一起飞走"""
+        lx, ly = 106, 58  # 鹤落脚处
+        sx, sy = 72, SLAB  # 诏书落处
+        if c < 2.5:       # 飞来：从右上滑下
+            q = ease_out(c / 2.5)
+            x, y = lerp(140, lx + 2, q), lerp(6, ly - 22, q)
+            crane_fly(g, x, y, t, flip=True)
+            pix.blit(g, SCROLL[0], x - 13, y + 1)
+        elif c < 7.0:     # 站着等；诏书从嘴里掉到脚边
+            pix.blit(g, CRANE_STAND[int(t * 2) % 2], lx - 6, ly - 20, flip=True)
+            q = span(c, 2.5, 3.1)
+            if q < 1:
+                pix.blit(g, SCROLL[1 if int(c * 8) % 2 else 0], lerp(lx - 9, sx, q), lerp(ly - 18, sy - 2, ease_in(q)))
+            else:
+                pix.blit(g, SCROLL[0], sx, sy - 2)
+        else:             # 大鼾：一股风从嘴里冲出去，诏书翻滚着飞走，鹤被吹得往后飞
+            q = span(c, 7.0, 11.0)
+            mx, my = h["mouth"]
+            for i in range(4):   # 风线
+                a = (q * 3 + i * 0.25) % 1
+                y = my - 6 + i * 4
+                x0 = mx + 4 + a * 80
+                g.d.line((x0, y, x0 + 10, y), fill=1)
+                g.px(x0 + 13, y)
+            pix.blit(g, SCROLL[1 if int(c * 10) % 2 else 0], sx + ease_in(q) * 70, sy - 2 - math.sin(q * 3) * 18)
+            crane_fly(g, lx + ease_in(q) * 60, ly - 18 - q * 30, t * 2, flip=True)
+
+    def thunder(self, g: Gfx, t: float, c: float, h: dict):
+        """鼾声如雷：山摇、声浪一圈圈、岩檐落下碎石"""
+        if c < 1.6:
+            pix.shake(g, t, 1.2)
+        mx, my = h["mouth"]
+        for j in range(3):   # 声浪：嘴前一道道 ）
+            r = (c * 10 + j * 4) % 12 + 4
+            if c < 2.4:
+                g.d.arc((mx + 2 - r, my - 2 - r, mx + 2 + r, my - 2 + r), 300, 360, fill=1)
+        for i in range(4):
+            x = 30 + i * 13
+            y0 = 10
+            y = y0 + (c - i * 0.2) ** 2 * 30
+            if 0 < c - i * 0.2 and y < SLAB - 2:
+                pix.blit(g, PEBBLE, x, y)
+
+    def words(self, g: Gfx, t: float, k: float, thunder):
+        """字（最后画）：天明时右上“第几日”；每轮 127 秒竖写“多百余日不起”"""
+        dk = t % DAY
+        day = int(t // DAY) + 1
+        w = ev(t, EV, 127.0, 9.0)
+        if dk < 3.5 and t > 1.0 and w is None:
+            s = f"第{cn_num(day)}日" if day < 100 else f"{day}日"
+            plate(g, 125, 3, s, size=12, k=span(dk, 0, 0.3), align="right")
+        if w is not None:
+            n = int(w / 0.45) + 1             # 竖写两行，从右往左读
+            vplate(g, 114, 4, "多百余", n=min(n, 3))
+            if n > 3:
+                vplate(g, 99, 4, "日不起", n=n - 3)
+
+    def matrix(self, g: Gfx, t: float, h: dict, crane, thunder):
+        g.mx[7, :] = True                      # 卧石
+        g.mx[6, 0:5] = True                    # 侧卧的人
+        g.mx[5, 0:2] = True
+        g.mx[4, 0] = g.mx[4, 1] = True
+        b = (t / 3.6) % 1 < 0.5
+        g.mx[5, 2] = b
+        k = (t / 2.6) % 1
+        zx, zy = 2 + int(k * 4), 3 - int(k * 3)
+        for a, c in ((0, 0), (1, 0), (1, 1), (0, 2), (1, 2)):
+            g.mx_set(zx + a, zy + c - 1)
+        if thunder is not None and thunder < 1.6:
+            g.mx_level = 6
+
+    # ------------------------------------------------------------ 入场 / 退场
+
+    def enter(self, g: Gfx, t: float):
+        """坐在卧石上打哈欠 → 一倒侧卧，扬起尘土 → Z 冒起"""
+        self.stage(g, 0.0)
+        if t < 1.6:
+            yawn = 0.3 < t < 1.3
+            daoshi(g, MAN_X + 16, SLAB, "sit", t, face="wow" if yawn else "normal")
+            if yawn:
+                g.text(MAN_X + 28, 18, "哈", size=12)
         else:
-            self.counter(g, t, self.counter_a(t))
-        self.season(g, t, dx)
-        self.sleeper(g, t, dx)
-        crane = ev(t, 61.0, 10.0, 20.0)
-        big = None
-        if crane:
-            big = self.crane(g, crane[1])
-        if snore:
-            u = snore[1]
-            z_glyph(g, FACE[0] + 4 + u * 20, FACE[1] - 6 - u * 10, int(4 + u * 5))
-            for j in range(6):  # 岩檐上震落的碎石
-                k = span(u, 0.1 + j * 0.12, 0.9 + j * 0.12)
-                if 0 < k < 1:
-                    x, y = 20 + j * 4 + rand(j, snore[0]) * 5, 9 + ease_in(k) * (SLAB - 12)
-                    g.d.rectangle((x, y, x + 1, y + 1), fill=1)
-            for j in range(3):  # 声浪
-                r = (u * 3 - j * 0.4) * 10
-                if 3 < r < 26:
-                    g.d.arc((FACE[0] - r, FACE[1] - r, FACE[0] + r, FACE[1] + r), 250, 330, fill=1)
-        elif big is None:
-            zzz(g, *FACE, t, self.seed)
-        self.mx(g, t)
-        if snore and snore[1] < 1.6:
-            g.mx_level = 3
-
-    def crane(self, g: Gfx, u: float):
-        """仙鹤衔诏飞来，诏书落在枕边；一声大鼾，诏书与鹤都被吹走。返回是否在打大鼾"""
-        sx, sy = 84, SLAB - 13               # 诏书落点（脚边）
-        if u < 3.0:                          # 飞来
-            k = ease_out(u / 3.0)
-            bx, by = lerp(134, sx + 4, k), lerp(14, sy - 12, k) + math.sin(u * 5) * 2
-            g.blit(CRANE[int(u * 6) % 2], bx, by)
-            self.scroll(g, bx + 1, by + 7)
-            return None
-        if u < 6.0:                          # 诏书落下，鹤在一旁扑扇等着
-            k = ease_out_bounce(span(u, 3.0, 3.8))
-            self.scroll(g, sx, lerp(sy - 5, sy, k))
-            g.blit(CRANE[int(u * 4) % 2], sx + 2 + math.sin(u * 2) * 3, sy - 16 + math.sin(u * 3) * 2)
-            zzz(g, *FACE, u, self.seed, on=0.6)
-            return None
-        # 一声大鼾：吹走
-        k = ease_in(span(u, 6.6, 9.5))
-        z = span(u, 6.0, 7.2)
-        if z < 1:
-            z_glyph(g, FACE[0] - 2 + z * 6, FACE[1] - 6 - z * 6, int(5 + z * 8))
-        self.scroll(g, sx + k * 60, sy - k * 50, spin=k)
-        g.blit(CRANE_R[int(u * 8) % 2], sx + 2 + k * 60, sy - 16 - k * 40)
-        return True
-
-    def scroll(self, g: Gfx, x: float, y: float, spin: float = 0.0):
-        """一卷诏书（黄绢、两头轴）"""
-        if spin > 0:  # 翻飞时卷成一根轴
-            a = spin * 12
-            g.d.line((x + 5 - math.cos(a) * 5, y + 5 - math.sin(a) * 5, x + 5 + math.cos(a) * 5,
-                      y + 5 + math.sin(a) * 5), fill=1, width=2)
-            return
-        g.d.rectangle((x, y, x + 10, y + 11), fill=0, outline=1)
-        g.d.line((x - 1, y, x + 11, y), fill=1)
-        g.d.line((x - 1, y + 11, x + 11, y + 11), fill=1)
-        g.text(x + 2, y + 3, "诏", size=8)
+            h = recline(g, MAN_X, SLAB, t, face="sleep")
+            q = span(t, 1.6, 2.3)
+            if q < 1:   # 落下扬起的尘土
+                for i in range(5):
+                    x = MAN_X + 10 + i * 9 + q * (i - 2) * 3
+                    y = SLAB - 2 - q * 4 - (i % 2)
+                    if q < 0.7:
+                        g.d.ellipse((x - 1, y - 1, x + 1, y + 1), fill=1)
+                    else:
+                        g.px(x, y)
+            if t > 2.3:
+                zzz(g, h["mouth"][0] + 2, h["mouth"][1] - 4, t, on=span(t, 2.3, 3.0) * 1.2, dx=16, dy=-18)
+        self.season(g, 0.0, False)
+        self.matrix(g, t, {}, None, None)
+        iris(g, MAN_X + 18, SLAB - 16, lerp(6, 150, ease_out(span(t, 0.0, 1.2))))
 
     def exit(self, g: Gfx, t: float):
-        """醒来：睁眼，Z 散去，画面收拢到他身上"""
-        h = self._ht
-        backdrop(g, _BG)
-        self.sky(g, h)
-        if not ev(h, 127.0, 9.0, 12.0):
-            self.counter(g, h, self.counter_a(h))
-        self.season(g, h)
-        self.sleeper(g, h)
-        ex, ey = FX + 8, FY + 10
-        if t > 0.2:  # 睁眼
-            for x in (ex, ex + 5):
-                g.d.rectangle((x, ey - 1, x + 2, ey + 1), fill=0)
-                g.d.rectangle((x + 1, ey - 1, x + 2, ey), fill=1)
+        h0 = self.hold_t
+        k = self.stage(g, h0)
+        h = recline(g, MAN_X, SLAB, h0, face="normal" if t > 0.25 else "sleep")
+        self.season(g, h0 + t, k >= 0.6)
         if t < 0.5:
-            zzz(g, *FACE, h + t * 3, self.seed, on=1 - t * 2)
+            zzz(g, h["mouth"][0] + 2, h["mouth"][1] - 4, h0 + t * 3, on=1 - t * 2, dx=16, dy=-18)
         g.mx[7, :] = True
-        if t > 0.2:
-            g.mx_rows([0, 0, 0x66, 0x66, 0, 0, 0, 0xFF])
-        r = lerp(115, 0, ease_in_out(span(t, 0.3, self.T["exit"] - 0.05)))
-        iris(g, ex + 3, ey, r, 0.8)
-
-
-_SIT = _sitting(False)
-_SIT_YAWN = _sitting(True)
+        if t > 0.25:
+            g.mx_rows([0x00, 0x66, 0x66, 0x00, 0x00, 0x42, 0x3C, 0xFF])
+        ex, ey = h["eye"]
+        iris(g, ex + 2, ey, lerp(140, 0, ease_in_out(span(t, 0.3, self.T["exit"] - 0.05))))

@@ -1,360 +1,533 @@
-"""镇宅符：一道符贴在宅门正中。月亮从东走到西，夜里不时有小鬼飘来，到门前被符光一照就散了；
-一夜过去天亮，第二夜再守。
+"""镇宅符：夜里，小道士把一道镇宅符“啪”地贴在宅门正中，然后守在门前；小鬼一来，门上符光一射，散成点。
 
-依据：镇宅符贴于门户、厅堂以镇邪，民间镇宅俗语“姜太公在此，百无禁忌”；
-符纸用朱砂黄纸，贴符后“诸邪回避”。
+依据：镇宅符贴于门户以镇邪（纸符“贴在门上”），民间镇宅俗语“姜太公在此，百无禁忌”；符用朱砂黄纸。
+
+舞台（侧视）：右边一座宅门（鸱吻、瓦垄、瓦当、额枋斗拱、两根柱、双扇门带门钉和铺首门环、门槛台阶），
+檐下两盏灯笼（逐帧摇）；左边夜空（星、月亮按 e 从东往西走），小道士守在门左边，面朝外。
+入场：灯笼点亮；小道士手捧一道符走到门前，一跳“啪”地拍在门正中（震屏、火星、符光一闪），四角按实，退回守位。
+持续：一轮 600 秒是一夜。每 47 秒来一只小鬼（两帧飘动），从左边飘近；小道士瞧见（惊讶脸）、转身剑指，
+      门上的符放光，一颗光弹划弧越过小道士头顶打中小鬼：小鬼反白、发抖，散成火星和烟团；小道士拱手。
+      其间：蝙蝠飞过、小道士打哈欠、来回巡一趟；灯笼摇、星星闪。
+      续：天亮——太阳升起、屋脊上一只公鸡打鸣（“鸡鸣”），小道士伸个懒腰；转眼又入夜，灯笼重新点亮，“第几夜”加一。
+中断：灯笼熄灭，门前的小鬼趁机溜走，小道士坐下打盹，“暂歇”。恢复：符先亮一下，灯笼重新点亮，小道士站起来。
+圆满：门上的符放大光，光圈一圈圈扩出去，太阳升起，小道士作揖，“百无禁忌”。
 """
 from __future__ import annotations
 
 import math
 
-from ..engine.anim import blink, clamp, ease_in, ease_in_out, ease_out, ease_out_back, ease_out_bounce, lerp, \
-    noise, rand, span
+from ..engine import pix
+from ..engine.anim import ease_in, ease_in_out, ease_out, ease_out_back, lerp, rand, span
+from ..engine.chars import Part, daoshi
 from ..engine.cn import cn_num
-from ..engine.fx import flame, stars, typewriter
-from ..engine.gfx import Gfx, Sprite
+from ..engine.fx import stars
+from ..engine.gfx import Gfx
 from ..engine.scene import Ritual, register
-from .r2_common import rays
+from .r2_common import act, boxed, floor, fist, fu_spr, mx_ring, ring, star4
 
-GROUND = 61
-DOOR = (52, 38, 76, GROUND)
-FU = (60, 40, 68, 55)
-FUC = (64, 47)
-LANTERN = (88, 33)
-GHOST_P = 47.0           # 小鬼出没的周期
-RENEW = 5.0
+FLOOR = 58
+HX, HY = 64, 4                     # 宅门精灵左上角
+FU_X, FU_Y = 93, 22                # 门上的符（左上角，7×15）
+FU_C = (96, 29)
+GUARD = 50                         # 小道士守位
+LANTERNS = (67, 124)
+LEAD = 10.0
+GAP = 47.0
+NG = 12
+RENEW = 7.0
+GHOST_END = (22, 31)
 
-GHOST = [Sprite("""
-  .####.
- .#....#.
- #.#..#.#
- #......#
- #..##..#
- #......#
- #......#
- #.#..#.#
- .# .# .#
-"""), Sprite("""
-  .####.
- .#....#.
- #.#..#.#
- #......#
- #..##..#
- #......#
- #......#
- #.#..#.#
- #. #. #.
-""")]
+
+# ---------------------------------------------------------------- 道具
+
+def _house():
+    """宅门 64×54"""
+    p = Part(64, 54)
+    p.shape("rectangle", (6, 0, 57, 2), fill=1)                     # 正脊
+    p.d.line((7, 1, 56, 1), fill=0)
+    for x0, s in ((3, 1), (60, -1)):                                 # 鸱吻（两端上翘）
+        p.shape("rectangle", (min(x0, x0 + 2 * s), 0, max(x0, x0 + 2 * s), 2), fill=1)
+        p.px(x0 - s, -1 + 1), p.px(x0, 0, 0)
+    p.shape("polygon", [(6, 3), (57, 3), (63, 8), (63, 11), (0, 11), (0, 8)], fill=1)  # 屋面
+    for x in range(3, 61, 3):                                        # 瓦垄
+        p.d.line((x, 4 if 6 <= x <= 57 else 6, x, 9), fill=0)
+    p.px(0, 7), p.px(63, 7), p.px(0, 6), p.px(63, 6)                  # 飞檐起翘
+    p.d.line((0, 10, 63, 10), fill=0)
+    for x in range(1, 63, 2):                                        # 瓦当
+        p.px(x, 10, 1)
+    p.shape("rectangle", (3, 13, 60, 15), fill=1)                    # 额枋
+    p.d.line((4, 14, 59, 14), fill=0)
+    for x in range(5, 60, 4):
+        p.px(x, 14, 1)
+    for x in (8, 20, 41, 53):                                        # 斗拱
+        p.shape("rectangle", (x, 16, x + 2, 17), fill=1)
+        p.px(x + 1, 17, 0)
+    for x in (5, 55):                                                # 柱
+        p.shape("rectangle", (x, 16, x + 3, 50), fill=1)
+        p.d.line((x + 2, 18, x + 2, 48), fill=0)
+        p.shape("rectangle", (x - 1, 49, x + 4, 50), fill=1)          # 柱础
+    p.shape("rectangle", (12, 18, 51, 50), fill=1)                   # 门框
+    for x0 in (14, 32):                                              # 两扇门
+        p.d.rectangle((x0, 20, x0 + 17, 48), fill=0, outline=1)
+        p.d.rectangle((x0 + 2, 22, x0 + 15, 46), outline=1)
+        for y in (36, 40, 44):                                       # 门钉
+            for x in range(x0 + 4, x0 + 15, 3):
+                p.px(x, y)
+    p.d.line((31, 20, 31, 48), fill=1)
+    for cx in (27, 36):                                              # 铺首 + 门环
+        p.shape("rectangle", (cx - 1, 31, cx + 1, 32), fill=1)
+        p.d.ellipse((cx - 2, 32, cx + 2, 36), outline=1)
+    p.shape("rectangle", (10, 49, 53, 50), fill=1)                   # 门槛
+    p.d.line((11, 49, 52, 49), fill=0)
+    p.shape("rectangle", (6, 51, 57, 53), fill=1)                    # 台阶
+    p.d.line((7, 52, 56, 52), fill=0)
+    p.dither((44, 51, 57, 53), 0.5, 0)
+    return p.sprite()
+
+
+GHOST = pix.frames("""
+   #####
+  #######
+ #########
+ ##..#..##
+##.#.#.#.##
+ ##..#..##
+ #########
+ ####.####
+##########
+ #########
+ # ### ###
+ #  #   #
+---
+   #####
+  #######
+ #########
+ ##..#..##
+##.#.#.#.##
+ ##..#..##
+ #########
+ ####.####
+##########
+ #########
+ ### ### #
+  #   #  #
+""")
+
+BAT = pix.frames("""
+#.......#
+##.#.#.##
+ #######
+   ###
+---
+   .#.
+  #####
+ ## # ##
+#       #
+""")
+
+ROOSTER = pix.frames("""
+  ##
+ ###.
+ #.##
+  ###     #
+  ####   ##
+  ######.##
+  ########
+   ######
+    ####
+    #  #
+   ##  ##
+---
+  ##
+ ###.#
+ #.##.
+  ###     #
+  ####   ##
+  ######.##
+  ########
+   ######
+    ####
+    #  #
+   ##  ##
+""")
+
+
+def _lantern(lit: bool):
+    """灯笼 7×11：提梁、顶盖、鼓肚灯身（竖骨）、底盖、穗子"""
+    p = Part(7, 11)
+    p.shape("rectangle", (2, 0, 4, 0), fill=1)
+    p.shape("ellipse", (0, 1, 6, 8), fill=1)
+    if lit:
+        p.d.line((3, 2, 3, 7), fill=0)
+        p.px(1, 4, 0), p.px(5, 4, 0), p.px(1, 5, 0), p.px(5, 5, 0)
+    else:
+        p.d.ellipse((1, 2, 5, 7), fill=0)
+        p.d.line((3, 2, 3, 7), fill=1)
+    p.shape("rectangle", (2, 8, 4, 8), fill=1)
+    p.shape("line", (3, 9, 3, 10), fill=1)
+    return p.sprite()
+
+
+_P: dict = {}
+
+
+def prop(name):
+    if name not in _P:
+        _P[name] = {"house": _house, "lit": lambda: _lantern(True), "dark": lambda: _lantern(False)}[name]()
+    return _P[name]
 
 
 @register
 class ZhenZhai(Ritual):
     id = "r2.zhenzhai"
     name = "镇宅符"
-    desc = "符贴宅门，月行中天，小鬼夜里飘来，到门前被符光一照就散；一夜一轮，天亮再守一夜"
-    T = {"enter": 4.2, "interrupt": 1.5, "resume": 1.6, "complete": 5.5}
+    desc = "小道士把镇宅符“啪”地贴上宅门，守在门前；夜里小鬼飘来，门上符光一射散成点，天亮鸡鸣再入夜"
+    T = {"enter": 6.0, "interrupt": 1.6, "resume": 1.8, "complete": 5.5}
     CYCLE = 600.0
 
     def setup(self):
-        self.s = self.rng.randrange(1000)
+        self.sparks = pix.Sparks(self.seed)
+        self.puffs = pix.Puffs(self.seed + 1)
+        self.last_t = None
+        self.sky_seed = self.rng.randrange(100)
 
-    # ------------------------------------------------------------ 零件
+    def _dt(self, t):
+        dt = 1 / 30 if self.last_t is None or t < self.last_t else min(t - self.last_t, 0.2)
+        self.last_t = t
+        return dt
 
-    def house(self, g: Gfx):
-        # 屋顶：飞檐
-        roof = [(22, 25), (30, 28), (98, 28), (106, 25), (100, 30), (28, 30)]
-        g.d.polygon([(36, 17), (92, 17), (100, 28), (28, 28)], fill=0, outline=1)
-        for x in range(34, 96, 3):  # 瓦垄
-            x2 = 64 + (x - 64) * 1.18
-            g.d.line((x, 18, x2, 27), fill=1)
-        g.d.polygon(roof, fill=1)
-        g.d.line((34, 16, 94, 16), fill=1)                  # 正脊
-        g.d.line((34, 15, 94, 15), fill=1)
-        for sx in (33, 95):                                  # 鸱吻
-            d = 1 if sx > 64 else -1
-            g.d.line((sx, 15, sx + d * 2, 11), fill=1)
-            g.d.line((sx + d * 2, 11, sx + d * 4, 12), fill=1)
-        # 墙、柱
-        g.d.rectangle((34, 30, 94, GROUND), fill=0, outline=1)
-        g.d.rectangle((36, 30, 38, GROUND), fill=1)
-        g.d.rectangle((90, 30, 92, GROUND), fill=1)
-        # 窗（棂格）
-        for x0 in (41, 79):
-            g.d.rectangle((x0, 38, x0 + 8, 48), outline=1)
-            g.d.line((x0 + 4, 38, x0 + 4, 48), fill=1)
-            g.d.line((x0, 43, x0 + 8, 43), fill=1)
-        # 门：双扇、门钉、门环
-        x0, y0, x1, y1 = DOOR
-        g.d.rectangle((x0 - 2, y0 - 3, x1 + 2, y1), outline=1)
-        g.d.rectangle((x0, y0, x1, y1), fill=0, outline=1)
-        g.d.line((64, y0, 64, y1), fill=1)
-        for yy in range(y0 + 3, y1 - 2, 4):
-            for xx in (x0 + 3, x0 + 7, x1 - 7, x1 - 3):
-                g.px(xx, yy)
-        g.d.ellipse((60, 48, 62, 50), outline=1)
-        g.d.ellipse((66, 48, 68, 50), outline=1)
-        # 台阶
-        g.d.line((44, GROUND, 84, GROUND), fill=1)
-        g.d.line((0, 63, 127, 63), fill=1)
-        g.d.line((40, 62, 88, 62), fill=1)
+    # ------------------------------------------------------------ 布景
 
-    def fu(self, g: Gfx, glow: float = 0.0, y_off: float = 0.0, x_scale: float = 1.0):
-        x0, y0, x1, y1 = FU
-        cx = (x0 + x1) / 2
-        hw = (x1 - x0) / 2 * x_scale
-        g.d.rectangle((cx - hw, y0 + y_off, cx + hw, y1 + y_off), fill=0, outline=1)
-        if x_scale > 0.6:
-            yy = y0 + y_off
-            for dx in (-2, 0, 2):
-                g.px(cx + dx, yy + 2)
-            g.d.line((cx - 2, yy + 4, cx + 2, yy + 4), fill=1)       # 敕令（简笔）
-            g.d.line((cx, yy + 4, cx, yy + 8), fill=1)
-            g.d.line((cx - 2, yy + 6, cx + 2, yy + 6), fill=1)
-            g.d.line([(cx, yy + 9), (cx - 2, yy + 10), (cx + 2, yy + 11), (cx - 1, yy + 12), (cx + 1, yy + 14)],
-                     fill=1)
+    def night(self, g: Gfx, t: float, u: float, day: float = 0.0):
+        """夜空：星星、按 u 移动的月亮；day > 0 时换成日出"""
+        if day <= 0:
+            stars(g, t, self.sky_seed, n=22, box=(0, 0, 64, 44))
+            q = u / self.CYCLE
+            mx_, my = lerp(30, 58, q), 16 - math.sin(q * math.pi) * 8
+            g.d.ellipse((mx_ - 4, my - 4, mx_ + 4, my + 4), fill=1)
+            g.d.ellipse((mx_ - 2, my - 5, mx_ + 5, my + 2), fill=0)
+        else:
+            self.sun(g, t, day)
+        floor(g, FLOOR)
+        self.wall(g)
+
+    def wall(self, g: Gfx):
+        """远处一道矮院墙：墙帽瓦片 + 墙身"""
+        g.d.line((0, 42, 60, 42), fill=1)
+        for x in range(0, 60, 3):
+            g.px(x + 1, 41)
+        g.d.line((0, 44, 60, 44), fill=1)
+        for x in range(2, 60, 8):
+            g.px(x, 46), g.px(x + 4, 49)
+
+    def sun(self, g: Gfx, t: float, k: float):
+        """日出：太阳从院墙后升起，光芒转动"""
+        cy = lerp(50, 28, ease_out(min(k, 1)))
+        cx = 26
+        g.d.ellipse((cx - 6, cy - 6, cx + 6, cy + 6), fill=1)
+        g.d.ellipse((cx - 4, cy - 4, cx + 4, cy + 4), fill=0)
+        g.d.ellipse((cx - 2, cy - 2, cx + 2, cy + 2), fill=1)
+        for i in range(8):
+            a = i * math.pi / 4 + t * 0.5
+            g.d.line((cx + math.cos(a) * 8, cy + math.sin(a) * 8, cx + math.cos(a) * (10 + (i % 2)),
+                      cy + math.sin(a) * (10 + (i % 2))), fill=1)
+        g.d.rectangle((0, 42, 60, FLOOR - 1), fill=0)
+
+    def house(self, g: Gfx, t: float, lit=(True, True), fu: float = 1.0, glow: float = 0.0):
+        pix.blit(g, prop("house"), HX, HY)
+        if fu > 0:
+            spr = fu_spr(7, 15, 2)
+            if fu < 1:
+                spr = pix.stretch(spr, 1.0, max(0.2, fu))
+            pix.blit(g, spr, FU_X, FU_Y + (15 - spr.h) // 2)
+        if glow > 0:  # 符光：四周短光芒
+            n = 8
+            for i in range(n):
+                a = i * 2 * math.pi / n + t * 0.6
+                r0, r1 = 10, 10 + 3 * glow + (int(t * 8 + i) % 2)
+                g.d.line((FU_C[0] + math.cos(a) * r0, FU_C[1] + math.sin(a) * r0 * 1.2,
+                          FU_C[0] + math.cos(a) * r1, FU_C[1] + math.sin(a) * r1 * 1.2), fill=1)
+        for k, x in enumerate(LANTERNS):
+            sway = math.sin(t * 1.6 + k * 1.3) * 1.2
+            g.d.line((x, 19, x + sway * 0.5, 22), fill=1)
+            spr = prop("lit" if lit[k] else "dark")
+            pix.blit(g, spr, x - 3 + round(sway), 22)
+            if lit[k] and int(t * 3 + k) % 5 == 0:
+                g.px(x + round(sway) - 4, 26), g.px(x + round(sway) + 4, 25)
+
+    # ------------------------------------------------------------ 小鬼
+
+    def ghost_state(self, u: float):
+        """一轮内第 u 秒：(第几只, 这只的 k 秒) 或 None"""
+        if u < LEAD:
+            return None
+        j = int((u - LEAD) // GAP)
+        if j >= NG:
+            return None
+        return j, (u - LEAD) - j * GAP
+
+    def ghost_pos(self, j: int, k: float):
+        q = ease_out(span(k, 0, 9.0))
+        x = lerp(-12, GHOST_END[0], q)
+        y = GHOST_END[1] + math.sin(k * 2.2 + j) * 2.5 - (1 - q) * 6 * math.sin(j)
+        return x, y
+
+    def draw_ghost(self, g: Gfx, x: float, y: float, t: float, hit: bool = False, shiver: bool = False):
+        spr = pix.anim(GHOST, t, 4)
+        if shiver:
+            x += (1 if int(t * 30) % 2 else -1)
+        if hit:  # 被打中：压扁一下，四周迸光
+            spr = pix.stretch(spr, 1.4, 0.7)
+            for a in range(8):
+                ca, sa = math.cos(a * math.pi / 4), math.sin(a * math.pi / 4)
+                g.d.line((x + ca * 9, y + sa * 7, x + ca * 12, y + sa * 9), fill=1)
+        pix.blit(g, spr, x - spr.w / 2, y - spr.h / 2)
+
+    def dao_guard(self, g: Gfx, t: float, k: float | None):
+        """守门的小道士：k = 这只小鬼的时间（None = 平静）"""
+        if k is not None:
+            if 6.0 < k < 9.0:
+                return daoshi(g, GUARD, FLOOR, "idle", t, flip=True, face="wow")
+            if 9.0 <= k < 11.6:
+                return daoshi(g, GUARD, FLOOR, "point", t, flip=True)
+            if 11.6 <= k < 13.8:
+                return daoshi(g, GUARD, FLOOR, "bow" if k > 12.3 else "gongshou", t, flip=True, face="happy")
+            if 22.0 < k < 24.0:  # 打哈欠
+                return act(g, GUARD, FLOOR, t, ang=-1.5, L=13, flip=True, face="wow")
+            if 30.0 < k < 37.0:  # 来回巡一趟
+                q = k - 30.0
+                if q < 3.0:
+                    x = lerp(GUARD, 30, ease_in_out(q / 3.0))
+                    return daoshi(g, x, FLOOR, "walk", t, flip=True)
+                if q < 3.4:
+                    return daoshi(g, 30, FLOOR, "idle", t)
+                if q < 6.4:
+                    x = lerp(30, GUARD, ease_in_out((q - 3.4) / 3.0))
+                    return daoshi(g, x, FLOOR, "walk", t)
+                return daoshi(g, GUARD, FLOOR, "idle", t, flip=True)
+        return daoshi(g, GUARD, FLOOR, "idle", t, flip=True)
+
+    def bat(self, g: Gfx, t: float, k: float):
+        if 18.0 < k < 21.0:
+            q = span(k, 18.0, 21.0)
+            x, y = lerp(-8, 70, q), 10 + math.sin(q * 9) * 3
+            pix.blit(g, pix.anim(BAT, t, 8), x, y)
+
+    def ghost_event(self, g: Gfx, t: float, j: int, k: float, dt: float):
+        """小鬼：飘近 → 符光弹 → 打中发抖 → 散"""
+        if k < 11.4:
+            x, y = self.ghost_pos(j, k)
+            self.draw_ghost(g, x, y, t, hit=10.6 <= k < 10.8, shiver=10.6 <= k < 11.4)
+        if 10.0 <= k < 10.6:  # 光弹
+            q = span(k, 10.0, 10.6)
+            gx, gy = self.ghost_pos(j, 10.6)
+            x = lerp(FU_C[0], gx, q)
+            y = lerp(FU_C[1], gy, q) - math.sin(q * math.pi) * 22
+            g.d.ellipse((x - 2, y - 2, x + 2, y + 2), fill=1)
+            g.px(x, y, 0)
+            for m in range(1, 5):
+                qq = max(q - m * 0.05, 0)
+                g.px(lerp(FU_C[0], gx, qq), lerp(FU_C[1], gy, qq) - math.sin(qq * math.pi) * 22)
+        if 10.6 <= k < 10.6 + dt:
+            pix.shake(g, t, 1.0)
+        if 11.4 <= k < 11.4 + dt:
+            x, y = self.ghost_pos(j, 11.4)
+            self.sparks.burst(x, y, 18, 30, up=6, life=0.8, gravity=20)
+            for m in range(4):
+                self.puffs.emit(x + (m - 1.5) * 3, y, vy=-5, life=0.9, rmax=2.0, spread=2)
+
+    def mx(self, g: Gfx, t: float, gk=None, glow: float = 0.0):
+        """点阵：门上的符（竖条带格）；小鬼靠近时左边一个闪点；符光扩散时光环"""
+        g.mx[1:7, 3:5] = True
+        g.mx[2, 3] = g.mx[4, 4] = g.mx[5, 3] = False
+        if gk is not None:
+            j, k = gk
+            if k < 11.4:
+                x = int(lerp(0, 1.9, span(k, 0, 9)))
+                if int(t * 4) % 2 or k > 9:
+                    g.mx_set(x, 3 + int(math.sin(k * 2.2) * 1.4))
+            if 10.0 <= k < 11.4:
+                mx_ring(g, (k - 10.0) * 4)
+                g.mx_level = 4
         if glow > 0:
-            rays(g, cx, (y0 + y1) / 2 + y_off, 9, 9 + glow * 8, 10, phase=glow * 0.5, sy=1.2)
+            mx_ring(g, (t * 4) % 5)
 
-    def lantern(self, g: Gfx, t: float, lit: float = 1.0):
-        x, y = LANTERN
-        sw = math.sin(t * 1.3 + self.s) * 1.2
-        g.d.line((x, 30, x + sw * 0.3, y - 3), fill=1)
-        cx = x + sw
-        g.d.ellipse((cx - 4, y - 3, cx + 4, y + 6), fill=0, outline=1)
-        g.d.line((cx - 3, y - 3, cx + 3, y - 3), fill=1)
-        g.d.line((cx - 3, y + 6, cx + 3, y + 6), fill=1)
-        g.d.line((cx, y + 6, cx + sw * 0.5, y + 10), fill=1)
-        if lit > 0.1:
-            on = noise(t * 4, self.s) > 0.25
-            g.d.ellipse((cx - 2, y, cx + 2, y + 3 + on), fill=1)
-            if lit > 0.6 and on:  # 灯笼的光晕
-                for i in range(6):
-                    a = i / 6 * 2 * math.pi + 0.3
-                    g.px(cx + math.cos(a) * 8, y + 2 + math.sin(a) * 7)
-
-    def moon(self, g: Gfx, p: float):
-        x = lerp(26, 104, p)
-        y = 14 - math.sin(math.pi * p) * 8
-        g.d.ellipse((x - 4, y - 4, x + 4, y + 4), fill=1)
-        g.d.ellipse((x - 1, y - 5, x + 6, y + 3), fill=0)  # 弯月
-
-    def ghost_at(self, u: float):
-        """第几只小鬼、它在哪：返回 (x, y, 状态 0飘近 1被照散, k) 或 None"""
-        if u < 8:
-            return None
-        j = int((u - 8) // GHOST_P)
-        k = (u - 8) - j * GHOST_P
-        dur = 9.0
-        if k > dur:
-            return None
-        left = rand(j, self.s) < 0.5
-        y0 = 30 + rand(j + 9, self.s) * 14
-        if k < 6.0:  # 飘近
-            p = k / 6.0
-            x = lerp(-10, 36, ease_in_out(p)) if left else lerp(138, 92, ease_in_out(p))
-            y = y0 + math.sin(k * 2.2) * 3
-            return x, y, 0, k, left, j
-        p = (k - 6.0) / 3.0
-        x = 36 if left else 92
-        return x - (1 if left else -1) * ease_out(p) * 20, y0 + math.sin(6 * 2.2) * 3, 1, k, left, j
-
-    def draw_ghost(self, g: Gfx, gh, t: float):
-        x, y, st, k, left, j = gh
-        spr = GHOST[int(t * 4) % 2]
-        if not left:
-            spr = spr.flip()
-        if st == 0:
-            g.blit(spr, x - 5, y - 4)
-            return
-        p = (k - 6.0) / 3.0
-        if p < 0.25:  # 被照到：抖
-            g.blit(spr, x - 5 + math.sin(k * 60) * 1.5, y - 4)
-        else:  # 散成点
-            f = (p - 0.25) / 0.75
-            for i in range(12):
-                a = rand(i, j) * 2 * math.pi
-                r = f * (6 + rand(i + 5, j) * 10)
-                if rand(i + 20, j) > f * 0.8:
-                    g.px(x + math.cos(a) * r, y + math.sin(a) * r * 0.7)
-
-    def fu_glow(self, u: float) -> float:
-        gh = self.ghost_at(u)
-        if gh and gh[2] == 1:
-            p = (gh[3] - 6.0) / 3.0
-            return 1 - span(p, 0.2, 1.0)
-        return 0.0
-
-    def zap(self, g: Gfx, u: float):
-        """符光射向小鬼"""
-        gh = self.ghost_at(u)
-        if gh and gh[2] == 1:
-            p = (gh[3] - 6.0) / 3.0
-            if p < 0.35:
-                x, y = gh[0], gh[1]
-                cx, cy = FUC
-                for d in (-2, 0, 2):
-                    g.d.line((cx + (x - cx) * 0.25, cy + d * 0.5, x + (2 if x < cx else -2), y + d), fill=1)
-
-    def texts(self, g: Gfx, e: float, right: str | None = None, a: float = 1.0):
+    def counter(self, g: Gfx, e: float, label: str | None = None, pop: float = 1.0, size: int = 8):
         n = int(e // self.CYCLE) + 1
-        left = "镇宅"
-        g.vtext(3, 3, left[:int(round(a * 2))])
-        r = right if right is not None else f"第{cn_num(n)}夜"
-        g.vtext(114, 4 if len(r) < 4 else 2, r[:int(round(a * len(r)))])
-
-    def mx(self, g: Gfx, u: float, t: float, glow: float = 0.0):
-        g.mx[1:7, 3] = g.mx[1:7, 4] = True
-        g.mx[1, 2:6] = g.mx[6, 2:6] = True
-        g.mx[3, 3] = g.mx[3, 4] = False
-        gh = self.ghost_at(u) if u >= 0 else None
-        if gh and gh[2] == 0:
-            d = int(gh[3] / 6.0 * 3)
-            x = d if gh[4] else 7 - d
-            if blink(t, 0.4):
-                g.mx_set(x, 3 + int(t * 2) % 2)
-        if glow > 0.05:
-            r = (1 - glow) * 5 + 1
-            for y in range(8):
-                for x in range(8):
-                    if abs(math.hypot(x - 3.5, y - 3.5) - r) < 0.6:
-                        g.mx[y, x] = True
-            g.mx_level = 1 + int(glow * 4)
-
-    def night(self, g: Gfx, t: float, u: float, lit: float = 1.0):
-        stars(g, t, self.s, n=16, box=(0, 0, 128, 26), twinkle=0.3)
-        self.moon(g, clamp(u / self.CYCLE))
-        self.house(g)
-        glow = self.fu_glow(u)
-        self.fu(g, glow)
-        self.lantern(g, t, lit)
-        gh = self.ghost_at(u)
-        if gh:
-            self.draw_ghost(g, gh, t)
-            self.zap(g, u)
-        return glow
+        boxed(g, 4, 4, label or (f"第{cn_num(n)}夜" if n < 100 else f"{n}夜"), size=size, pop=pop)
 
     # ------------------------------------------------------------ 阶段
 
     def enter(self, g: Gfx, t: float):
-        stars(g, t, self.s, n=16, box=(0, 0, 128, 26), twinkle=0.3)
-        self.moon(g, 0)
-        self.house(g)
-        lit = ease_out_back(span(t, 0.3, 0.8))
-        self.lantern(g, t, lit)
-        # 一道符从天上飘下，翻转着，啪地贴在门上
-        if t < 2.6:
-            p = span(t, 0.6, 2.4)
-            y_off = lerp(-60, 0, ease_out_bounce(p)) if p < 1 else 0
-            xs = abs(math.cos(p * 5 * math.pi)) if p < 0.75 else 1
-            x_drift = math.sin(p * 7) * 10 * (1 - p)
-            if t > 0.6:
-                g.d.rectangle(FU, fill=0)
-                self._fu_shift(g, x_drift, y_off, xs)
-        else:
-            self.fu(g, ease_out(1 - span(t, 2.6, 3.6)))
-            if t < 3.0:  # 四角按实
-                for cx, cy in ((FU[0], FU[1]), (FU[2], FU[1]), (FU[0], FU[3]), (FU[2], FU[3])):
-                    g.d.rectangle((cx - 1, cy - 1, cx + 1, cy + 1), fill=1)
-        self.texts(g, 0, a=span(t, 3.0, 4.2))
-        self.mx(g, -1, t, glow=1 - span(t, 2.4, 3.6) if t > 2.4 else 0)
-
-    def _fu_shift(self, g: Gfx, dx: float, y_off: float, xs: float):
-        x0, y0, x1, y1 = FU
-        cx = (x0 + x1) / 2 + dx
-        hw = (x1 - x0) / 2 * max(0.15, xs)
-        g.d.rectangle((cx - hw, y0 + y_off, cx + hw, y1 + y_off), fill=0, outline=1)
-        if xs > 0.6:
-            g.d.line((cx, y0 + y_off + 3, cx, y1 + y_off - 3), fill=1)
+        dt = self._dt(t)
+        self.night(g, t, 0.0)
+        lit = (t > 0.5, t > 0.8)
+        stuck = t >= 3.3
+        self.house(g, t, lit, fu=1.0 if stuck else 0.0, glow=1 - span(t, 3.3, 4.2) if stuck else 0)
+        if 0.5 <= t < 0.5 + dt or 0.8 <= t < 0.8 + dt:
+            x = LANTERNS[0] if t < 0.7 else LANTERNS[1]
+            self.sparks.burst(x, 27, 5, 12, life=0.4)
+        if t < 2.4:  # 捧符走到门前
+            x = lerp(-12, 86, ease_out(span(t, 0, 2.4)))
+            h = act(g, x, FLOOR, t, ang=-0.3, L=10, legs="walk")["hand"]
+            pix.blit(g, fu_spr(5, 11, 2), h[0] - 2, h[1] - 10)
+            fist(g, *h)
+        elif t < 3.3:  # 一跳，拍上去
+            q = span(t, 2.4, 3.3)
+            y = FLOOR - math.sin(min(q / 0.8, 1) * math.pi) * 8
+            h = daoshi(g, 86, y, "raise", t, face="wow")["hand"]
+            if t < 3.1:
+                pix.blit(g, fu_spr(5, 11, 2), h[0] - 2, h[1] - 10)
+        elif t < 4.2:  # 四角按实
+            q = t - 3.3
+            daoshi(g, 86, FLOOR, "raise" if int(q * 8) % 2 == 0 else "point", t, face="happy")
+        else:  # 退回守位
+            q = span(t, 4.2, 5.6)
+            x = lerp(86, GUARD, ease_in_out(q))
+            daoshi(g, x, FLOOR, "walk" if q < 1 else "idle", t, flip=True)
+        if 3.3 <= t < 3.3 + dt:
+            pix.shake(g, t, 1.4)
+            self.sparks.burst(FU_C[0], FU_C[1], 16, 30, life=0.6, gravity=30)
+        if 3.3 <= t < 3.45:
+            pix.shake(g, t, 1.4)
+        self.sparks.step(dt)
+        self.sparks.draw(g)
+        self.counter(g, 0.0)
+        self.mx(g, t)
+        if t < 3.3:
+            g.mx[:] = False
+            g.mx_set(int(t * 3) % 8, 6)
 
     def hold(self, g: Gfx, t: float, e: float):
+        dt = self._dt(t)
         u = e % self.CYCLE
         if e >= self.CYCLE and u < RENEW:
-            self._renew(g, t, u, e)
-            return
-        glow = self.night(g, t, u)
-        self.texts(g, e)
-        self.mx(g, u, t, glow)
+            return self.renew(g, t, e, u, dt)
+        self.night(g, t, u)
+        gk = self.ghost_state(u)
+        glow = span(gk[1], 9.0, 9.6) * (1 - span(gk[1], 10.6, 11.4)) if gk else 0.0
+        self.house(g, t, glow=glow)
+        if gk:
+            self.bat(g, t, gk[1])
+            self.ghost_event(g, t, gk[0], gk[1], dt)
+        self.dao_guard(g, t, gk[1] if gk else None)
+        self.puffs.step(dt)
+        self.puffs.draw(g)
+        self.sparks.step(dt)
+        self.sparks.draw(g)
+        self.counter(g, e)
+        self.mx(g, t, gk)
 
-    def _renew(self, g: Gfx, t: float, u: float, e: float):
-        """一夜过去：日出、天亮，转眼又入夜"""
-        day = math.sin(span(u, 0, RENEW) * math.pi)
-        sun_y = lerp(40, 8, day)
-        if day > 0.1:
-            g.d.ellipse((100 - 6, sun_y - 6, 100 + 6, sun_y + 6), fill=1)
-            rays(g, 100, sun_y, 9, 9 + day * 6, 12, phase=u * 0.3)
-        if day < 0.6:
-            stars(g, t, self.s, n=int(16 * (1 - day / 0.6)), box=(0, 0, 128, 26), twinkle=0.3)
-        if u > RENEW * 0.6:
-            self.moon(g, 0)
-        self.house(g)
-        self.fu(g)
-        self.lantern(g, t, 1 - day)
-        if 1.2 < u < 2.2:  # 鸡鸣
-            g.text(40, 4, "鸡鸣", size=8)
-        self.texts(g, e - (u if u < RENEW / 2 else 0))
-        self.mx(g, -1, t)
+    def renew(self, g: Gfx, t: float, e: float, u: float, dt: float):
+        """续：日出鸡鸣 → 伸懒腰 → 日落、灯笼复明"""
+        day = span(u, 0.0, 1.2) * (1 - span(u, 4.4, 5.4))
+        if day > 0:
+            self.night(g, t, 0.0, day=day)
+        else:
+            self.night(g, t, 0.0 if u > 5 else self.CYCLE - 1)
+        lit = (u > 5.6, u > 5.8)
+        self.house(g, t, lit)
+        if 5.6 <= u < 5.6 + dt or 5.8 <= u < 5.8 + dt:
+            self.sparks.burst(LANTERNS[0] if u < 5.7 else LANTERNS[1], 27, 5, 12, life=0.4)
+        if 1.0 < u < 4.4:  # 屋脊上的公鸡
+            crow = 1.4 < u < 2.6
+            pix.blit(g, pix.anim(ROOSTER, t, 6) if crow else ROOSTER[0], 6, 31, flip=True)
+            if crow and int(t * 6) % 2 == 0:  # 打鸣的声线
+                for j in range(3):
+                    g.d.line((19 + j * 3, 31 - j, 20 + j * 3, 31 - j), fill=1)
+        if 2.6 < u < 4.2:
+            act(g, GUARD, FLOOR, t, ang=-1.6, L=14, flip=True, face="wow" if u < 3.4 else "happy")
+        else:
+            daoshi(g, GUARD, FLOOR, "idle", t, flip=True, face="sleep" if 1.0 < u < 2.6 else "normal")
+        self.sparks.step(dt)
+        self.sparks.draw(g)
+        if 1.2 < u < 4.4:
+            self.counter(g, e, "鸡鸣")
+        else:
+            self.counter(g, e if u > 4.4 else e - u - 1)
+        self.mx(g, t)
+        if day > 0.3:
+            g.mx[:] = False
+            g.mx[5:8, 1:7] = True
+            g.mx[4, 2:6] = True
+            g.mx[2, 1] = g.mx[2, 6] = g.mx[1, 3] = g.mx[1, 4] = int(t * 4) % 2 == 0
 
     def interrupt(self, g: Gfx, t: float, e: float):
-        """吹灭灯笼，宅门静静守着"""
+        dt = self._dt(t)
         u = e % self.CYCLE
-        if e >= self.CYCLE and u < RENEW:
-            u = RENEW
-        lit = 1 - ease_in(span(t, 0.2, 0.8))
-        stars(g, t, self.s, n=16, box=(0, 0, 128, 26), twinkle=0.3)
-        self.moon(g, clamp(u / self.CYCLE))
-        self.house(g)
-        self.fu(g)
-        self.lantern(g, t, lit)
-        gh = self.ghost_at(u)
-        if gh and t < 0.8:  # 小鬼趁机溜走
-            x, y, st, k, left, j = gh
-            gx = x + (-1 if left else 1) * ease_in(span(t, 0, 0.8)) * 40
-            self.draw_ghost(g, (gx, y, 0, k, left, j), t)
-        self.texts(g, e, right="暂歇")
-        self.mx(g, -1, t)
+        self.night(g, t, u)
+        gk = self.ghost_state(u)
+        lit = (t < 0.5, t < 0.8)
+        self.house(g, t, lit)
+        for k, x in enumerate(LANTERNS):
+            if abs(t - (0.5, 0.8)[k]) < dt:
+                self.puffs.emit(x, 25, vy=-5, life=0.9, rmax=1.6, spread=0)
+        if gk and gk[1] < 11.4:  # 小鬼趁机溜走
+            x, y = self.ghost_pos(gk[0], gk[1])
+            self.draw_ghost(g, x - ease_in(span(t, 0.2, 1.4)) * 50, y, t)
+        daoshi(g, GUARD, FLOOR, "idle" if t < 0.6 else "sleep", t, flip=True)
+        self.puffs.step(dt)
+        self.puffs.draw(g)
+        self.counter(g, e, "暂歇")
+        self.mx(g, t)
 
     def resume(self, g: Gfx, t: float, e: float):
+        dt = self._dt(t)
         u = e % self.CYCLE
-        if e >= self.CYCLE and u < RENEW:
-            u = RENEW
-        lit = ease_out_back(span(t, 0.4, 1.0))
-        self.night(g, t, u, lit)
-        if t < 0.6:  # 符先亮一下
-            self.fu(g, 1 - span(t, 0, 0.6))
-        self.texts(g, e)
-        self.mx(g, u, t, 1 - span(t, 0, 0.6))
+        self.night(g, t, u)
+        gk = self.ghost_state(u)
+        glow = span(t, 0.0, 0.3) * (1 - span(t, 0.7, 1.1))
+        lit = (t > 0.6, t > 0.8)
+        self.house(g, t, lit, glow=glow)
+        if 0.6 <= t < 0.6 + dt or 0.8 <= t < 0.8 + dt:
+            self.sparks.burst(LANTERNS[0] if t < 0.7 else LANTERNS[1], 27, 5, 12, life=0.4)
+        if 0.2 <= t < 0.2 + dt:
+            pix.flash(g)
+        if gk and gk[1] < 11.4:
+            x, y = self.ghost_pos(gk[0], gk[1])
+            self.draw_ghost(g, x - (1 - ease_out(span(t, 0.8, 1.8))) * 50, y, t)
+        if t < 1.0:
+            daoshi(g, GUARD, FLOOR, "sleep" if t < 0.4 else "sit", t, flip=True, face="wow" if t > 0.4 else "sleep")
+        else:
+            self.dao_guard(g, t, gk[1] if gk else None) if t > 1.4 else daoshi(g, GUARD, FLOOR, "idle", t, flip=True)
+        self.sparks.step(dt)
+        self.sparks.draw(g)
+        self.counter(g, e)
+        self.mx(g, t, None, glow)
 
     def complete(self, g: Gfx, t: float, e: float):
-        """符放大光，天亮，“百无禁忌”"""
+        dt = self._dt(t)
         u = e % self.CYCLE
-        day = ease_out(span(t, 1.2, 3.0))
-        if day < 0.8:
-            stars(g, t, self.s, n=int(16 * (1 - day)), box=(0, 0, 128, 26), twinkle=0.3)
-        sun_y = lerp(34, 9, day)
-        if t > 1.2:
-            g.d.ellipse((100 - 6, sun_y - 6, 100 + 6, sun_y + 6), fill=1)
-            rays(g, 100, sun_y, 9, 13, 12, phase=t * 0.3)
-        self.house(g)
-        glow = ease_out(span(t, 0, 0.8))
-        self.fu(g, glow * (1 + 0.3 * math.sin(t * 8)))
-        for j in range(2):  # 符光一圈圈扩出去
-            r = ((t * 26 + j * 22) % 44) + 10
-            if t < 3.0:
-                for i in range(0, 48, 2):
-                    a = i / 48 * 2 * math.pi
-                    g.px(FUC[0] + math.cos(a) * r, FUC[1] + math.sin(a) * r * 0.8)
-        self.lantern(g, t, 1 - day)
-        gh = self.ghost_at(u)
-        if gh and t < 1.2:
-            x, y, st, k, left, j = gh
-            self.draw_ghost(g, (x, y, 1, 6.0 + 3 * span(t, 0, 1.2), left, j), t)
-        if t > 0.15 and t < 0.3:
-            g.invert((50, 36, 79, 60))
-        if t > 2.2:
-            g.d.rectangle((18, 1, 74, 14), fill=0)
-            typewriter(g, 46, 1, "百无禁忌", t - 2.2, cps=4, align="center")
-        g.vtext(3, 3, "镇宅")
-        g.vtext(114, 4, "天亮" if t > 2.0 else f"第{cn_num(int(e // self.CYCLE) + 1)}夜")
-        self.mx(g, -1, t, glow=1 - span(t, 0.2, 2.0))
-        if t > 2.2:
-            g.mx_level = 2
+        gk = self.ghost_state(u)
+        day = span(t, 2.2, 4.0)
+        self.night(g, t, u, day=day)
+        glow = span(t, 0.0, 0.6)
+        self.house(g, t, glow=glow if t < 3.0 else 1 - span(t, 3.0, 4.0))
+        if 0.8 <= t < 0.8 + dt:
+            pix.flash(g)
+            self.sparks.burst(FU_C[0], FU_C[1], 24, 40, life=1.0, gravity=20)
+            if gk and gk[1] < 11.4:
+                x, y = self.ghost_pos(gk[0], gk[1])
+                self.sparks.burst(x, y, 18, 30, up=6, life=0.8, gravity=20)
+        if 0.8 < t < 1.1:
+            pix.shake(g, t, 1.5)
+        if gk and gk[1] < 11.4 and t < 0.8:
+            x, y = self.ghost_pos(gk[0], gk[1])
+            self.draw_ghost(g, x, y, t, shiver=True, hit=t > 0.6)
+        for r in range(3):  # 光圈
+            rr = (t - 0.8) * 30 - r * 12
+            if 0 < rr < 60:
+                ring(g, FU_C[0], FU_C[1], rr, step=2, sy=0.8)
+        if t < 0.8:
+            daoshi(g, GUARD, FLOOR, "point", t, flip=True)
+        else:
+            daoshi(g, GUARD, FLOOR, "bow" if 2.4 < t < 3.8 else "gongshou", t, face="happy")
+        self.sparks.step(dt)
+        self.sparks.draw(g)
+        if t > 2.6:
+            self.counter(g, e, "百无禁忌", pop=ease_out_back(span(t, 2.6, 3.0)), size=12)
+        else:
+            self.counter(g, e)
+        self.mx(g, t, None, glow=1.0)
+        if t > 0.8:
+            g.mx_level = 1 + int(6 * (1 - span(t, 0.8, 2.2)))

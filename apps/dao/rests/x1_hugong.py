@@ -1,272 +1,338 @@
-"""壶中天：散市了，卖药的老翁一跳钻进挂在肆头的葫芦里睡觉。葫芦随鼾声一鼓一鼓、葫芦口冒 Z，
-壶身开一扇小圆窗，里面另有日月星辰；偶尔打个嗝蹦一下，楼上的费长房探出头来偷看。
+"""壶中天：散了市，小道士学壶公纵身跳进肆头挂着的大葫芦，在壶里睡大觉，葫芦肚上的圆窗里别有天地。
 
 依据：《后汉书·方术列传·费长房》：“市中有老翁卖药，悬一壶于肆头，及市罢，辄跳入壶中。市人莫之见，
-唯长房于楼上睹见之。”后长房随翁入壶，“唯见玉堂严丽，旨酒甘肴盈衍其中”。成语“悬壶济世”“壶中日月”出此。
+唯长房于楼上睹见之。”长房随翁入壶，“唯见玉堂严丽，旨酒甘肴盈衍其中”。“悬壶济世”“壶中日月长”出此。
+
+入场：小道士从左边走到药摊前，蹲一下、纵身一跳，越缩越小钻进葫芦口；葫芦一晃，肚上的圆窗亮起来，开始打鼾。
+持续：屋檐瓦当、檐下横杆上挂着大葫芦（腰系红绳、垂穗、背光网点），药摊上药包、捣药臼，右边“药”字幌子随风摆，
+      右上是酒楼的窗。葫芦随风微摆、随鼾声一鼓一鼓，葫芦口往外冒 Z；肚上圆窗里是壶中天地：
+      小小的玉堂、日月轮转（15 秒换一次昼夜）、星。
+      小事件（每 150 秒一轮）：打个嗝，葫芦一蹦，口里冒出一个泡“嗝”（41s）；楼上费长房（也是小道士）推窗探头偷看，
+      “！”，“唯长房睹见”（67s）；“壶中日月长”（89s）。
+退场：葫芦一抖，小道士从壶口“噗”地跳出来，落到街上，画面收拢。
 """
 from __future__ import annotations
 
 import math
 
-from ..engine.anim import ease_in, ease_in_out, ease_out, ease_out_back, ease_out_bounce, lerp, noise, rand, span
-from ..engine.fx import typewriter
+import numpy as np
+from PIL import Image, ImageDraw
+
+from ..engine import pix
+from ..engine.anim import ease_in, ease_in_out, ease_out, ease_out_back, lerp, span
+from ..engine.chars import Part, _head, daoshi
 from ..engine.gfx import Gfx, Sprite
 from ..engine.scene import Rest, register
-from .x1_common import Pen, backdrop, breathe, ev, halo, iris, z_glyph
+from .x1_common import bang, cached, ev, iris, plate, twinkle, zzz
 
-PIV = (64, 7)      # 挂绳在檐下的点
-STREET = 60
-
-
-def _bg():
-    p = Pen()
-    # 屋檐（瓦）横贯上方
-    p.poly([(0, 0), (128, 0), (128, 5), (0, 5)], fill=0.5)
-    p.line([(0, 6), (128, 6)])
-    for x in range(2, 128, 6):
-        p.arc((x - 3, 3, x + 3, 9), 0, 180)
-    # 右上：楼上的窗（费长房在这里）
-    p.rect((100, 12, 124, 30), fill=0)
-    p.line([(112, 12), (112, 30)])
-    p.line([(100, 31), (124, 31)])
-    # 左：药幡
-    p.line([(10, 7), (10, 44)])
-    p.rect((11, 10, 25, 36), fill=0)
-    p.line([(11, 36), (14, 40), (18, 36), (22, 40), (25, 36)])
-    # 摊子：桌、药包
-    p.rect((30, 54, 98, 57), fill=0.5)
-    p.line([(33, 57), (33, STREET)])
-    p.line([(95, 57), (95, STREET)])
-    for x in (36, 46, 82, 90):
-        p.poly([(x, 54), (x + 3, 49), (x + 6, 54)], fill=0.6)
-        p.px(x + 3, 48)
-    p.line([(0, STREET), (128, STREET)])
-    for i in range(14):
-        p.px(int(rand(i, 5) * 128), STREET + 2 + int(rand(i, 6) * 2))
-    return p.image()
+FLOOR = 60
+BEAM_Y = 13
+HANG_X = 60         # 葫芦挂点
+GOURD_TOP = 18      # 葫芦口顶（不摆时）
+EV = 150.0
+DAYN = 15.0
 
 
-def _old_man(f: int) -> Sprite:
-    """壶公：白须老翁，拄杖（f = 走路的帧）"""
-    p = Pen(12, 16)
-    p.ellipse((3, 0, 8, 5), fill=0)
-    p.poly([(4, 4), (7, 4), (6, 8)], fill=1)               # 须
-    p.poly([(3, 5), (8, 5), (9, 13), (2, 13)], fill=0.4)   # 袍
-    p.line([(10, 3), (10, 15)])                             # 杖
-    p.line([(8, 7), (10, 8)])
-    if f:
-        p.line([(4, 13), (3, 15)])
-        p.line([(7, 13), (8, 15)])
-    else:
-        p.line([(5, 13), (5, 15)])
-        p.line([(6, 13), (7, 15)])
-    return halo(p.sprite())
-
-
-PEEK = halo(Sprite("""
-  ..####..
-  .######.
-  ########
-  #......#
-  #.#..#.#
-  #......#
-  .#....#.
-  ..####..
-"""))
-
-def _gourd(s: int) -> Sprite:
-    """葫芦（s = 鼓起几像素）：抖动灰度的壶身、腰绳、高光"""
-    p = Pen(34, 42)
-    c = 16
-    R, r = 12 + s, 6 + s * 0.5
-    p.ellipse((c - R, 25 - R, c + R, 25 + R), fill=0.3)
-    p.ellipse((c - r, 9 - r, c + r, 9 + r), fill=0.3)
-    p.rect((c - 3, 14, c + 3, 17), fill=0.3, outline=None)
-    p.line([(c - 4, 15), (c + 4, 15)], 1, 2)                # 腰绳
-    p.line([(c + 3, 16), (c + 6, 23)])
-    p.line([(c + 4, 16), (c + 2, 23)])
-    p.arc((c - r + 2, 9 - r + 2, c + r - 2, 9 + r - 2), 195, 250)          # 高光
-    p.arc((c - R + 3, 25 - R + 3, c + R - 3, 25 + R - 3), 190, 240)
-    p.arc((c - R + 4, 25 - R + 4, c + R - 4, 25 + R - 4), 195, 230)
+def _gourd():
+    """大葫芦 34×40：上小下大两个肚，腰上系红绳打结、垂两缕穗；葫芦口一圈；右侧背光网点；
+    下肚正中一扇圆窗（暗，外一圈亮框）"""
+    p = Part(34, 40)
+    p.shape("rectangle", (15, 0, 19, 3), fill=1)                  # 口
+    p.d.line((15, 1, 19, 1), fill=0)
+    p.shape("ellipse", (9, 2, 25, 18), fill=1)                    # 上肚
+    p.shape("ellipse", (0, 14, 33, 39), fill=1)                   # 下肚
+    p.shape("rectangle", (12, 15, 22, 18), fill=1)
+    p.dither([(20, 4), (25, 10), (22, 16), (19, 10)], 0.5, 0)
+    p.dither([(25, 17), (33, 26), (31, 35), (24, 38), (28, 27)], 0.5, 0)
+    p.d.line((11, 16, 23, 16), fill=0)                            # 腰绳
+    p.d.line((11, 17, 23, 17), fill=0)
+    p.px(17, 16, 1)
+    p.shape("line", (16, 18, 13, 23), fill=0), p.shape("line", (18, 18, 20, 23), fill=0)   # 穗
+    p.px(12, 24, 0), p.px(21, 24, 0)
+    p.d.line((12, 6, 12, 10), fill=0)                             # 上肚弧线
+    p.d.arc((3, 18, 13, 36), 150, 210, fill=0)                    # 下肚弧线
+    cx, cy, r = 17, 28, 9
+    p.d.ellipse((cx - r, cy - r, cx + r, cy + r), fill=0)         # 圆窗
+    p.d.ellipse((cx - r + 1, cy - r + 1, cx + r - 1, cy + r - 1), outline=1)
     return p.sprite()
 
 
-_A = {}
+WIN = (17, 28, 7)   # 圆窗在葫芦里的中心与内半径
+
+PALACE = pix.sprite("""
+     #
+ #########
+#..#####..#
+  #.....#
+  #.#.#.#
+  #.#.#.#
+ #########
+""")
+"""壶里的玉堂：攒尖顶起翘、三开间、台基"""
 
 
-def _assets():
-    if not _A:
-        _A.update(bg=_bg(), man=[_old_man(0), _old_man(1)], gourd=[_gourd(0), _gourd(1), _gourd(2)])
+def _eave():
+    """屋檐 74×13：筒瓦一垄垄（亮），瓦当一排圆点，檐口一道暗边，檐下一根横杆伸出来挂葫芦"""
+    p = Part(74, 13)
+    p.shape("polygon", [(0, 0), (70, 0), (73, 7), (0, 7)], fill=0)
+    for x in range(2, 70, 4):
+        p.shape("rectangle", (x, 0, x + 1, 6), fill=1)
+    p.shape("rectangle", (0, 7, 73, 8), fill=1)
+    for x in range(3, 72, 4):                                     # 瓦当
+        p.d.ellipse((x - 1, 8, x + 1, 10), fill=1)
+        p.px(x, 9, 0)
+    p.px(73, 6, 1), p.px(73, 5, 1)
+    return p.sprite()
+
+
+def _stall():
+    """药摊 44×16：案板（亮面 + 暗前脸、两条腿），上面三个药包（纸包十字绳）、一只捣药臼带杵"""
+    p = Part(44, 16)
+    p.shape("rectangle", (0, 6, 43, 8), fill=1)
+    p.d.line((1, 7, 42, 7), fill=0)
+    p.shape("rectangle", (2, 9, 41, 11), fill=0)
+    p.d.rectangle((2, 9, 41, 11), outline=1)
+    p.shape("rectangle", (3, 12, 5, 15), fill=1), p.shape("rectangle", (38, 12, 40, 15), fill=1)
+    for x in (4, 12):                                             # 药包
+        p.shape("polygon", [(x, 5), (x + 2, 1), (x + 5, 1), (x + 7, 5)], fill=1)
+        p.d.line((x + 3, 1, x + 3, 5), fill=0), p.d.line((x + 1, 3, x + 6, 3), fill=0)
+        p.px(x + 3, 0, 1)
+    p.shape("polygon", [(21, 5), (22, 3), (26, 3), (27, 5)], fill=1)
+    p.d.line((24, 3, 24, 5), fill=0)
+    p.shape("polygon", [(32, 0), (40, 0), (39, 5), (33, 5)], fill=1)   # 臼
+    p.d.line((33, 2, 39, 2), fill=0)
+    p.shape("line", (35, 0, 38, -4), fill=1)
+    p.shape("line", (37, -1, 41, -6), fill=1, width=2)              # 杵
+    return p.sprite()
+
+
+def _banner():
+    """幌子 16×26：竿头、横挑、布幌（亮框暗心，留空写“药”），下摆三条飘带"""
+    p = Part(16, 26)
+    p.shape("rectangle", (0, 0, 15, 1), fill=1)
+    p.shape("rectangle", (1, 2, 14, 19), fill=0)
+    p.d.rectangle((1, 2, 14, 19), outline=1)
+    for x in (2, 7, 12):
+        p.shape("polygon", [(x, 20), (x + 2, 20), (x + 2, 24), (x + 1, 25), (x, 24)], fill=1)
+    return p.sprite()
+
+
+def _tower():
+    """酒楼一角 34×24：楼檐（起翘）、木板墙、一扇支摘窗（可推开）"""
+    p = Part(34, 24)
+    p.shape("polygon", [(0, 6), (34, 6), (34, 3), (4, 3), (0, 1)], fill=1)
+    p.d.line((2, 5, 33, 5), fill=0)
+    p.shape("rectangle", (2, 7, 33, 23), fill=0)
+    for x in range(5, 34, 5):
+        p.d.line((x, 8, x, 23), fill=1)
+    p.d.rectangle((9, 10, 25, 21), fill=0, outline=1)             # 窗框
+    return p.sprite()
+
+
+def _shutter(open_k: float) -> Sprite:
+    """支摘窗的窗扇 17×12：格子；open_k 推开的程度（0 关 → 1 支起来）"""
+    h = max(2, int(round(12 * (1 - open_k * 0.75))))
+    p = Part(17, h)
+    p.shape("rectangle", (0, 0, 16, h - 1), fill=1)
+    p.d.rectangle((1, 1, 15, h - 2), fill=0)
+    for x in (5, 11):
+        p.d.line((x, 1, x, h - 2), fill=1)
+    if h > 5:
+        p.d.line((1, h // 2, 15, h // 2), fill=1)
+    return p.sprite()
+
+
+def _sprite_of(draw, w: int, h: int) -> Sprite:
+    """把一段画法（在 w×h 的临时画布上）拍成精灵：外面透明，里面（含暗部）不透明"""
+    g = Gfx()
+    g.clear()
+    draw(g)
+    on = g.array()[:h, :w]
+    im = Image.fromarray(~on)
+    ImageDraw.floodfill(im, (0, 0), 0)
+    inside = np.array(im, bool) | on
+    return Sprite(on=on.copy(), mask=inside)
+
+
+def man_sprite(pose: str, face: str = "normal") -> Sprite:
+    def draw(g):
+        daoshi(g, 12, 37, pose, 0.0, face=face, bob=False)
+    return cached(("man", pose, face), lambda: _sprite_of(draw, 26, 38))
 
 
 @register
-class HuGong(Rest):
+class HuGongRest(Rest):
     id = "x1.hugong"
     name = "壶中天"
-    desc = "散市后卖药老翁跳进肆头的葫芦里睡觉：葫芦随鼾一鼓一鼓，圆窗里另有日月；打嗝蹦跳、楼上长房偷看"
+    desc = "散了市，小道士纵身跳进肆头挂的大葫芦里睡觉，葫芦随鼾声一鼓一鼓，肚上圆窗里日月轮转；楼上有人偷看"
     T = {"enter": 3.4, "exit": 1.3}
 
-    def setup(self):
-        _assets()
-        self._ht = 0.0
+    # ------------------------------------------------------------ 景
 
-    # ------------------------------------------------------------ 葫芦
+    def street(self, g: Gfx, t: float, peek=None):
+        g.d.line((0, FLOOR, 127, FLOOR), fill=1)
+        for x in range(0, 140, 10):                              # 石板路
+            g.d.line((x, FLOOR + 1, x - 3, 63), fill=1)
+        pix.blit(g, cached("tower", _tower), 94, 0)
+        k = 0.0
+        if peek is not None:
+            k = span(peek, 0, 0.6) * (1 - span(peek, 7.4, 8.0))
+        if k > 0.05:   # 费长房探头
+            hd = cached(("ph", peek is not None and 0.8 < peek < 2.4),
+                        lambda: _head(False, 0, False, "wow" if peek is not None and 0.8 < peek < 2.4 else "normal")[0])
+            pix.blit(g, hd, 108 - 0, 22 - int(k * 9), flip=True)
+            g.d.rectangle((103, 22, 119, 23), fill=1)
+        sh = cached(("sh", round(k, 1)), lambda: _shutter(round(k, 1)))
+        pix.blit(g, sh, 103, 10)
+        pix.blit(g, cached("eave", _eave), 0, 0)
+        g.d.line((0, BEAM_Y, HANG_X + 8, BEAM_Y), fill=1)          # 横杆
+        g.d.line((0, BEAM_Y + 1, HANG_X + 8, BEAM_Y + 1), fill=1)
+        g.d.line((HANG_X + 8, BEAM_Y, HANG_X + 9, BEAM_Y + 1), fill=1)
+        pix.blit(g, cached("stall", _stall), 2, FLOOR - 16)
+        sway = math.sin(t * 1.1) * 1.5                           # 幌子随风摆
+        pix.blit(g, cached("banner", _banner), 100 + sway, 30)
+        g.d.line((99, 30, 116, 30), fill=1)
+        g.d.line((116, 26, 116, FLOOR), fill=1)                  # 竿
+        self._sway = sway
 
-    def at(self, d: float, th: float) -> tuple[float, float]:
-        """挂绳下 d 像素处（随摆角 th）"""
-        return PIV[0] + math.sin(th) * d, PIV[1] + math.cos(th) * d
+    def label(self, g: Gfx, ir=None):
+        """幌子上的“药”（每帧最后画）；ir=(cx, cy, r)：圆形收拢时字不完整在圈里就不画"""
+        sway = getattr(self, "_sway", 0.0)
+        if ir is not None:
+            cx, cy, r = ir
+            if any(math.hypot(x - cx, y - cy) > r - 2 for x in (101 + sway, 115 + sway) for y in (33, 48)):
+                return
+        g.d.rectangle((102 + sway, 33, 113 + sway, 48), fill=0)
+        g.text(101 + 7.5 + sway, 35, "药", align="center")
 
-    def gourd(self, g: Gfx, t: float, th: float, swell: float = 0.0, hop: float = 0.0, window: float = 1.0,
-              cork: float = 0.0):
-        """葫芦：上小下大，腰系红绳，下肚开一扇圆窗（壶中天地）。返回 (壶口, 肚心)"""
-        dy = -hop
-        sx, sy = self.at(10, th)
-        g.d.line((PIV[0], PIV[1], sx, sy + dy), fill=1)
-        ox = math.sin(th) * 26
-        spr = _A["gourd"][min(2, max(0, int(round(swell))))]
-        gx, gy = PIV[0] + ox - 16, PIV[1] + 11 + dy
-        g.blit(spr, gx, gy)
-        cx, cy = PIV[0] + math.sin(th) * 11, PIV[1] + 10 + dy - cork * 5     # 塞子
-        g.d.rectangle((cx - 2, cy - 1, cx + 2, cy + 2), fill=1)
-        bx, by = gx + 16, gy + 25
-        if window > 0:
-            self.inner(g, t, bx, by + 1, 7 * window)
-        return (gx + 16, gy), (bx, by)
+    def gourd(self, g: Gfx, t: float, hop: float = 0.0, bump: float = 0.0, lit: float = 1.0):
+        """挂着的葫芦：随风摆（整体平移，绳子斜），随鼾声一鼓一鼓；返回 (口 x, 口 y, 窗心 x, 窗心 y)"""
+        sway = math.sin(t * 0.8) * 2.0
+        breath = (t / 3.6) % 1
+        puff = math.sin(breath * math.pi) if breath < 0.5 else 0.0
+        spr = cached("gourd", _gourd)
+        sx = 1.0 + (round(puff * 0.08 * 10) / 10 if puff > 0.3 else 0) + bump * 0.1
+        s2 = pix.stretch(spr, sx, 1.0)
+        gx = HANG_X + sway - s2.w / 2
+        gy = GOURD_TOP - hop
+        g.d.line((HANG_X, BEAM_Y + 1, HANG_X + sway, gy), fill=1)   # 红绳
+        pix.blit(g, s2, gx, gy)
+        wx, wy = gx + WIN[0] * sx, gy + WIN[1] - 3
+        self.window(g, t, wx, wy, lit)
+        return HANG_X + sway, gy, wx, wy
 
-    def inner(self, g: Gfx, t: float, cx: float, cy: float, rr: float):
-        """圆窗里的壶中天：日月轮转、小殿、星"""
-        g.d.ellipse((cx - rr, cy - rr, cx + rr, cy + rr), fill=0, outline=1)
-        if rr < 4:
+    def window(self, g: Gfx, t: float, cx: float, cy: float, lit: float):
+        """圆窗里的壶中天地：小殿（屋顶、两柱）、日月轮转、星"""
+        if lit <= 0:
             return
-        day = (t % 30) < 15
-        a = (t % 15) / 15 * math.pi
-        ox, oy = cx - math.cos(a) * (rr - 3), cy - math.sin(a) * (rr - 3) + 1
+        cx, cy = int(round(cx)), int(round(cy))
+        day = (t // DAYN) % 2 == 0
+        k = (t % DAYN) / DAYN
+        ax = cx - 5 + int(k * 10)                                  # 日月从左往右走一道弧
+        ay = cy - 2 - int(math.sin(k * math.pi) * 3)
         if day:
-            g.d.ellipse((ox - 1.5, oy - 1.5, ox + 1.5, oy + 1.5), fill=1)
+            g.d.rectangle((ax - 1, ay - 1, ax + 1, ay + 1), fill=1)
+            if int(t * 2) % 2:
+                g.px(ax, ay - 3), g.px(ax - 3, ay), g.px(ax + 3, ay)
         else:
-            g.d.ellipse((ox - 1.5, oy - 1.5, ox + 1.5, oy + 1.5), fill=1)
-            g.d.ellipse((ox - 0.5, oy - 2, ox + 2.5, oy + 1), fill=0)
-            for i in range(3):
-                if noise(t * 2 + i * 5, 3) > 0.4:
-                    g.px(cx - 4 + i * 4, cy - 4 + (i % 2) * 2)
-        # 小殿：屋顶 + 两柱
-        g.d.polygon([(cx - 5, cy + 2), (cx, cy - 1), (cx + 5, cy + 2)], fill=1)
-        g.d.line((cx - 3, cy + 2, cx - 3, cy + 5), fill=1)
-        g.d.line((cx + 3, cy + 2, cx + 3, cy + 5), fill=1)
-        g.d.line((cx - rr + 2, cy + 5, cx + rr - 2, cy + 5), fill=1)
-
-    def snore_z(self, g: Gfx, mouth, t: float, on: float = 1.0):
-        """葫芦口冒出的 Z（随呼气）"""
-        for j in range(3):
-            k = int(t // 1.6) - j
-            p = (t - k * 1.6) / 4.8
-            if not 0 <= p < 1 or rand(k, 5) > on:
-                continue
-            s = int(2 + p * 4)
-            z_glyph(g, mouth[0] + 5 + p * 24, mouth[1] + 2 - p * 9 - s + math.sin(t * 2 + k) * 1.5, s)
-
-    def mx_gourd(self, g: Gfx, swell: float, t: float):
-        big = swell > 0.5
-        g.mx_rows([0x10, 0x38, 0x38, 0x10, 0x7C if big else 0x38, 0xFE if big else 0x7C, 0xFE if big else 0x7C,
-                   0x7C if big else 0x38])
-        z = int(t / 0.8) % 3
-        g.mx_set(6 + (z > 1), 1 - min(z, 1))
+            g.px(ax, ay - 1), g.px(ax - 1, ay), g.px(ax - 1, ay + 1), g.px(ax, ay + 2)
+            for i, (dx, dy) in enumerate(((-4, -3), (4, -4), (3, -1), (-2, -5))):
+                if (t * 0.7 + i * 0.3) % 1 < 0.7:
+                    g.px(cx + dx, cy + dy)
+        pix.blit(g, PALACE, cx - 5, cy + 1, outline=False)
+        g.d.line((cx - 7, cy + 7, cx + 7, cy + 7), fill=1)
 
     # ------------------------------------------------------------ 阶段
 
-    def enter(self, g: Gfx, t: float):
-        backdrop(g, _A["bg"])
-        g.text(18, 13, "药", align="center")
-        th = 0.0
-        if t < 1.4:   # 老翁拄杖走到摊前
-            k = t / 1.4
-            x = lerp(-10, 44, k)
-            g.blit(_A["man"][int(t * 6) % 2], x, STREET - 16 + (int(t * 6) % 2) * 0)
-            self.gourd(g, t, 0.0, window=0)
-            g.mx_rows([0x10, 0x38, 0x38, 0x10, 0x38, 0x7C, 0x7C, 0x38])
-        elif t < 2.2:  # 纵身一跳，缩进葫芦口
-            k = (t - 1.4) / 0.8
-            mouth = (PIV[0], PIV[1] + 11)
-            x = lerp(44, mouth[0] - 5, k)
-            y = lerp(STREET - 16, mouth[1] - 6, k) - math.sin(k * math.pi) * 18
-            if k < 0.85:
-                sz = 1 - k * 0.6
-                spr = _A["man"][0]
-                if sz > 0.7:
-                    g.blit(spr, x, y)
-                else:
-                    g.d.ellipse((x + 3, y + 3, x + 3 + 6 * sz, y + 3 + 8 * sz), fill=1)
-            squash = 2 * math.sin(span(t, 2.0, 2.2) * math.pi)
-            self.gourd(g, t, 0.0, swell=squash, window=0)
-            g.mx_rows([0x10, 0x38, 0x38, 0x10, 0x38, 0x7C, 0x7C, 0x38])
-        else:          # 葫芦一晃，圆窗亮起，打起鼾来
-            k = t - 2.2
-            th = math.sin(k * 5) * 0.12 * (1 - span(k, 0, 1.2))
-            win = ease_out_back(span(k, 0.3, 0.9))
-            mouth, _ = self.gourd(g, t, th, swell=breathe(t) * 1.5, window=win)
-            if k > 0.8:
-                self.snore_z(g, mouth, k - 0.8, on=0.8)
-            self.mx_gourd(g, breathe(t), t)
-        if t < 0.5:
-            iris(g, 64, 32, ease_out(t / 0.5) * 150, 0.6)
-
-    def sway(self, t: float) -> float:
-        return math.sin(t * 0.55) * 0.05 + (noise(t * 0.2, self.seed) - 0.5) * 0.04
-
     def hold(self, g: Gfx, t: float):
-        self._ht = t
-        backdrop(g, _A["bg"])
-        th = self.sway(t)
-        hop, cork = 0.0, 0.0
-        hic = ev(t, 41.0, 1.6, 17.0)       # 打嗝：一蹦，塞子跳起
-        if hic:
-            u = hic[1]
-            hop = 5 * math.sin(math.pi * span(u, 0, 0.5)) if u < 0.5 else 1.5 * math.sin(math.pi * span(u, 0.5, 0.8))
-            cork = math.sin(math.pi * span(u, 0, 0.9))
-            th += math.sin(u * 9) * 0.06 * (1 - u / 1.6)
-        swell = breathe(t) * 1.6
-        mouth, belly = self.gourd(g, t, th, swell=swell, hop=hop, cork=cork)
-        if hic and hic[1] < 1.2:
-            g.text(mouth[0] + 9, mouth[1] - 9, "嗝")
-            g.mx_level = 3
+        peek = ev(t, EV, 67.0, 8.0)
+        self.street(g, t, peek)
+        hic = ev(t, EV, 41.0, 4.0)
+        hop = 0.0
+        if hic is not None and hic < 0.5:
+            hop = math.sin(hic / 0.5 * math.pi) * 4
+            if hic < 0.15:
+                pix.shake(g, t, 1.0)
+        mx, my, wx, wy = self.gourd(g, t, hop)
+        if hic is not None and 0.2 < hic < 3.0:   # 口里冒出一个泡
+            r = min(1.0, (hic - 0.2) * 3) * 4
+            bx, by = mx + 2, my - 6 - (hic - 0.2) * 3
+            g.d.ellipse((bx - r, by - r, bx + r, by + r), fill=0, outline=1)
+            if r > 3:
+                g.px(bx - 1, by - 2)
         else:
-            self.snore_z(g, mouth, t)
-        g.text(18, 13, "药", align="center")
-        peek = ev(t, 67.0, 9.0, 35.0)      # 楼上的费长房探头偷看
-        if peek:
-            self.peek(g, peek[1])
-        txt = ev(t, 89.0, 8.0, 60.0)
-        if txt and not peek:
-            g.d.rectangle((70, 36, 127, 50), fill=0)
-            typewriter(g, 126, 38, "壶中日月长", txt[1], cps=4, size=8, align="right")
-        self.mx_gourd(g, swell / 1.6, t)
+            zzz(g, mx + 3, my + 1, t, n=3, period=2.6, dx=24, dy=-3)
+        if peek is not None and 0.8 < peek < 2.4:
+            bang(g, 98, 12)
+        if hic is not None and 0.4 < hic < 3.0:
+            plate(g, 38, 22, "嗝", k=span(hic, 0.4, 0.6), align="center")
+        if peek is not None and 2.0 < peek < 8.0:
+            plate(g, 34, 18, "唯长房睹见", k=span(peek, 2.0, 2.3), align="center")
+        w = ev(t, EV, 89.0, 8.0)
+        if w is not None:
+            plate(g, 34, 18, "壶中日月长", k=span(w, 0, 0.4), align="center")
+        self.label(g)
+        self.matrix(g, t)
 
-    def peek(self, g: Gfx, u: float):
-        """窗里冒出半个脑袋，眼珠跟着葫芦转"""
-        up = ease_out(span(u, 0.3, 1.2)) * (1 - ease_in(span(u, 7.8, 8.8)))
-        if up <= 0:
-            return
-        x, y = 108, 31 - up * 9
-        g.blit(PEEK, x - 1, y - 1)
-        g.d.rectangle((99, 31, 125, 34), fill=0)    # 窗台挡住下半
-        g.d.line((100, 31, 124, 31), fill=1)
-        if up > 0.8 and 2.0 < u < 7.5:
-            typewriter(g, 126, 35, "唯长房睹见", u - 2.0, cps=4, size=8, align="right")
-            if 2.0 < u < 2.8:
-                g.text(119, 14, "!", size=8)
+    def matrix(self, g: Gfx, t: float, bump: float = 0.0):
+        breath = (t / 3.6) % 1
+        wide = breath < 0.5 and math.sin(breath * math.pi) > 0.3 or bump > 0
+        g.mx_rows([0x18, 0x18, 0x3C, 0x3C, 0x18, 0x7E if not wide else 0xFF, 0x7E if not wide else 0xFF, 0x3C])
+        k = (t / 2.6) % 1
+        g.mx_set(4 + int(k * 3), 1 - int(k * 2))
+
+    def enter(self, g: Gfx, t: float):
+        """走到摊前 → 一蹲 → 纵身一跳，越缩越小钻进葫芦口 → 葫芦一晃，圆窗亮起"""
+        self.street(g, 0.0)
+        mx, my = HANG_X, GOURD_TOP
+        x = lerp(-10, 50, ease_out(span(t, 0, 1.3)))
+        if t < 1.3:
+            daoshi(g, x, FLOOR, "walk", t)
+            self.gourd(g, 0.0, lit=0)
+        elif t < 1.7:
+            spr = man_sprite("idle")
+            s = pix.stretch(spr, 1.2, 0.8)                     # 蹲：压扁
+            self.gourd(g, 0.0, lit=0)
+            pix.blit(g, s, 50 - s.w / 2, FLOOR - s.h)
+        elif t < 2.5:
+            q = span(t, 1.7, 2.5)
+            sc = lerp(1.0, 0.15, ease_out(q))
+            spr = man_sprite("raise")
+            s = pix.stretch(spr, max(sc * 0.9, 0.1), max(sc * 1.15, 0.1))
+            px = lerp(50, mx, q)
+            py = lerp(FLOOR, my + 3, ease_in_out(q)) - math.sin(q * math.pi) * 8
+            self.gourd(g, 0.0, lit=0)
+            pix.blit(g, s, px - s.w / 2, py - s.h)
+        else:
+            q = span(t, 2.5, 3.4)
+            self.gourd(g, 0.0 + math.sin(q * 12) * (1 - q) * 3, bump=(1 - q), lit=1 if q > 0.4 else 0)
+            if q < 0.3:
+                for i in range(5):
+                    a = i * 1.25
+                    g.px(mx + math.cos(a) * (3 + q * 20), my - 2 + math.sin(a) * (2 + q * 10))
+        r = lerp(6, 150, ease_out(span(t, 0, 1.0)))
+        self.label(g, (50, 36, r))
+        self.matrix(g, t, 1 if 2.5 < t < 3.0 else 0)
+        iris(g, 50, 36, r)
 
     def exit(self, g: Gfx, t: float):
-        """醒了：塞子崩开，老翁从壶口跳出来，画面收拢"""
-        h = self._ht
-        backdrop(g, _A["bg"])
-        th = self.sway(h) + math.sin(t * 14) * 0.05 * (1 - span(t, 0, 0.6))
-        mouth, belly = self.gourd(g, h + t, th, swell=1.6 * (1 - span(t, 0, 0.3)), cork=span(t, 0, 0.3),
-                                  window=1 - span(t, 0.2, 0.5))
-        if t > 0.2:
-            k = span(t, 0.2, 0.8)
-            x = lerp(mouth[0] - 5, 80, k)
-            y = lerp(mouth[1] - 10, STREET - 16, k) - math.sin(k * math.pi) * 14
-            g.blit(_A["man"][0], x, y)
-        g.mx_rows([0x10, 0x38, 0x38, 0x10, 0x38, 0x7C, 0x7C, 0x38])
-        g.text(18, 13, "药", align="center")
-        iris(g, 70, 36, lerp(130, 0, ease_in_out(span(t, 0.45, self.T["exit"] - 0.05))), 0.8)
+        """葫芦一抖，小道士“噗”地从壶口跳出来，落到街上"""
+        h0 = self.hold_t
+        self.street(g, h0)
+        q = span(t, 0.15, 0.8)
+        mx, my, wx, wy = self.gourd(g, h0 + (math.sin(t * 40) * 0.2 if t < 0.15 else 0), bump=1 if t < 0.3 else 0)
+        if q > 0:
+            sc = lerp(0.2, 1.0, ease_out(q))
+            spr = man_sprite("raise" if q < 1 else "idle", "happy")
+            s = pix.stretch(spr, max(sc, 0.1), max(sc, 0.1))
+            px = lerp(mx, 40, q)
+            py = lerp(my + 4, FLOOR, ease_in(q)) - math.sin(q * math.pi) * 4
+            pix.blit(g, s, px - s.w / 2, py - s.h)
+        if 0.15 < t < 0.4:
+            for i in range(6):
+                a = i * 1.05
+                g.px(mx + math.cos(a) * (3 + (t - 0.15) * 30), my - 2 + math.sin(a) * (2 + (t - 0.15) * 14))
+        r = lerp(140, 0, ease_in_out(span(t, 0.8, self.T["exit"] - 0.03)))
+        self.label(g, (40, FLOOR - 18, r))
+        self.matrix(g, t, 1)
+        iris(g, 40, FLOOR - 18, r)

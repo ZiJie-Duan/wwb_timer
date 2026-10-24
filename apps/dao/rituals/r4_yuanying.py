@@ -1,290 +1,389 @@
-"""结丹出神：正面盘坐，三丹田依次点亮——炼精化气（下丹田）、炼气化神（中丹田）、炼神还虚（上丹田），
-每成一关头顶开一朵花；三花齐聚，元婴（阳神）从顶门出来坐在莲上，片刻又收回。
+"""结丹出神：小道士盘坐莲台，身后圆光一圈圈亮起，光从下丹田升到中丹田、再到上丹田；功成时元婴自顶门而出。
 
-依据：内丹“炼精化气、炼气化神、炼神还虚”三关；下丹田脐下、中丹田膻中（绛宫）、上丹田泥丸（两眉间入内）；
-“三花聚顶、五气朝元”；功成“出神”，阳神（元婴）自顶门而出（《性命圭旨》有《婴儿现形图》《出离苦海图》）。
-
-入场：圆光一圈圈亮起，人坐定，合目，下丹田点亮。
-持续：一转 10 分钟分三关（各 200 秒）：光从下丹田升到中丹田、再到眉间，所到之处越聚越亮，
-      身后圆光随之增强；每过一关头顶开一朵花。一转满：元婴从顶门升起，在莲台上坐一坐，再沉回去，花谢重来。
-中断：光一路退回下丹田、变暗，“归根”（《道德经》“归根曰静”）。
-恢复：下丹田重新亮起，光再升到刚才那一关。
-圆满：五团气从四面八方汇入身中（五气朝元），三朵花在头顶并开（三花聚顶），元婴升起放光。
+依据：内丹三关“炼精化气、炼气化神、炼神还虚”；三丹田（下丹田脐下、中丹田膻中绛宫、上丹田眉间入内泥丸）；
+“五气朝元、三花聚顶”；功成出神，阳神（元婴）自顶门而出（《性命圭旨》婴儿现形、出离苦海诸图）；《道德经》“归根曰静”。
+入场：静夜，莲台升起，小道士盘坐其上，身后圆光一圈亮起，下丹田点亮。
+持续：一转 10 分钟分三关各 200 秒：光从下丹田升到中丹田、再到上丹田，中线有点点上行的光；身后圆光由一圈增到三圈、
+      缓缓转；每过一关头顶开一朵五瓣花（闪光、火星）；右上角写当前一关。小事件：一团五行之气从远处飘来没入身中 /
+      圆光一阵脉动。续（6 秒）：三花分开，元婴坐着小莲台从顶门升起，周围闪光，片刻沉回，花谢重来，
+      “出神”，左上“第几转”加一。
+中断：光一关关退回下丹田、变暗，花淡去，“归根”。  恢复：下丹田重新亮起，光再升到刚才那一关，花重新开。
+圆满：五团气从五个方向汇入中丹田（“五气朝元”），三朵花在头顶依次开放，中间那朵托着元婴升起放光（“三花聚顶”）。
+点阵：自下而上三团光代表三丹田，当前一关闪烁；出神时变成元婴图标。
 """
 from __future__ import annotations
 
 import math
 
-from ..engine.anim import blink, clamp, ease_in, ease_in_out, ease_out, ease_out_back, lerp, pulse, rand, span
+from ..engine import pix
+from ..engine.anim import ease_in, ease_in_out, ease_out, ease_out_back, lerp, span
+from ..engine.chars import Part
 from ..engine.cn import cn_num
-from ..engine.fx import ring, typewriter, xiangyun
-from ..engine.gfx import Gfx, Sprite
+from ..engine.gfx import Gfx
 from ..engine.scene import Ritual, register
-from .r4_kit import glow_dot, seated
+from .r4_kit import P, Clock, cached, counter, dao, label, mx_art, mx_ring, orb, pop_title, ring, star
 
-CX, BASE, S = 64, 62, 0.85
-HEAD_Y = BASE - 34 * S
+FLOOR = 58
+SY = FLOOR - 5          # 坐在莲台上
+DX = 58
+STAGE = 200.0
 STAGES = ["炼精化气", "炼气化神", "炼神还虚"]
-RENEW = 6.0
-BABY = Sprite("""
-   ###
-  #####
-  #.#.#
-  #####
-   ###
- #######
-#.#####.#
-  #####
- #######
+SIT = P(legs="sit", b=(110, 30, "palm"), f=(70, 150, "palm"), face="sleep")
+SIT_HAPPY = P(legs="sit", b=(110, 30, "palm"), f=(70, 150, "palm"), face="happy")
+HALO_C = (DX, SY - 20)
+FLOWER_Y = SY - 45
+
+def _flower(open_k):
+    """五瓣花 9×9：五片圆瓣、花心一点暗、花蕊三点"""
+    p = Part(9, 9)
+    for j in range(5):
+        a = -math.pi / 2 + j * 2 * math.pi / 5
+        r = 2.4 * open_k + 0.6
+        cx, cy = 4 + math.cos(a) * r, 4 + math.sin(a) * r
+        p.shape("ellipse", (cx - 1.6, cy - 1.6, cx + 1.6, cy + 1.6), fill=1)
+    p.shape("ellipse", (3, 3, 5, 5), fill=1)
+    p.px(4, 4, 0)
+    if open_k > 0.9:
+        for j in range(5):
+            a = -math.pi / 2 + j * 2 * math.pi / 5 + math.pi / 5
+            p.px(round(4 + math.cos(a) * 2), round(4 + math.sin(a) * 2), 0)
+    return p.sprite()
+
+
+FLOWER = [_flower(1.0), _flower(0.8)]
+
+BABY = pix.frames("""
+    ##
+   ####
+  #.##.#
+  ######
+   #..#
+   ####
+ ##.##.##
+  ######
+ #.#.#.#.#
+##########
+ ########
 """)
 
 
-def flower(g: Gfx, x: float, y: float, k: float):
-    """一朵五瓣小花，k 0..1 开放程度"""
-    if k <= 0:
-        return
-    r = 1 + 2.2 * ease_out_back(k)
-    for i in range(5):
-        a = -math.pi / 2 + i * 2 * math.pi / 5
-        px, py = x + math.cos(a) * r, y + math.sin(a) * r
-        g.d.ellipse((px - 1.2, py - 1.2, px + 1.2, py + 1.2), fill=1)
-    g.d.point((x, y), fill=0)
-    g.d.line((x, y + r, x, y + r + 2), fill=1)
+def _seat():
+    """莲台 34×8：两层莲瓣、台面"""
+    p = Part(34, 9)
+    p.shape("rectangle", (4, 0, 29, 1), fill=1)
+    for i, x in enumerate(range(1, 33, 5)):            # 上层莲瓣
+        p.shape("polygon", [(x, 2), (x + 2, 5), (x + 5, 2)], fill=1)
+        p.shape("polygon", [(x, 2), (x + 5, 2), (x + 4, 6), (x + 1, 6)], fill=1)
+        p.px(x + 2, 4, 0)
+    for x in range(3, 31, 5):                          # 下层莲瓣
+        p.shape("ellipse", (x, 5, x + 5, 8), fill=1)
+        p.px(x + 2, 7, 0)
+    p.d.line((4, 1, 29, 1), fill=0)
+    return p.sprite()
 
 
-def lotus_seat(g: Gfx, x: float, y: float, k: float = 1.0):
-    w = 8 * k
-    for i in range(-2, 3):
-        px = x + i * w / 2.5
-        g.d.ellipse((px - 2.2 * k, y - 3 * k, px + 2.2 * k, y + 1), fill=1, outline=0)
-    g.d.line((x - w, y + 1, x + w, y + 1), fill=1)
+def dantian(h: dict):
+    """三丹田（屏幕坐标）：下（脐下）、中（膻中）、上（印堂）"""
+    bx, by = h["belly"]
+    return [(bx + 3, by - 1), (bx + 3, by - 9), (h["brow"][0] - 2, h["brow"][1] - 5)]
+
+
+def halo(g: Gfx, t: float, n: int, pulse: float = 0.0):
+    cx, cy = HALO_C
+    for i in range(n):
+        r = 16 + i * 5 + pulse * 2
+        m = int(r * 2.2)
+        for j in range(m):
+            if (j + i) % 2 == 0:
+                a = j / m * 2 * math.pi + t * (0.15 if i % 2 else -0.12)
+                g.px(cx + math.cos(a) * r, cy + math.sin(a) * r)
+
+
+def night(g: Gfx, t: float):
+    """夜空：星点、地面、两边香烛的微光"""
+    import random
+    r = random.Random(11)
+    for i in range(16):
+        x, y = r.randrange(0, 128), r.randrange(0, 40)
+        if abs(x - DX) > 32 and (t * (0.4 + r.random()) + r.random()) % 1 < 0.75:
+            g.px(x, y)
+    g.d.line((0, FLOOR, 127, FLOOR), fill=1)
+    pix.checker(g, (0, FLOOR + 1, 128, 64), 0.125)
+    for x in (14, 110):  # 两盏莲花灯
+        g.d.rectangle((x - 3, FLOOR - 4, x + 3, FLOOR - 1), fill=1)
+        g.d.line((x - 2, FLOOR - 3, x + 2, FLOOR - 3), fill=0)
+        g.d.line((x, FLOOR - 5, x, FLOOR - 5), fill=1)
+        fl = int(t * 6 + x) % 3
+        g.px(x, FLOOR - 7 - (fl == 0)), g.px(x, FLOOR - 6)
+        if fl == 1:
+            g.px(x - 1, FLOOR - 6)
 
 
 @register
 class Yuanying(Ritual):
     id = "r4.yuanying"
     name = "结丹出神"
-    desc = "正面盘坐，三丹田依次点亮，炼精化气、炼气化神、炼神还虚，三花聚顶，元婴自顶门出而复归"
-    T = {"enter": 4.5, "interrupt": 1.6, "resume": 2.0, "complete": 6.0}
+    desc = "小道士盘坐莲台，光从下丹田升到中、上丹田，身后圆光增到三圈、头顶三花开放，功成元婴自顶门升起"
+    T = {"enter": 5.0, "interrupt": 1.8, "resume": 2.0, "complete": 6.0}
     CYCLE = 600.0
 
-    # ------------------------------------------------------------ 进度
+    def setup(self):
+        self.sparks = pix.Sparks(self.seed + 1)
+        self.clock = Clock()
 
-    def stage(self, e: float) -> tuple[int, float]:
-        """→ (第几关 0..2, 关内进度 0..1)"""
-        p = (e % self.CYCLE) / self.CYCLE * 3
-        i = min(2, int(p))
-        return i, p - i
+    def stage(self, k: float):
+        i = min(int(k // STAGE), 2)
+        return i, (k - i * STAGE) / STAGE
 
-    # ------------------------------------------------------------ 零件
+    def figure(self, g: Gfx, t: float, pose=None):
+        pix.blit(g, cached(("yy", "seat"), _seat), DX - 17, FLOOR - 8)
+        return dao(g, DX, SY, pose or SIT, t)
 
-    def halo(self, g: Gfx, level: float, t: float, head):
-        hx, hy = head
-        for j in range(1 + int(level * 2.99)):
-            r = 12 + j * 5 + pulse(t + j, 4.0)
-            ring(g, hx, hy, r, 3 - (j == 0 and level > 0.6), t * 0.1 * (1 if j % 2 else -1))
+    def channel(self, g: Gfx, t: float, h: dict, level: float, bright: float = 1.0):
+        """中线上行的光点 + 三丹田（level：0–3，光升到哪）"""
+        pts = dantian(h)
+        top = pts[min(int(level), 2)]
+        y0 = pts[0][1]
+        y1 = lerp(pts[min(int(level), 2)][1], pts[min(int(level) + 1, 2)][1], level - int(level)) if level < 3 else pts[2][1]
+        x = pts[0][0]
+        for j in range(4):  # 上行的光点
+            q = (t * 0.8 + j * 0.25) % 1
+            y = lerp(y0, y1, q)
+            if y1 < y0 - 1 and bright > 0.3:
+                g.px(x + (1 if j % 2 else 0), y)
+        for i, (px, py) in enumerate(pts):
+            lit = level >= i
+            if not lit:
+                g.d.polygon([(px, py - 2), (px + 2, py), (px, py + 2), (px - 2, py)], outline=1, fill=0)
+                continue
+            cur = int(min(level, 2.999)) == i
+            if bright > 0:
+                big = cur and (t * 2) % 1 < 0.5
+                g.px(px, py), g.px(px - 1, py), g.px(px + 1, py), g.px(px, py - 1), g.px(px, py + 1)
+                if big:
+                    g.px(px - 2, py), g.px(px + 2, py), g.px(px, py - 2), g.px(px, py + 2)
+                r = 1
+                if cur and bright >= 1:
+                    for a in range(4):
+                        if (int(t * 6) + a) % 2:
+                            aa = a * math.pi / 2 + math.pi / 4
+                            g.px(px + math.cos(aa) * (r + 2), py + math.sin(aa) * (r + 2))
 
-    def clouds(self, g: Gfx, t: float):
-        xiangyun(g, 18 + math.sin(t * 0.3) * 2, 56, 1.2)
-        xiangyun(g, 110 - math.sin(t * 0.3) * 2, 56, 1.2, flip=True)
-
-    def figure(self, g: Gfx, t: float):
-        return seated(g, CX, BASE, S, breath=pulse(t, 6.0))
-
-    def lights(self, g: Gfx, pts: dict, i: int, k: float, t: float, dim: float = 1.0):
-        """三丹田的光：已过的关是稳定的亮点，当前关的光在长大；光从下往上流"""
-        names = ("lower", "middle", "upper")
-        for j in range(3):
-            x, y = pts[names[j]]
-            top = 1.6 if j == 2 else 2.4   # 眉间的光小一点，别把脸盖住
-            if j < i:
-                r = top * dim
-            elif j == i:
-                r = (0.6 + (top + 0.4) * ease_out(k)) * dim
+    def flowers(self, g: Gfx, t: float, n: int, spread: float = 0.0, k_new: float = 1.0):
+        """头顶的花（n 朵：中、左、右）"""
+        xs = [DX + 1, DX - 7 - spread * 6, DX + 9 + spread * 6]
+        for i in range(n):
+            fr = FLOWER[0] if (t * 2 + i * 0.3) % 1 < 0.7 else FLOWER[1]
+            y = FLOWER_Y - (2 if i == 0 else 0) - spread * 4
+            if i == n - 1 and k_new < 1:
+                s = pix.stretch(fr, max(0.2, ease_out_back(k_new)), max(0.2, ease_out_back(k_new)))
+                pix.blit(g, s, xs[i] - s.w // 2, y + 4 - s.h // 2)
             else:
-                g.px(x, y)
-                continue
-            g.d.ellipse((x - r - 1.5, y - r - 1.5, x + r + 1.5, y + r + 1.5), fill=0)
-            glow_dot(g, x, y, r, t)
-        if i >= 1 and dim > 0.3:  # 光流：沿中线往上的点
-            x0, y0 = pts["lower"]
-            x1, y1 = pts[names[i]]
-            for s in range(4):
-                f = (t * 0.7 + s / 4) % 1.0
-                yy = lerp(y0 - 4, y1 + 4, f)
-                if abs(yy - pts["middle"][1]) > 3:
-                    g.px(x0, yy)
+                pix.blit(g, fr, xs[i] - 4, y)
 
-    def flowers(self, g: Gfx, n: int, crown, k_last: float = 1.0, spread: float = 0.0):
-        cx, cy = crown
-        slots = {1: [0], 2: [-1, 1], 3: [-1, 0, 1]}.get(n, [])
-        for j, sx in enumerate(slots):
-            x = cx + sx * (9 + spread)
-            y = cy - 6 - (3 if sx == 0 else 0)
-            flower(g, x, y, k_last if j == n - 1 else 1.0)
+    def mx(self, g: Gfx, t: float, level: float, baby: bool = False):
+        if baby:
+            mx_art(g, """
+...##...
+..####..
+..#..#..
+...##...
+.######.
+#.####.#
+.######.
+#.#..#.#
+""")
+            return
+        cur = int(min(level, 2.999))
+        for i, row in enumerate((6, 3, 0)):
+            if level >= i:
+                on = i != cur or (t * 2) % 1 < 0.6
+                if on:
+                    g.mx[row:row + 2, 3:5] = True
+                    if i == cur:
+                        g.mx[row, 2] = g.mx[row, 5] = g.mx[row + 1, 2] = g.mx[row + 1, 5] = (t * 4) % 1 < 0.5
+            else:
+                g.mx[row, 3] = g.mx[row + 1, 4] = (t * 0.5) % 1 < 0.1
 
-    def texts(self, g: Gfx, e: float, left: str | None = None, a: float = 1.0):
-        i, k = self.stage(e)
-        l = left if left is not None else STAGES[i]
-        g.vtext(2, 2, l[:int(round(len(l) * a))])
+    def labels(self, g: Gfx, e: float, i: int):
         n = int(e // self.CYCLE) + 1
-        r = f"第{cn_num(n)}转"
-        g.vtext(115, 2, r[:int(round(len(r) * a))])
+        counter(g, f"第{cn_num(n)}转" if n < 100 else f"{n}转")
+        label(g, 125, 2, STAGES[i], 12, "right", box=False, pad=1)
 
-    def mx(self, g: Gfx, i: int, k: float, t: float, dim: float = 1.0):
-        rows = (6, 4, 1)
-        for j in range(3):
-            if j > i:
-                g.mx[rows[j], 3:5] = blink(t + j, 2.0, 0.1)
-                continue
-            lvl = 1.0 if j < i else k
-            w = 1 + int(round(lvl * 2 * dim))
-            on = j < i or blink(t, 0.8, 0.3 + 0.6 * k)
-            g.mx[rows[j], 4 - w:4 + w] = on
-            if lvl > 0.6 and dim > 0.5:
-                g.mx[rows[j] - 1, 3:5] = on
-        g.mx[7, :] = True
+    def qi_event(self, g: Gfx, t: float, e: float, h: dict):
+        """小事件：一团五行之气从远处飘来没入身中 / 圆光脉动"""
+        slot, ph = int(e // 23), (e % 23) / 4.0
+        if ph >= 1:
+            return 0.0
+        if slot % 2 == 0:
+            a = (slot * 1.3) % (2 * math.pi)
+            tx, ty = dantian(h)[1]
+            x, y = lerp(DX + math.cos(a) * 70, tx, ease_in(ph)), lerp(30 + math.sin(a) * 30, ty, ease_in(ph))
+            orb(g, x, y, 1, t)
+            if ph > 0.95:
+                star(g, tx, ty, 2)
+            return 0.0
+        return math.sin(ph * math.pi)
 
     # ------------------------------------------------------------ 阶段
 
-    def hold(self, g: Gfx, t: float, e: float):
-        k_cyc = e % self.CYCLE
-        if e >= self.CYCLE and k_cyc < RENEW:
-            self._renew(g, t, e, k_cyc)
-            return
-        i, k = self.stage(e)
-        self.clouds(g, t)
-        self.halo(g, (i + k) / 3, t, (CX, HEAD_Y))
-        pts = self.figure(g, t)
-        self.lights(g, pts, i, k, t)
-        bloom = span(k, 0.0, 0.06)
-        self.flowers(g, i, pts["crown"], k_last=bloom)
-        self.texts(g, e)
-        self.mx(g, i, k, t)
-
-    def _renew(self, g: Gfx, t: float, e: float, k: float):
-        """一转满：元婴出顶门，坐莲片刻，复归"""
-        self.clouds(g, t)
-        self.halo(g, 1.0, t, (CX, HEAD_Y))
-        pts = self.figure(g, t)
-        self.lights(g, pts, 2, 1.0, t)
-        cx, cy = pts["crown"]
-        up = ease_out(span(k, 0.4, 2.0)) - ease_in(span(k, 4.0, 5.4))
-        wilt = span(k, 3.6, 4.4)
-        if wilt < 1:
-            self.flowers(g, 2 if up > 0.05 else 3, pts["crown"], spread=up * 6)
-            if wilt > 0:
-                g.fade(1 - wilt, (cx - 26, 0, cx + 26, int(cy) - 1))
-        if up > 0.02:
-            by = lerp(cy - 4, 3, up)
-            lotus_seat(g, cx, by + BABY.h, k=min(1.0, up * 1.5))
-            g.blit(BABY, cx - BABY.w // 2, by)
-            if 1.6 < k < 4.0:
-                for j in range(8):
-                    a = j / 8 * 2 * math.pi + t
-                    if blink(t + j * 0.11, 0.5, 0.5):
-                        g.px(cx + math.cos(a) * 9, by + 5 + math.sin(a) * 7)
-            # 顶门到元婴的一缕光
-            for yy in range(int(by + BABY.h + 2), int(cy), 2):
-                g.px(cx, yy)
-        n = int(e // self.CYCLE)
-        self.texts(g, e, left="出神" if k < 4.0 else "收神")
-        self.mx(g, 2, 1.0, t)
-        if up > 0.3:
-            g.mx[0:4, 2:6] = False
-            g.mx_blit("..##..\n.####.\n..##..\n######", 1, 0)
-
     def enter(self, g: Gfx, t: float):
-        self.clouds(g, t)
-        self.halo(g, span(t, 0, 2.0), t, (CX, HEAD_Y))
-        pts = self.figure(g, t)
-        k = span(t, 0.0, 1.6)
-        if k < 1:
-            g.fade(ease_in_out(k), (CX - 24, 0, CX + 24, 64))
-        if t > 2.4:
-            x, y = pts["lower"]
-            glow_dot(g, x, y, 0.8 * ease_out(span(t, 2.4, 3.4)), t)
-        self.texts(g, 0, a=span(t, 3.4, 4.5))
-        self.mx(g, 0, 0.0, t, dim=span(t, 2.4, 3.4))
+        dt = self.clock(t)
+        night(g, t)
+        k = ease_out(span(t, 0.0, 1.6))
+        pix.blit(g, cached(("yy", "seat"), _seat), DX - 17, FLOOR - 8 + (1 - k) * 12)
+        if t > 1.2:
+            h = dao(g, DX, SY, SIT, t)
+            if t > 2.0:
+                halo(g, t, 1, 0)
+            if t > 3.0:
+                self.channel(g, t, h, 0.0, span(t, 3.0, 3.6))
+            if abs(t - 3.0) < dt:
+                self.sparks.burst(*dantian(h)[0], 10, 16, life=0.5, gravity=0)
+        if abs(t - 1.2) < dt:
+            self.sparks.burst(DX, SY - 18, 14, 22, life=0.6, gravity=0)
+        self.sparks.step(dt)
+        self.sparks.draw(g)
+        self.mx(g, t, 0.0)
+        if t > 3.4:
+            self.labels(g, 0, 0)
+
+    def hold(self, g: Gfx, t: float, e: float):
+        dt = self.clock(t)
+        k = e % self.CYCLE
+        night(g, t)
+        if e >= self.CYCLE and k < 6.0:  # 续：元婴出神
+            halo(g, t, 3, math.sin(k * 3))
+            h = self.figure(g, t, SIT_HAPPY if 1.0 < k < 5.0 else SIT)
+            self.channel(g, t, h, 2.0)
+            spread = ease_out(span(k, 0.0, 1.0)) * (1 - span(k, 4.5, 5.5))
+            self.flowers(g, t, 3 if k < 5.0 else 0, spread)
+            up = ease_out(span(k, 0.8, 2.2)) * (1 - ease_in(span(k, 3.8, 5.0)))
+            if up > 0.02:
+                bx, by = DX + 1, lerp(FLOWER_Y + 4, 6, up)
+                g.d.line((DX + 1, by + 10, DX + 1, FLOWER_Y + 4), fill=1)
+                pix.blit(g, BABY[0], bx - 5, by - 4)
+                if int(t * 6) % 2:
+                    star(g, bx - 9, by, 1), star(g, bx + 9, by + 3, 1)
+            if abs(k - 2.2) < dt:
+                pix.flash(g)
+                self.sparks.burst(DX + 1, 10, 20, 30, life=0.9, gravity=10)
+            if 2.2 < k < 2.5:
+                pix.shake(g, t, 1.0)
+            self.sparks.step(dt)
+            self.sparks.draw(g)
+            self.mx(g, t, 2.0, baby=1.0 < k < 5.0)
+            n = int(e // self.CYCLE) + 1
+            counter(g, f"第{cn_num(n)}转" if n < 100 else f"{n}转")
+            if 1.0 < k < 5.0:
+                counter(g, "出神" if k < 3.8 else "收神", right=True)
+            return
+        i, q = self.stage(k)
+        h_tmp = None
+        pulse = 0.0
+        halo_n = i + 1
+        # 过关：花开 + 闪
+        h = None
+        halo(g, t, halo_n, 0)
+        h = self.figure(g, t)
+        pulse = self.qi_event(g, t, e, h)
+        if pulse:
+            halo(g, t + 0.5, halo_n, pulse)
+        level = i + ease_in_out(min(q * 1.25, 1.0))   # 每关前 80% 时间光往上升
+        self.channel(g, t, h, min(level, 2.0) if i == 2 else level)
+        fk = span(k - i * STAGE, 0.0, 0.6) if i > 0 else 1.0
+        self.flowers(g, t, i, 0.0, fk)
+        if i > 0 and abs((k - i * STAGE) - 0.05) < dt:
+            pix.flash(g)
+            self.sparks.burst(*dantian(h)[i], 18, 26, life=0.8, gravity=10)
+        if 0 < k - i * STAGE < 0.3 and i > 0:
+            pix.shake(g, t, 1.0)
+        self.sparks.step(dt)
+        self.sparks.draw(g)
+        self.mx(g, t, level)
+        self.labels(g, e, i)
 
     def interrupt(self, g: Gfx, t: float, e: float):
-        i, k = self.stage(e)
-        r = ease_in_out(span(t, 0, 1.2))
-        self.clouds(g, t)
-        self.halo(g, (i + k) / 3 * (1 - r), t, (CX, HEAD_Y))
-        pts = self.figure(g, t)
-        # 光逐关退回下丹田
-        level = (i + k) * (1 - r)
-        ii, kk = min(2, int(level)), level - min(2, int(level))
-        self.lights(g, pts, ii, kk, t, dim=1 - 0.6 * r)
-        self.flowers(g, i, pts["crown"])
-        if i:
-            g.fade(1 - r, (CX - 20, 0, CX + 20, int(pts["crown"][1]) - 1))
-        self.texts(g, e, left="归根")
-        self.mx(g, ii, kk, t, dim=1 - 0.6 * r)
+        dt = self.clock(t)
+        k = e % self.CYCLE
+        night(g, t)
+        i, q = self.stage(k)
+        level = i + ease_in_out(min(q * 1.25, 1.0))
+        back = ease_in_out(span(t, 0.0, 1.2))
+        lv = lerp(min(level, 2.0), 0.0, back)
+        halo(g, t, max(1, int(round(lerp(i + 1, 1, back)))))
+        h = self.figure(g, t)
+        self.channel(g, t, h, lv, 1 - span(t, 1.2, 1.8) * 0.8)
+        if back < 0.5:
+            self.flowers(g, t, i)
+        self.mx(g, t, lv)
+        n = int(e // self.CYCLE) + 1
+        counter(g, f"第{cn_num(n)}转" if n < 100 else f"{n}转")
+        if t > 0.5:
+            counter(g, "归根", right=True)
+        else:
+            label(g, 125, 2, STAGES[i], 12, "right", box=False, pad=1)
 
     def resume(self, g: Gfx, t: float, e: float):
-        i, k = self.stage(e)
-        r = ease_in_out(span(t, 0.3, 2.0))
-        self.clouds(g, t)
-        self.halo(g, (i + k) / 3 * r, t, (CX, HEAD_Y))
-        pts = self.figure(g, t)
-        level = (i + k) * r
-        ii, kk = min(2, int(level)), level - min(2, int(level))
-        self.lights(g, pts, ii, kk, t, dim=0.4 + 0.6 * span(t, 0, 0.6))
-        self.flowers(g, min(i, ii + (1 if kk > 0.99 else 0)), pts["crown"])
-        self.texts(g, e, left="归根" if t < 0.5 else None)
-        self.mx(g, ii, kk, t)
+        dt = self.clock(t)
+        k = e % self.CYCLE
+        night(g, t)
+        i, q = self.stage(k)
+        level = i + ease_in_out(min(q * 1.25, 1.0))
+        up = ease_in_out(span(t, 0.4, 1.8))
+        lv = lerp(0.0, min(level, 2.0), up)
+        halo(g, t, max(1, int(round(lerp(1, i + 1, up)))))
+        h = self.figure(g, t)
+        self.channel(g, t, h, lv, span(t, 0.0, 0.4))
+        if abs(t - 0.4) < dt:
+            self.sparks.burst(*dantian(h)[0], 10, 16, life=0.5, gravity=0)
+        self.flowers(g, t, i if up > 0.6 else 0)
+        self.sparks.step(dt)
+        self.sparks.draw(g)
+        self.mx(g, t, lv)
+        self.labels(g, e, i)
 
     def complete(self, g: Gfx, t: float, e: float):
-        i, k = self.stage(e)
-        self.clouds(g, t)
-        self.halo(g, 1.0, t, (CX, HEAD_Y))
-        pts = self.figure(g, t)
-        self.lights(g, pts, 2, 1.0 if t > 1.5 else k, t)
-        mid = pts["middle"]
-        if t < 1.6:  # 五气朝元：五团气从五个方向汇入
+        dt = self.clock(t)
+        night(g, t)
+        halo(g, t, 3, max(0.0, math.sin(t * 4)) if t > 3.0 else 0)
+        h = self.figure(g, t, SIT_HAPPY if t > 4.0 else SIT)
+        mid = dantian(h)[1]
+        self.channel(g, t, h, 2.0)
+        if t < 2.0:  # 五气朝元：五团气从五个方向汇入中丹田
+            q = ease_in(span(t, 0.2, 1.8))
             for j in range(5):
                 a = -math.pi / 2 + j * 2 * math.pi / 5
-                f = ease_in(span(t, 0.1 + j * 0.08, 1.4 + j * 0.04))
-                r = lerp(60, 0, f)
-                x, y = mid[0] + math.cos(a) * r * 1.2, mid[1] + math.sin(a) * r * 0.8
-                if f < 1:
-                    glow_dot(g, x, y, 2.0, t)
-        if 1.3 < t < 1.8:
-            ring(g, mid[0], mid[1], 4 + span(t, 1.3, 1.8) * 30, 2)
-        # 三花聚顶
-        if t > 1.6:
-            for j in range(3):
-                kk = span(t, 1.6 + j * 0.25, 2.3 + j * 0.25)
-                cx, cy = pts["crown"]
-                sp = ease_out(span(t, 3.0, 4.0))
-                if j == 1:  # 中间那朵托着元婴升上去
-                    flower(g, cx, lerp(cy - 9, 3 + BABY.h + 3, sp), kk)
-                else:
-                    flower(g, cx + (j - 1) * (9 + 10 * sp), cy - 6 + 4 * sp, kk)
-        # 元婴升起
-        if t > 3.0:
-            up = ease_out(span(t, 3.0, 4.5))
-            cx, cy = pts["crown"]
-            by = lerp(cy - 4, 3, up)
-            lotus_seat(g, cx, by + BABY.h, k=min(1.0, up * 1.5))
-            g.blit(BABY, cx - BABY.w // 2, by)
-            for j in range(12):
-                a = j / 12 * 2 * math.pi + t * 0.5
-                if blink(t + j * 0.09, 0.5, 0.6):
-                    r0, r1 = 9, 12 + 2 * math.sin(t * 5 + j)
-                    g.d.line((cx + math.cos(a) * r0, by + 5 + math.sin(a) * r0 * 0.8, cx + math.cos(a) * r1,
-                              by + 5 + math.sin(a) * r1 * 0.8), fill=1)
-        if t < 1.0:
-            self.texts(g, e, a=1 - span(t, 0, 1.0))
-        elif t < 2.2:
-            g.vtext(2, 2, "五气朝元"[:int(clamp((t - 1.0) * 4) * 4)])
-        else:
-            g.vtext(2, 2, "三花聚顶"[:int(clamp((t - 2.2) * 4) * 4)])
-        # 点阵
-        self.mx(g, 2, 1.0, t)
-        if t > 3.0:
-            g.mx[0:4, :] = False
-            g.mx_blit("..##..\n.####.\n..##..\n######", 1, 0)
-        g.mx_level = 5 if 1.3 < t < 1.7 or 3.0 < t < 3.4 else 1
+                sx, sy = mid[0] + math.cos(a) * 60, mid[1] + math.sin(a) * 40
+                orb(g, lerp(sx, mid[0], q), lerp(sy, mid[1], q), 1, t + j)
+        if abs(t - 1.8) < dt:
+            self.sparks.burst(mid[0], mid[1], 16, 24, life=0.6, gravity=0)
+        if 1.8 < t < 2.0:
+            pix.shake(g, t, 1.0)
+        n_fl = 0 if t < 2.2 else (1 if t < 2.6 else (2 if t < 3.0 else 3))
+        self.flowers(g, t, n_fl, 0.3 if t > 3.0 else 0.0, span(t, 2.2 + 0.4 * (n_fl - 1), 2.6 + 0.4 * (n_fl - 1)))
+        if t > 3.2:  # 中间那朵托着元婴升起放光
+            up = ease_out(span(t, 3.2, 4.4))
+            bx, by = DX + 1, lerp(FLOWER_Y + 2, 8, up)
+            for j in range(10):
+                a = j * math.pi / 5 + t
+                r1 = 10 + (j % 2) * 3
+                pix.dotted(g, bx + math.cos(a) * 7, by + math.sin(a) * 7, bx + math.cos(a) * r1, by + math.sin(a) * r1,
+                           2, int(t * 10))
+            pix.blit(g, BABY[0], bx - 5, by - 4)
+        if abs(t - 4.4) < dt:
+            pix.flash(g)
+            self.sparks.burst(DX + 1, 8, 24, 36, life=1.0, gravity=10)
+        if 4.4 < t < 4.7:
+            pix.shake(g, t, 1.2)
+        self.sparks.step(dt)
+        self.sparks.draw(g)
+        self.mx(g, t, 2.0, baby=t > 3.2)
+        if t > 4.4:
+            g.mx_level = 1 + int(6 * (1 - span(t, 4.4, 5.6)))
+        n = int(e // self.CYCLE)
+        counter(g, f"第{cn_num(max(n, 1))}转" if n < 100 else f"{n}转")
+        if 0.4 < t < 2.4:
+            label(g, 125, 2, "五气朝元", 12, "right", box=False, pad=1)
+        elif t >= 4.4:
+            pop_title(g, 102, 3, "三花聚顶", span(t, 4.4, 4.8), t)

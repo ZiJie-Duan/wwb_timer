@@ -1,310 +1,422 @@
-"""刘海戏金蟾：刘海提着一串铜钱逗三足金蟾。
+"""刘海戏金蟾（歇）：小道士扮刘海，竹竿挑着一串方孔钱逗三足金蟾。
 
-依据：刘海蟾（刘操，号海蟾子），全真道奉为北五祖之一；民间传说他以钱串为饵，从井中钓出三足金蟾，
-      “刘海戏金蟾，步步钓金钱”是明清以来常见的吉祥图样。（Liu Haichan，Wikipedia；UCSD 中国民间故事 279）
-入场：刘海扛着竹竿从左边蹦跳进来，竿梢挂着一串铜钱；金蟾从右边一跳一跳地蹦到石头前坐好。
-持续：刘海握竿轻晃，竿梢垂下的钱串（方孔铜钱）像钟摆一样摆，金蟾的眼珠跟着钱转，喉囊一鼓一鼓；
-      身边一只小飞虫绕圈，金蟾不时伸舌头一卷，没卷着（舌头弹回）。
-      每 30 秒：刘海把竿一挑，金蟾蓄力一跃咬住最下面的铜钱，被提着悠两下，松口落地弹一弹，钱串叮当闪光，
-      上方写出“步步钓金钱”。
-收场：金蟾一跳跳出画面，刘海收起钱串追过去。
+依据：刘海蟾（刘操，号海蟾子），全真道奉为北五祖之一；民间传说他以钱串为饵钓出三足金蟾，
+      “刘海戏金蟾，步步钓金钱”为明清吉祥图样。
+画面：左边小道士双手握竹竿（竹节），竿梢垂下一串方孔铜钱，像钟摆一样晃；右边一块平石上坐着正脸的 Q 版
+      三足金蟾（两只鼓眼、大笑嘴、腮红、额头铜钱纹、身上疣点；左右两只前脚，第三只后脚在肚子底下露出脚趾），
+      地上散着两枚铜钱，天上一朵云。
+入场：小道士扛着竿从左边走进来站定；金蟾从右边三跳蹦到石上坐好；左上“刘海戏金蟾”。
+持续：钱串摆，金蟾眼珠跟着钱转、眨眼，喉囊一鼓一鼓；一只小飞虫在它面前绕圈，每 11 秒金蟾吐舌头一卷
+      （三回里有一回卷到，咕嘟咽下、眯眼笑，过一会儿又飞来一只）。
+      每 30 秒（从 16 秒起）：小道士把竿一挑，金蟾蹲低蓄力、一跃咬住最下面的铜钱，挂在钱串上被悠两下
+      （钱串闪光），松口落回石上压扁、扬起尘土、再弹两下；左上换成“步步钓金钱”。
+收场：金蟾往右两跳跳出画面，小道士转身扛竿追过去。
+点阵：金蟾的正脸（眨眼、喉囊鼓起时下巴变大）；钓钱时是一枚方孔钱，闪光时加亮。
 """
 from __future__ import annotations
 
 import math
 
-from ..engine.anim import blink, clamp, ease_in, ease_in_out, ease_out, ease_out_back, ease_out_bounce, lerp, noise, rand, span
-from ..engine.fx import typewriter
+from ..engine import pix
+from ..engine.anim import ease_in, ease_in_out, ease_out, lerp, span
+from ..engine.chars import Part, daoshi
 from ..engine.gfx import Gfx, Sprite
 from ..engine.scene import Rest, register
-from .x4_common import Bake, art, mx_sprite
+from .x4_common import CLOUD, Clock, ev, label, mx_art, sparkle
 
-G = 62
-TIP = (58, 6)            # 钓竿梢
-CORD = 17                 # 竿梢到第一枚钱的绳长
-TX = 66                  # 金蟾（贴图左端）
-EV0, EV_P = 16.0, 30.0
+FLOOR = 60
+DAO_X = 22
+TX, TY = 82, FLOOR - 19     # 金蟾身体左上角（坐在石上）
+TIP = (93, 8)               # 竿梢
+STRING = 21                 # 钱串长
+BITE_S, BITE_P, BITE_D = 16.0, 30.0, 7.0
+TONGUE_S, TONGUE_P = 5.0, 11.0
 
-LIUHAI = art("""
-......#####......
-....##.....##....
-...#.........#...
-..#.#.#.#.#.#.#..
-..##.#.#.#.#.##..
-..#...........#..
-..#..##...##..#..
-..#.#..#.#..#.#..
-..#...........#..
-...#...###...#...
-....#.......#....
-.....#######.....
-......#...#......
-...####...####...
-..#...#...#...#..
-.#....#...#....#.
-.#.....#.#.....#.
-.#......#......#.
-..#############..
-..#.....#.....#..
-..#.....#.....#..
-.#......#......#.
-.#.....#.#.....#.
-.#....#...#....#.
-..#..#.....#..#..
-..####.....####..
-.##..#.....#..##.
-.####.......####.
-""")
+# ---------------------------------------------------------------- 精灵
 
 
-def _toad() -> Sprite:
-    """三足金蟾（侧前方，朝左）：宽 40，高 26。前面两条前腿，后面一条后腿"""
-    b = Bake(40, 26)
-    b.poly([(27, 12), (36, 10), (39, 18), (37, 25), (24, 25), (30, 21)], 0.0)   # 唯一的后腿（大腿 + 后脚）
-    b.line([(24, 25), (19, 25)])
-    b.line([(21, 24), (19, 23)])
-    b.ellipse((5, 6, 36, 25), 0.25)                                         # 金色身子（抖动）
-    b.ellipse((3, 2, 13, 11), 0.0)                                          # 鼓眼
-    b.ellipse((13, 0, 23, 9), 0.0)
-    b.line([(1, 14), (5, 17), (13, 18), (20, 16)])                         # 阔嘴
-    b.poly([(1, 12), (6, 9), (14, 10), (20, 15), (13, 17), (5, 16), (1, 14)], 0.0, outline=False)
-    b.line([(1, 12), (6, 9), (13, 9)])
-    b.line([(1, 14), (5, 17), (13, 18), (20, 16)])
-    for x, y in ((24, 9), (29, 12), (20, 12), (26, 16), (32, 17), (17, 19)):  # 疣
-        b.ellipse((x - 1, y - 1, x + 1, y + 1), 1.0)
-    b.poly([(8, 18), (11, 18), (8, 24), (2, 25), (4, 23)], 0.0)              # 前腿（近）
-    b.line([(1, 25), (4, 25)])
-    b.poly([(18, 19), (21, 19), (20, 25), (14, 25), (17, 23)], 0.0)          # 前腿（远）
-    b.line([(13, 25), (16, 25)])
+class _Grid:
+    def __init__(self, w, h):
+        self.g = [[" "] * w for _ in range(h)]
+
+    def rows(self, d, c="#"):
+        for y, (a, b) in d.items():
+            for x in range(a, b + 1):
+                self.g[y][x] = c
+
+    def pts(self, ps, c="#"):
+        for x, y in ps:
+            self.g[y][x] = c
+
+    def sprite(self):
+        return Sprite("\n".join("".join(r) for r in self.g))
+
+
+def _body(mouth="smile") -> Sprite:
+    """正脸金蟾的头身 28×15：大笑嘴、腮红网点、鼻孔、额头铜钱纹、疣点"""
+    b = _Grid(28, 15)
+    b.rows({0: (5, 22), 1: (3, 24), 2: (1, 26), 3: (1, 26), 4: (0, 27), 5: (0, 27), 6: (0, 27), 7: (0, 27), 8: (0, 27),
+            9: (0, 27), 10: (0, 27), 11: (1, 26), 12: (1, 26), 13: (3, 24), 14: (5, 22)})
+    if mouth == "smile":
+        b.pts([(2, 6), (3, 7), (4, 7)] + [(x, 8) for x in range(5, 23)] + [(23, 7), (24, 7), (25, 6)], ".")
+    elif mouth == "open":     # 张嘴（吐舌、咬钱）
+        b.pts([(2, 6), (3, 7), (4, 7)] + [(x, 8) for x in range(5, 23)] + [(23, 7), (24, 7), (25, 6)], ".")
+        b.rows({9: (8, 19), 10: (10, 17)}, ".")
+    elif mouth == "gulp":     # 咕嘟：嘴抿成一条小弧
+        b.pts([(x, 8) for x in range(9, 19)] + [(8, 7), (19, 7)], ".")
+    b.pts([(12, 4), (15, 4)], ".")
+    b.pts([(3, 4), (5, 4), (4, 5), (22, 4), (24, 4), (23, 5)], ".")
+    for p in [(1, 9), (26, 9), (7, 11), (20, 11), (3, 12), (24, 12), (10, 13), (17, 13), (8, 1), (19, 1)]:
+        b.pts([p], ".")
+    b.pts([(12, 1), (13, 1), (14, 1), (15, 1), (11, 2), (16, 2), (13, 2), (14, 2)], ".")
     return b.sprite()
 
 
-TOAD = _toad()
-COIN = Sprite("""
- .###.
- #...#
- #.#.#
- #...#
- .###.
+def _eye(px=1, py=1, shut=False, happy=False) -> Sprite:
+    """鼓眼 7×6：眼珠 2×2（px 0–3 左右，py 0–2 上下），右上一点高光"""
+    e = _Grid(7, 6)
+    e.rows({0: (2, 5), 1: (1, 6), 2: (0, 6), 3: (0, 6), 4: (0, 6), 5: (1, 5)})
+    if shut:
+        e.pts([(1, 3), (2, 4), (3, 4), (4, 4), (5, 3)], ".")
+    elif happy:
+        e.pts([(1, 4), (2, 3), (3, 2), (4, 3), (5, 4)], ".")
+    else:
+        x0, y0 = 1 + px, 1 + py
+        e.pts([(x0, y0), (x0 + 1, y0), (x0, y0 + 1), (x0 + 1, y0 + 1)], ".")
+        e.pts([(x0 + 1, y0)])
+    return e.sprite()
+
+
+LEG = Sprite("""
+  ###
+ ###
+###
+#####
+#.#.#
 """)
-MX_COIN = """
-..####..
-.#....#.
-#..##..#
-#.#..#.#
-#.#..#.#
-#..##..#
-.#....#.
-..####..
-"""
-MX_TOAD = """
-.##..##.
-#..##..#
-#.#..#.#
-.######.
-#.####.#
-.######.
-##.##.##
-........
-"""
+
+HIND = Sprite("""
+ ###
+#####
+#.#.#
+""")
+
+COIN = Sprite("""
+ ###
+#####
+##.##
+#####
+ ###
+""")
+
+GCOIN = Sprite("""
+ ####
+##..##
+ ####
+""")
+
+FLY = pix.frames("""
+# #
+ #
+---
+ #
+ #
+""")
+
+
+def _sac(k: int) -> Sprite:
+    """喉囊：从嘴下鼓出来的白泡（三档）"""
+    w, h = (8, 4) if k == 0 else ((10, 5) if k == 1 else (12, 6))
+    p = Part(w, h)
+    p.shape("ellipse", (0, 0, w - 1, h - 1), fill=1)
+    p.px(2, 1, 0)
+    p.px(w - 3, h - 2, 0)
+    return p.sprite()
+
+
+def _stone() -> Sprite:
+    p = Part(38, 5)
+    p.shape("polygon", [(0, 4), (3, 0), (34, 0), (37, 4)], fill=1)
+    p.d.line((4, 1, 33, 1), fill=0)
+    p.dither([(20, 2), (37, 2), (37, 4), (20, 4)], 0.5, 0)
+    p.d.line((12, 2, 13, 4), fill=0)
+    return p.sprite()
+
+
+_S: dict = {}
+
+
+def S(key):
+    if not _S:
+        for m in ("smile", "open", "gulp"):
+            _S[("body", m)] = _body(m)
+        for px in range(4):
+            for py in range(3):
+                _S[("eye", px, py)] = _eye(px, py)
+        _S["shut"] = _eye(shut=True)
+        _S["happy"] = _eye(happy=True)
+        for k in range(3):
+            _S[("sac", k)] = _sac(k)
+        _S["stone"] = _stone()
+    return _S[key]
+
+
+# ---------------------------------------------------------------- 画
+
+def toad(g: Gfx, x: float, y: float, look=(0.0, 0.0), mouth="smile", eyes="open", sac=None, squash=0.0,
+         dangle=False):
+    """x, y：头身左上角。look：眼珠朝向（-1..1）。squash>0 压扁（蓄力/落地），<0 拉长（起跳）"""
+    x, y = int(round(x)), int(round(y))
+    sq = int(round(squash * 3))
+    leg_dy = 0 if not dangle else 3
+    pix.blit(g, HIND, x + 12, y + 14 + leg_dy)
+    pix.blit(g, S(("body", mouth)), x, y + max(sq, 0))
+    if sac is not None:
+        spr = S(("sac", sac))
+        pix.blit(g, spr, x + 14 - spr.w // 2, y + 9 + max(sq, 0))
+    spread = max(sq, 0)
+    pix.blit(g, LEG, x - 2 - spread, y + 11 + leg_dy + max(sq, 0) // 2)
+    pix.blit(g, LEG, x + 25 + spread, y + 11 + leg_dy + max(sq, 0) // 2, flip=True)
+    ey = y - 4 + max(sq, 0) + (min(sq, 0))  # 拉长时眼睛更高
+    if eyes == "open":
+        px = max(0, min(3, int(round(1.5 + look[0] * 1.5))))
+        py = max(0, min(2, int(round(1 + look[1]))))
+        e = S(("eye", px, py))
+    else:
+        e = S(eyes)
+    pix.blit(g, e, x + 1, ey)
+    pix.blit(g, e, x + 20, ey)
+    return (x + 14, y + 9 + max(sq, 0))    # 嘴
+
+
+def pole_and_coins(g: Gfx, hand, tip, ang: float, coins=True):
+    """竹竿（竹节）+ 钱串（钟摆）。返回最下面那枚钱的中心"""
+    hx, hy = hand
+    tx, ty = tip
+    g.d.line((hx - 3, hy + 2, tx, ty), fill=1)
+    g.d.line((hx - 3, hy + 3, tx, ty + 1), fill=1)
+    n = 6
+    for i in range(1, n):  # 竹节
+        q = i / n
+        nx, ny = lerp(hx - 3, tx, q), lerp(hy + 2, ty, q)
+        g.px(nx, ny + 2, 1), g.px(nx - 1, ny + 2, 1)
+    ex = tx + math.sin(ang) * STRING
+    ey = ty + math.cos(ang) * STRING
+    g.d.line((tx, ty, ex, ey), fill=1)
+    if coins:
+        for d in (STRING - 10, STRING - 5, STRING):
+            cx = tx + math.sin(ang) * d
+            cy = ty + math.cos(ang) * d
+            pix.blit(g, COIN, cx - 2, cy - 2)
+    return ex, ey
+
+
+def scenery(g: Gfx, t: float):
+    pix.blit(g, CLOUD[0], (t * 1.5 + 30) % 170 - 30, 3)
+    g.d.line((0, FLOOR, 127, FLOOR), fill=1)
+    for x in range(2, 128, 7):
+        g.px(x, FLOOR + 2)
+    pix.checker(g, (0, FLOOR + 1, 128, 64), 0.125)
+    pix.blit(g, S("stone"), TX - 5, FLOOR - 4)
+    pix.blit(g, GCOIN, 52, FLOOR - 3)
+    pix.blit(g, GCOIN, 64, FLOOR - 2)
+    for x, k in ((44, 0), (120, 1), (8, 2)):
+        spr = pix.anim(GRASS_FR, t * 0.6 + k * 0.5, 1.2)
+        pix.blit(g, spr, x, FLOOR - spr.h)
+
+
+GRASS_FR = pix.frames("""
+ # #
+# ##
+ ##
+---
+  # #
+ # ##
+  ##
+""")
+
+
+def mx_toad(g: Gfx, blink: bool, sac: bool):
+    rows = ["##....##", "##....##" if not blink else "........", ".######.", "#.####.#", "#......#", ".######.",
+            "#.####.#", "##.##.##"]
+    if sac:
+        rows[5] = "########"
+        rows[6] = "########"
+    mx_art(g, rows)
+
+
+def mx_coin(g: Gfx):
+    mx_art(g, ["..####..", ".######.", "###..###", "##....##", "##....##", "###..###", ".######.", "..####.."])
 
 
 @register
-class LiuHaiToad(Rest):
+class Toad(Rest):
     id = "x4.toad"
     name = "刘海戏金蟾"
-    desc = "刘海晃着一串方孔铜钱，三足金蟾眼珠跟着转、伸舌头卷虫；每隔一阵一跃咬住铜钱被钓起来悠两下"
-    T = {"enter": 3.0, "exit": 1.2}
+    desc = "小道士扮刘海挑着一串铜钱逗正脸的三足金蟾：眼珠跟钱转、喉囊鼓、吐舌卷虫；一挑竿，金蟾一跃咬住铜钱悠两下"
+    T = {"enter": 3.0, "exit": 1.4}
 
     def setup(self):
-        self.ncoin = self.rng.choice((4, 5))
+        self.clock = Clock()
+        self.dust = pix.Puffs(self.seed)
+        self.sparks = pix.Sparks(self.seed + 1)
 
-    # ------------------------------------------------------------ 零件
+    def swing(self, t: float, big: float = 0.0) -> float:
+        return 0.22 * math.sin(t * 2 * math.pi / 2.4) + big * 0.45 * math.sin(t * 2 * math.pi / 1.5)
 
-    def liuhai(self, g: Gfx, x: float, t: float, lift: float = 0.0, hop: float = 0.0):
-        """刘海（额前一排刘海、笑眯眯）双手握一根竹竿往右上挑：x 为贴图左端；lift 竿梢抬高；返回竿梢位置"""
-        y = G - LIUHAI.h - hop
-        sw = math.sin(t * 1.6) * 2
-        tipx, tipy = TIP[0] + x - 4 + sw, TIP[1] - lift - hop
-        butt = (x + 8, y + 22)
-        g.d.line((butt[0], butt[1], tipx, tipy), fill=1)            # 竹竿
-        for u in (0.3, 0.55, 0.8):                                    # 竹节
-            px, py = lerp(butt[0], tipx, u), lerp(butt[1], tipy, u)
-            g.px(px - 1, py)
-        g.blit(LIUHAI, x, y)
-        # 双臂握竿
-        h1 = (lerp(butt[0], tipx, 0.12), lerp(butt[1], tipy, 0.12))
-        h2 = (lerp(butt[0], tipx, 0.22), lerp(butt[1], tipy, 0.22))
-        g.d.line((x + 3, y + 15, x + 5, y + 19, h1[0], h1[1]), fill=1)
-        g.d.line((x + 13, y + 14, h2[0], h2[1]), fill=1)
-        g.d.rectangle((h1[0] - 1, h1[1] - 1, h1[0] + 1, h1[1] + 1), fill=1)
-        g.d.rectangle((h2[0] - 1, h2[1] - 1, h2[0] + 1, h2[1] + 1), fill=1)
-        # 两只小髻随身子晃
-        b = math.sin(t * 3) * 1
-        g.d.ellipse((x + 3 + b, y - 3, x + 6 + b, y), fill=1)
-        g.d.ellipse((x + 11 + b, y - 3, x + 14 + b, y), fill=1)
-        return tipx, tipy
-
-    def string(self, g: Gfx, hx: float, hy: float, ang: float, n: int, bite: tuple | None = None):
-        """钱串：从手垂下的绳子 + n 枚方孔钱。bite=(x, y)：最下面那枚被金蟾咬住拉着"""
-        dx, dy = math.sin(ang), math.cos(ang)
-        ex, ey = hx + dx * (CORD + n * 4), hy + dy * (CORD + n * 4)
-        if bite:
-            ex, ey = bite
-        g.d.line((hx, hy, ex, ey), fill=1)
-        for i in range(n):
-            u = (CORD + i * 4) / (CORD + n * 4)
-            cx, cy = lerp(hx, ex, u), lerp(hy, ey, u)
-            g.blit(COIN, cx - 2, cy - 2)
-        return ex, ey
-
-    def toad(self, g: Gfx, x: float, y: float, t: float, look: tuple, throat: float, tongue: tuple | None = None,
-             squash: float = 0.0):
-        """金蟾：(x, y) 贴图左上角；look=(lx, ly) 眼珠看向的点；throat 喉囊鼓起 0..1"""
-        g.blit(TOAD, x, y + squash)
-        for ex, ey in ((x + 8, y + 6 + squash), (x + 18, y + 4 + squash)):
-            a = math.atan2(look[1] - ey, look[0] - ex)
-            g.d.rectangle((ex + math.cos(a) * 2 - 1, ey + math.sin(a) * 2 - 1, ex + math.cos(a) * 2,
-                           ey + math.sin(a) * 2), fill=1)
-        if throat > 0:   # 喉囊
-            r = 2 + throat * 3
-            g.d.ellipse((x + 8 - r, y + 19 - r * 0.6 + squash, x + 8 + r, y + 19 + r * 0.6 + squash), fill=0, outline=1)
-        if tongue:       # 舌头：从嘴角弹出去
-            mx_, my_ = x + 2, y + 14 + squash
-            tx, ty = tongue
-            g.d.line((mx_, my_, tx, ty), fill=1)
-            g.d.ellipse((tx - 1, ty - 1, tx + 1, ty + 1), fill=1)
-
-    def fly(self, t: float):
-        a = t * 1.7
-        return 60 + math.cos(a) * 14 + math.sin(a * 2.3) * 4, 34 + math.sin(a) * 8
-
-    # ------------------------------------------------------------ 一帧
-
-    def frame(self, g: Gfx, t: float, lx: float = 0.0, tx: float = TX, text: float = 1.0, show_fly: bool = True):
-        # 地面与石头
-        g.d.line((0, G, 127, G), fill=1)
-        g.d.arc((tx + 22, G - 6, tx + 52, G + 6), 180, 360, fill=1)
-        for i, x in enumerate((50, 58, 112, 120)):
-            g.d.line((x, G, x - 1, G - 3), fill=1)
-            g.d.line((x + 2, G, x + 3, G - 4), fill=1)
-        k = (t - EV0) % EV_P if t >= EV0 else -1.0
-        n = self.ncoin
-        lift, hop, ang = 0.0, 0.0, math.sin(t * 1.6) * 0.35 - 0.15
-        ty, squash, bite, tongue = G - 26, 0.0, None, None
-        title = "刘海戏金蟾"
-        sparkle = False
-        if 0 <= k < 7.0:   # 一提、一跃、咬住悠两下、落地
-            title = "步步钓金钱"
-            if k < 1.0:                       # 刘海提起钱串，金蟾蹲下蓄力
-                lift = ease_out(k) * 10
-                squash = ease_out(k) * 2
-                ang = lerp(ang, 0.0, ease_out(k))
-            elif k < 1.6:                     # 跃起
-                p = (k - 1.0) / 0.6
-                lift = 10
-                ang = 0.0
-                ty = lerp(G - 26 + 2, TIP[1] - 10 + CORD + self.ncoin * 4 - 13, ease_out(p))
-                tx = lerp(TX, TIP[0] - 6, ease_out(p))
-            elif k < 4.4:                     # 咬住铜钱被提着悠
-                q = (k - 1.6) / 2.8
-                lift = 10 + math.sin(q * math.pi) * 4
-                ang = math.sin(q * math.pi * 3) * 0.35 * (1 - q)
-                sparkle = True
-            elif k < 5.6:                     # 松口落地（弹两下）
-                p = (k - 4.4) / 1.2
-                lift = 10 * (1 - p)
-                ang = math.sin(p * 9) * 0.3 * (1 - p)
-                ty = lerp(TIP[1] - 10 + CORD + self.ncoin * 4 - 13, G - 26, ease_out_bounce(p))
-                tx = lerp(TIP[0] - 6, TX, ease_out(p))
+    def scene(self, g: Gfx, t: float, dt: float, dao_x=DAO_X, dao_pose="offer", dao_flip=False, toad_xy=None,
+              events=True, text=None, toad_on=True):
+        scenery(g, t)
+        blink = (t % 3.3) < 0.13
+        sac_k = None
+        k = t % 3.1
+        if k < 0.9:
+            sac_k = min(2, int(math.sin(k / 0.9 * math.pi) * 3))
+        tip = (TIP[0] + int(round(dao_x - DAO_X)), TIP[1])
+        big = 0.0
+        tx, ty = toad_xy or (TX, TY)
+        mouth, eyes, squash, dangle = "smile", "shut" if blink else "open", 0.0, False
+        hanging = False
+        dface = "normal"
+        mxmode = "toad"
+        bt = ev(t, BITE_P, BITE_S, BITE_D) if events else None
+        if bt:
+            L = bt[1]
+            lift = ease_out(span(L, 0.0, 0.5)) * (1 - ease_in_out(span(L, 4.2, 5.2)))
+            tip = (TIP[0] + int(lift * 2), TIP[1] - int(round(lift * 5)))
+            big = span(L, 2.0, 2.4) * (1 - span(L, 4.0, 4.6))
+            sac_k = None
+            mxmode = "coin" if 1.6 < L < 4.6 else "toad"
+            dface = "happy" if 2.0 < L < 6.0 else "normal"
+            if L < 0.8:
+                squash = 0.0
+            elif L < 1.4:                       # 蹲低蓄力
+                squash = ease_out(span(L, 0.8, 1.2)) * 1.0
+            elif L < 2.0:                       # 起跳：拉长，冲向最下面那枚钱
+                squash = -1.0
+            elif L < 4.4:                       # 咬住、挂着悠
+                hanging = True
+                dangle = True
+            elif L < 5.2:                       # 松口下落
+                squash = -0.7
+                dangle = True
+            elif L < 5.5:                       # 落地压扁
+                squash = 1.0
             else:
-                squash = (1 - span(k, 5.6, 6.2)) * 2
-        hx, hy = self.liuhai(g, lx, t, lift, hop)
-        dx, dy = math.sin(ang), math.cos(ang)
-        ex, ey = hx + dx * (CORD + n * 4), hy + dy * (CORD + n * 4)
-        if 1.6 <= k < 4.4:                    # 金蟾咬住最下面的铜钱，挂在钱串下面
-            ty = ey - 13
-            txx = ex - 2
+                squash = 0.0
+        ang = self.swing(t, big)
+        dpose = dao_pose
+        h = daoshi(g, dao_x, FLOOR, dpose, t, flip=dao_flip, face=dface)
+        end = pole_and_coins(g, h["hand"], tip, ang)
+        look = (max(-1, min(1, (end[0] - (tx + 14)) / 10)), -1.0)
+        if bt:
+            L = bt[1]
+            if 1.4 <= L < 2.0:                  # 空中：从石上弧线飞向钱
+                q = ease_out(span(L, 1.4, 2.0))
+                ex, ey = end
+                tx = lerp(TX, ex - 14, q)
+                ty = lerp(TY, ey - 9, q)
+                mouth = "open"
+            elif hanging:                       # 挂在钱串上，跟着摆
+                tx, ty = end[0] - 14, end[1] - 9
+                mouth = "open"
+                eyes = "happy"
+                if int(L * 8) % 3 == 0:
+                    self.sparks.burst(end[0] + (int(L * 37) % 9 - 4), end[1] - 10, 1, 10, life=0.4, gravity=0)
+            elif 4.4 <= L < 5.2:                # 落回石上
+                q = ease_in(span(L, 4.4, 5.2))
+                sx, sy = end[0] - 14, end[1] - 9
+                tx, ty = lerp(sx, TX, q), lerp(sy, TY, q)
+                eyes = "shut"
+            elif L >= 5.2:
+                hop = abs(math.sin(span(L, 5.5, 6.6) * math.pi * 2)) * 3 * (1 - span(L, 5.5, 6.6))
+                ty = TY - hop
+                if abs(L - 5.2) < dt * 1.5:
+                    for s in (-1, 1):
+                        self.dust.emit(TX + 14 + s * 14, FLOOR - 4, vx=s * 10, vy=-4, life=0.7, rmax=2.0)
+                    pix.shake(g, t, 1.0)
+                if L < 5.6:
+                    eyes = "shut"
+        # 小飞虫 + 吐舌
+        tg = ev(t, TONGUE_P, TONGUE_S, None) if events and not bt else None
+        fly_on = True
+        fx = tx + 14 + math.sin(t * 2.3) * 16
+        fy = ty - 10 + math.sin(t * 3.7) * 5
+        tongue = None
+        if tg:
+            n, L = tg
+            caught = n % 3 == 2
+            if caught and L > 0.35:
+                fly_on = L > 7.0          # 吃掉了，过一会儿又飞来一只
+                if not fly_on and L < 1.4:
+                    mouth, eyes = "gulp", "happy"
+                if L > 7.0:                # 从左上飞回来
+                    q = ease_out(span(L, 7.0, 9.0))
+                    fx, fy = lerp(-4, fx, q), lerp(10, fy, q)
+            if L < 0.35:
+                q = math.sin(L / 0.35 * math.pi)
+                tongue = q
+                mouth = "open"
+                if not caught and L > 0.12:  # 虫子一躲
+                    fy -= 6 * span(L, 0.12, 0.35)
+                    fx += 4 * span(L, 0.12, 0.35)
+        mpos = toad(g, tx, ty, look, mouth, eyes, None if (hanging or bt and bt[1] < 6) else sac_k, squash, dangle) \
+            if toad_on else (tx + 14, ty + 9)
+        if hanging or (bt and 1.8 < bt[1] < 2.0):  # 最下面那枚铜钱叼在嘴里
+            pix.blit(g, COIN, end[0] - 2, end[1] - 2)
+        if tongue is not None:
+            mx_, my_ = mpos
+            ex, ey = lerp(mx_, fx, tongue), lerp(my_, fy, tongue)
+            g.d.line((mx_, my_, ex, ey), fill=1)
+            g.d.line((mx_ + 1, my_, ex + 1, ey), fill=1)
+            g.d.ellipse((ex - 1, ey - 1, ex + 1, ey + 1), fill=1)
+        if fly_on and toad_on:
+            pix.blit(g, FLY[int(t * 18) % 2], fx - 1, fy - 1, outline=False)
+        self.dust.step(dt)
+        self.dust.draw(g)
+        self.sparks.step(dt)
+        self.sparks.draw(g)
+        if bt and 5.6 < bt[1]:
+            text = "步步钓金钱"
+        if mxmode == "coin":
+            mx_coin(g)
+            if bt and 2.0 < bt[1] < 4.4 and int(t * 6) % 2 == 0:
+                g.mx_level = 5
         else:
-            txx = tx
-        self.string(g, hx, hy, ang, n)
-        if 1.6 <= k < 4.4:
-            g.d.line((ex, ey, ex, ey + 2), fill=1)
-        # 飞虫与舌头
-        fk = (t + 5) % 11
-        fx, fy = self.fly(t)
-        if show_fly and k < 0 or k >= 7.0:
-            if fk < 0.5 and show_fly:          # 舌头一卷（没卷着，虫子一躲）
-                p = math.sin(fk / 0.5 * math.pi)
-                tongue = (lerp(txx + 2, fx, p), lerp(ty + 14, fy, p))
-                fx += p * 6
-                fy -= p * 5
-            if show_fly:
-                g.d.line((fx - 1, fy - 1 - int(t * 12) % 2, fx + 1, fy - 1 - int(t * 12 + 1) % 2), fill=1)
-                g.px(fx, fy)
-        look = (ex, ey) if not (k < 0 or k >= 7.0) or (t % 7 < 4) else (fx, fy)
-        throat = max(0.0, math.sin(t * 2.4)) if (k < 0 or k >= 7.0) else 0.0
-        self.toad(g, txx, ty, t, look, throat, tongue, squash)
-        if sparkle:   # 钱串叮当闪光
-            for i in range(6):
-                if blink(t + i * 0.21, 0.5, 0.4):
-                    a = rand(i, 4) * 2 * math.pi
-                    g.px(ex + math.cos(a) * (6 + i), ey - 8 + math.sin(a) * (5 + i))
-        if text > 0:
-            s = title
-            if title == "步步钓金钱":
-                typewriter(g, 124, 1, s, k, cps=5, align="right")
-            else:
-                g.text(124, 1, s[:int(round(text * len(s)))], align="right")
-        # 点阵：铜钱（转动）/ 金蟾
-        if sparkle or (0 <= k < 7.0):
-            mx_sprite(g, MX_COIN)
-            g.mx_level = 3 if sparkle and blink(t, 0.3) else 1
-        else:
-            mx_sprite(g, MX_TOAD)
-            if throat > 0.5:
-                g.mx[6, 3] = g.mx[6, 4] = True
-                g.mx[7, 2:6] = True
-        return k
+            mx_toad(g, eyes == "shut", sac_k is not None and sac_k >= 1)
+        if text:
+            label(g, 3, 3, text)
+        return h
 
     # ------------------------------------------------------------ 阶段
 
-    def hold(self, g: Gfx, t: float):
-        self.frame(g, t)
-
     def enter(self, g: Gfx, t: float):
-        T = self.T["enter"]
-        lx = lerp(-30, 0, ease_out(span(t, 0, 1.6)))
-        # 金蟾一跳一跳进来：三跳
-        p = span(t, 0.6, 2.8)
-        hops = 3
-        seg = min(hops - 1, int(p * hops))
-        u = p * hops - seg
-        x0 = lerp(130, TX, seg / hops)
-        x1 = lerp(130, TX, (seg + 1) / hops)
-        tx = lerp(x0, x1, u) if p < 1 else TX
-        g.d.line((0, G, 127, G), fill=1)
-        g.d.arc((TX + 22, G - 6, TX + 52, G + 6), 180, 360, fill=1)
-        hx, hy = self.liuhai(g, lx, t, 0, abs(math.sin(t * 6)) * 3 * (1 - span(t, 1.2, 1.6)))
-        self.string(g, hx, hy, math.sin(t * 1.6) * 0.35 - 0.15, self.ncoin)
-        hop_h = math.sin(u * math.pi) * 10 if p < 1 else 0
-        self.toad(g, tx, G - 26 - hop_h, t, (hx, hy + 30), 0.0)
-        g.text(124, 1, "刘海戏金蟾"[:int(span(t, 1.5, T) * 5 + 0.5)], align="right")
-        mx_sprite(g, MX_TOAD)
+        dt = self.clock.dt(t)
+        dx = lerp(-16, DAO_X, ease_out(span(t, 0, 1.8)))
+        # 金蟾三跳：从 140 蹦到 TX
+        hops = [(0.6, 140, 118), (1.3, 118, 98), (2.0, 98, TX)]
+        tx, ty = 150, TY
+        for a, x0, x1 in hops:
+            if t >= a:
+                q = span(t, a, a + 0.6)
+                tx = lerp(x0, x1, q)
+                ty = TY - math.sin(q * math.pi) * 9
+        self.scene(g, t, dt, dao_x=dx, dao_pose="walk" if t < 1.8 else "offer", toad_xy=(tx, ty), events=False,
+                   text="刘海戏金蟾" if t > 1.2 else None)
+
+    def hold(self, g: Gfx, t: float):
+        dt = self.clock.dt(t)
+        self.scene(g, t, dt, text="刘海戏金蟾" if t < 6.0 else None)
 
     def exit(self, g: Gfx, t: float):
-        T = self.T["exit"]
-        t0 = self.hold_t
-        p = span(t, 0, T)
-        # 金蟾跳走（往右两跳），刘海追过去
-        u = (p * 2) % 1
-        tx = TX + ease_in(p) * 70
-        hop = math.sin(u * math.pi) * 8
-        g.d.line((0, G, 127, G), fill=1)
-        g.d.arc((TX + 22, G - 6, TX + 52, G + 6), 180, 360, fill=1)
-        lx = ease_in(span(t, 0.3, T)) * 80
-        hx, hy = self.liuhai(g, lx, t0 + t, 0, abs(math.sin(t * 8)) * 2)
-        self.string(g, hx, hy, math.sin((t0 + t) * 1.6) * 0.35 - 0.15 - p * 0.6, self.ncoin)
-        self.toad(g, tx, G - 26 - hop, t0 + t, (tx + 40, G - 30), 0.0)
-        mx_sprite(g, MX_TOAD, dx=round(p * 8))
-        g.fade(1 - span(t, T * 0.6, T))
+        dt = self.clock.dt(t)
+        tt = self.hold_t + t
+        x = TX
+        y = TY
+        for a, x0, x1 in ((0.0, TX, TX + 26), (0.5, TX + 26, TX + 60)):
+            if t >= a:
+                q = span(t, a, a + 0.5)
+                x = lerp(x0, x1, q)
+                y = TY - math.sin(q * math.pi) * 10
+        dx = DAO_X + ease_in(span(t, 0.4, 1.4)) * 30
+        self.scene(g, tt, dt, dao_x=dx, dao_pose="walk" if t > 0.4 else "offer", toad_xy=(x, y), events=False)

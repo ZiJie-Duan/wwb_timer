@@ -2,357 +2,522 @@
 
 依据：《搜神后记》卷一“丁令威，本辽东人，学道于灵虚山。后化鹤归辽，集城门华表柱。时有少年，举弓欲射之，
 鹤乃飞，徘徊空中而言曰：‘有鸟有鸟丁令威，去家千年今始归。城郭如故人民非，何不学仙冢累累。’遂高上冲天。”
-入场：一只鹤从右上方划一道弧飞来，落在华表顶上，收翅、转身站定。
-持续：鹤立华表，远处城郭；鹤会梳理羽毛、回头、单脚独立、仰头长鸣（声波）。
-      每 60 秒：一个少年从右边走来举弓，鹤腾空在城头上盘旋，空中逐字写出诗的一句（四句轮换），少年放下弓走开，鹤落回柱顶。
-收场：鹤展翅冲天而去（“遂高上冲天”）。
+（原文的少年举弓，这里换成小道士路过仰望——不画射箭。）
+
+入场：鹤从右上方扇着翅膀划一道弧飞来，落到华表顶上，落地一蹲、收翅站定。
+持续：华表（承露盘、云板、龙鳞柱、须弥座）上立着丹顶鹤，右边远处城墙与城楼，左边冢累累，云慢慢飘。
+      鹤一直有小动作：呼吸、眨眼、回头、梳羽、单脚独立、仰头长鸣（声波）。
+      hold 12 秒起每 50 秒：小道士从右边走来，抬头看见鹤，惊喜地一指；鹤低头看他、一蹲腾空，绕着城楼盘旋，
+      空中逐字写出诗的一句（四句轮换）；小道士仰头挥手；鹤滑翔落回柱顶，小道士拱手一揖，走开。
+收场：鹤展翅冲天而去（遂高上冲天）；若正在空中，就从那里直接向上冲走。
+点阵：鹤头（丹顶、眨眼，长鸣时张嘴、有声线）；飞的时候是上下扇动的翅膀。
 """
 from __future__ import annotations
 
 import math
 
-from ..engine.anim import clamp, ease_in, ease_in_out, ease_out, lerp, noise, rand, span
-from ..engine.fx import typewriter
-from ..engine.gfx import Gfx, Sprite
+from ..engine import pix
+from ..engine.anim import ease_in, ease_in_out, ease_out, ease_out_back, lerp, span
+from ..engine.chars import Part, daoshi
+from ..engine.gfx import Gfx, text_width
 from ..engine.scene import Rest, register
-from .x4_common import Bake, mx_sprite, sound_arcs
+from .x4_common import CLOUD, PEBBLE, Clock, ev, label, mx_art, sound_arcs, tuft
 
-PX, PY = 30, 29      # 华表柱顶（鹤脚站的位置）
-GROUND = 61
-EV0, EV_P = 20.0, 60.0
+FLOOR = 60
+PX, PY = 30, 36          # 华表柱顶（鹤脚）
+DX = 54                  # 小道士站的位置
+EV0, EV_P, EV_D = 12.0, 50.0, 24.0
 POEM = ["有鸟有鸟丁令威", "去家千年今始归", "城郭如故人民非", "何不学仙冢累累"]
+CIRCLE = (92, 26, 22, 4)  # 盘旋：中心 x, y，半径 rx, ry
+
+# ---------------------------------------------------------------- 鹤（朝右；部件分开贴，自动黑边分开）
+
+BODY = pix.frames("""
+         ######
+      ###########
+    ##############
+  .#.#.###########
+ .#.#.#.#.....####
+.#.#.#.#.#######
+ .#.#.#.#######
+  .#.#.#####
+   .#.#.
+    .#.
+""")[0]
+
+# 脖子 + 头（15 行，最下两行接在胸前）：up 立 / blink 眨眼 / call 仰头张嘴 / look 回头 / preen 梳羽 / down 低头看
+NECK = dict(zip(["up", "blink", "call", "look", "preen", "down"], pix.frames("""
+       #.#
+      #####
+      #.######
+      #########
+       ##
+       ##
+       #.
+       ##
+      #.
+      ##
+      #.
+      ##
+      ##
+     ###
+     ####
+---
+       #.#
+      #####
+      ########
+      #########
+       ##
+       ##
+       #.
+       ##
+      #.
+      ##
+      #.
+      ##
+      ##
+     ###
+     ####
+---
+          #
+      #  #
+     #.###
+    #####
+    ##.#
+    ####
+     ##
+     #.
+     ##
+     #.
+     ##
+     #.
+     ##
+     ###
+     ####
+---
+    #.#
+   #####
+######.#
+ ########
+    ##
+    ##
+    .#
+    ##
+     .#
+     ##
+     .#
+     ##
+     ##
+     ###
+     ####
+---
 
 
-def _huabiao() -> Sprite:
-    """华表：承露盘 + 柱身（盘龙纹）+ 云板 + 须弥座。宽 28，高 32，顶端 = 柱顶"""
-    b = Bake(28, 32)
-    b.poly([(5, 29), (23, 29), (23, 31), (5, 31)], 0.0)            # 座
-    b.poly([(8, 26), (20, 26), (21, 29), (7, 29)], 0.0)
-    b.poly([(11, 3), (17, 3), (17, 26), (11, 26)], 0.0)            # 柱身
-    for y in range(13, 26, 4):                                     # 盘龙纹（斜纹）
-        b.line([(12, y + 2), (16, y)])
-    b.poly([(0, 7), (27, 7), (27, 10), (0, 10)], 0.0)              # 云板
-    b.line([(0, 7), (2, 5), (4, 6)])
-    b.line([(27, 7), (25, 5), (23, 6)])
-    b.point(2, 8)
-    b.point(25, 8)
-    b.poly([(6, 0), (22, 0), (20, 3), (8, 3)], 0.0)                # 承露盘
-    return b.sprite()
 
 
-HUABIAO = _huabiao()
-YOUTH = Sprite("""
-  .###.
- #.#..#
- ##...#
-  #...#
-  .###.
-  ..#..
- .#####.
- #.###.#
- ..###..
- ..###..
- .#####.
- .#...#.
- .#...#.
- .#...#.
- ##...##
-""")
+      ###
+     ##.##
+    ##   ##
+  ##.#    #.
+  #.##    ##
+   .#    ##
+         ##
+        ###
+       ####
+       #####
+---
+       #.#
+      #####
+      #.###
+      ######
+       ## ##
+       ##   #
+       #.
+       ##
+      #.
+      ##
+      #.
+      ##
+      ##
+     ###
+     ####
+""")))
+NECK_DX = {"up": 0, "blink": 0, "call": 1, "look": 1, "preen": -2, "down": 0}
 
-MX_HEAD = """
-...##...
-..####..
-..#.#...
-..######
-..##....
-...#....
-...#....
-..###...
-"""
-MX_UP = """
-........
-#......#
-.#....#.
-..#..#..
-...##...
-...##...
-........
-........
-"""
-MX_DOWN = """
-........
-........
-...##...
-..####..
-.#.##.#.
-#......#
-........
-........
-"""
+LEGS = pix.frames("""
+  #  #
+  #  #
+  #  #
+  ## ##
+   #  #
+   #  #
+   #  #
+   #  #
+   #  #
+  ######
+---
+  #  #
+  #  ##
+  #   ##
+  ##   #
+   #
+   #
+   #
+   #
+   #
+  ###
+---
+  #  #
+  ## ##
+   #  #
+  ## ##
+  #  #
+  #  #
+ ######
+""")  # 两脚 / 单脚独立 / 下蹲
+
+FLY_BODY = pix.frames("""
+                            #.#
+                           #####
+                     #.#.#.###.#####
+          ######################
+#    .#.#.#.################
+####.#.#.#.##.......###
+ ####.#.#.##########
+ #     #.#
+""")[0]
+
+WING = pix.frames("""
+  #.#
+  .#.#.
+   .#.#.#
+   #.#.#.#
+    #.#.#.##
+    .#.#.####
+     #..######
+      #########
+      #..#######
+       ##########
+        #..#######
+         #########
+           #######
+---
+         #############
+    .#.#.#############
+#.#.#.#.####.##.#####
+ #.#.#.#.#.##.###
+   .#.#.####
+      .#.
+---
+           #######
+         #..######
+        #########
+       #..######
+      #########
+     #..#####
+    #.#.#.#.
+   #.#.#.#
+   .#.#.
+  .#.#
+  #.
+""")  # 上 / 平 / 下（黑色的初级飞羽用网点）
+
+WXY = [(2, -9), (-1, 1), (2, 4)]  # 各帧翅膀左上角相对机身左上角
+
+# ---------------------------------------------------------------- 华表、城郭、冢
 
 
-def crane_stand(g: Gfx, x: float, y: float, face: int = 1, pose: str = "up", k: float = 0.0, one_leg: bool = False,
-                crouch: float = 0.0):
-    """站立的鹤：脚在 (x, y)。pose: up 平常 / preen 梳羽 / call 仰头鸣 / look 低头看。k 0..1 姿势进度"""
-    f = face
-    cy = y - 11 + crouch * 3
-    bx = x - 2 * f
-    # 黑尾（三级飞羽垂在身后）
-    for j in range(3):
-        g.d.line((bx - 4 * f, cy - 2 + j, bx - (10 + j) * f, cy + 1 + j * 2), fill=1)
-    # 身体
-    g.d.ellipse((bx - 7, cy - 4, bx + 7, cy + 4), fill=0, outline=1)
-    g.d.line((bx - 3 * f, cy - 1, bx + 3 * f, cy - 2), fill=1)       # 翅缘
-    # 腿
-    g.d.line((x - 1, cy + 4, x - 1, y), fill=1)
-    g.d.line((x - 3, y, x + 1, y), fill=1)
-    if one_leg:
-        g.d.line((x + 1, cy + 4, x + 3, cy + 7, x + 1, cy + 8), fill=1)
+def _huabiao():
+    """华表 22×25：承露盘、云板（两端卷云）、龙鳞柱、须弥座"""
+    p = Part(22, 25)
+    p.shape("polygon", [(5, 0), (16, 0), (14, 2), (7, 2)], fill=1)      # 承露盘
+    p.d.line((6, 1, 15, 1), fill=0)
+    p.shape("rectangle", (8, 3, 13, 23), fill=1)                         # 柱身
+    p.d.line((8, 3, 13, 3), fill=0)
+    for y in range(10, 20, 3):                                           # 龙鳞（小弧）
+        for x in (9, 11):
+            p.px(x, y + (x == 11), 0), p.px(x + 1, y + 1 + (x == 11), 0)
+    p.dither([(12, 4), (13, 4), (13, 23), (12, 23)], 0.5, 0)             # 背光
+    p.shape("rectangle", (1, 5, 20, 7), fill=1)                          # 云板
+    p.d.line((3, 6, 18, 6), fill=0)
+    for x, d in ((0, 1), (21, -1)):                                      # 两端卷云
+        p.shape("ellipse", (x - 1 if d > 0 else x - 3, 3, x + 3 if d > 0 else x + 1, 7), fill=1)
+        p.px(x + d, 5, 0)
+    p.shape("rectangle", (6, 21, 15, 22), fill=1)                       # 须弥座
+    p.shape("rectangle", (4, 23, 17, 24), fill=1)
+    p.d.line((7, 22, 14, 22), fill=0)
+    for x in range(5, 17, 2):
+        p.px(x, 24, 0)
+    return p.sprite()
+
+
+def _gate():
+    """城楼 30×16：两重檐、檐角起翘、柱间门窗"""
+    p = Part(30, 16)
+    p.shape("polygon", [(0, 6), (4, 3), (25, 3), (29, 6), (25, 5), (4, 5)], fill=1)   # 上檐
+    p.shape("polygon", [(9, 3), (12, 0), (17, 0), (20, 3)], fill=1)                    # 屋顶
+    p.shape("rectangle", (5, 6, 24, 9), fill=1)
+    for x in range(7, 24, 4):
+        p.shape("rectangle", (x, 7, x + 1, 9), fill=0)
+    p.shape("polygon", [(1, 12), (4, 10), (25, 10), (28, 12), (25, 11), (4, 11)], fill=1)  # 下檐
+    p.shape("rectangle", (4, 12, 25, 15), fill=1)
+    p.dither([(4, 12), (25, 12), (25, 15), (4, 15)], 0.5, 0)
+    p.px(14, 1, 0), p.px(15, 1, 0)
+    return p.sprite()
+
+
+def _mound():
+    """坟冢 13×7：土丘 + 小碑"""
+    p = Part(13, 9)
+    p.shape("chord", (0, 3, 12, 14), 180, 360, fill=1)
+    p.dither([(0, 3), (12, 3), (12, 9), (0, 9)], 0.25, 0)
+    p.shape("rectangle", (5, 1, 7, 6), fill=1)
+    p.px(5, 1, 0), p.px(7, 1, 0)
+    p.px(6, 3, 0)
+    p.px(6, 4, 0)
+    return p.sprite()
+
+
+_PROPS: dict = {}
+
+
+def prop(name):
+    if name not in _PROPS:
+        _PROPS[name] = {"huabiao": _huabiao, "gate": _gate, "mound": _mound}[name]()
+    return _PROPS[name]
+
+
+def scenery(g: Gfx, t: float):
+    # 云
+    for i, (y, sp, k) in enumerate(((5, 1.3, 0), (15, 0.8, 1))):
+        x = 140 - ((t * sp + i * 70) % 190)
+        pix.blit(g, CLOUD[k], x, y, outline=False)
+    # 城墙（远景）：墙垛、砖缝网点
+    wy = 46
+    g.d.rectangle((66, wy, 127, FLOOR - 1), fill=0)
+    g.d.line((66, wy, 127, wy), fill=1)
+    for x in range(66, 128, 6):
+        g.d.rectangle((x, wy - 3, x + 2, wy - 1), outline=1)
+    pix.checker(g, (67, wy + 2, 128, FLOOR - 1), 0.125)
+    g.d.line((66, wy, 66, FLOOR), fill=1)
+    pix.blit(g, prop("gate"), 88, wy - 17)
+    # 城门洞
+    g.d.chord((95, wy + 3, 107, wy + 20), 180, 360, fill=0, outline=1)
+    g.d.rectangle((96, wy + 9, 106, FLOOR - 1), fill=0)
+    g.d.line((95, wy + 9, 95, FLOOR - 1), fill=1)
+    g.d.line((107, wy + 9, 107, FLOOR - 1), fill=1)
+    # 冢累累
+    for x, y in ((2, FLOOR - 8), (13, FLOOR - 6)):
+        pix.blit(g, prop("mound"), x, y)
+    # 地面
+    g.d.line((0, FLOOR, 127, FLOOR), fill=1)
+    for x in range(-4, 132, 9):
+        g.px(x, FLOOR + 2), g.px(x + 4, FLOOR + 3)
+    tuft(g, 44, FLOOR, t, 0)
+    tuft(g, 118, FLOOR, t, 1)
+    pix.blit(g, PEBBLE[0], 52, FLOOR - 3)
+    pix.blit(g, prop("huabiao"), PX - 11, PY)
+
+
+def draw_crane(g: Gfx, x: float, y: float, neck: str = "up", legs: int = 0, flip: bool = False):
+    """站着的鹤（朝右），(x, y) = 落脚点。legs：0 两脚 / 1 单脚独立 / 2 下蹲"""
+    x, y = int(round(x)), int(round(y))
+    L = LEGS[legs]
+    sq = 10 - L.h
+
+    def at(ox, oy, spr):
+        px = x + ox if not flip else x - ox - spr.w
+        pix.blit(g, spr, px, y + oy, flip=flip)
+
+    at(-3, -L.h, L)
+    at(-10, -18 + sq, BODY)
+    nk = NECK[neck]
+    at(-3 + NECK_DX[neck], -15 - nk.h + sq, nk)  # 按底边对齐（字符画开头的空行会被去掉）
+
+
+def draw_fly(g: Gfx, x: float, y: float, t: float, flip: bool = False, flap: float = 7.0, glide: bool = False):
+    """飞的鹤，(x, y) ≈ 身体中心；朝右，flip 朝左"""
+    i = 1 if glide else [0, 1, 2, 1][int(t * flap) % 4]
+    x, y = int(round(x)), int(round(y))
+    bx, by = x - 16, y - 4
+    w = WING[i]
+    wx, wy = WXY[i]
+    if flip:
+        pix.blit(g, FLY_BODY, 2 * x - bx - FLY_BODY.w, by, flip=True)
+        pix.blit(g, w, 2 * x - (bx + wx) - w.w, by + wy, flip=True)
     else:
-        g.d.line((x + 1, cy + 4, x + 2, y), fill=1)
-        g.d.line((x + 1, y, x + 4, y), fill=1)
-    # 颈与头
-    nx0, ny0 = bx + 5 * f, cy - 2
-    if pose == "preen":       # 低头伸进背羽里梳理
-        hx, hy = bx + lerp(6, -1, k) * f, lerp(cy - 14, cy - 6, k)
-        mid = (bx + 9 * f, cy - 10)
-        beak = (-f * 3, 3)
-    elif pose == "call":      # 仰头向天
-        hx, hy = bx + lerp(6, 8, k) * f, lerp(cy - 14, cy - 16, k)
-        mid = (bx + 7 * f, cy - 8)
-        beak = (f * lerp(5, 2, k), lerp(0, -5, k))
-    elif pose == "look":      # 低头看下面
-        hx, hy = bx + lerp(6, 10, k) * f, lerp(cy - 14, cy - 9, k)
-        mid = (bx + 10 * f, cy - 9)
-        beak = (f * 3, lerp(0, 4, k))
-    else:
-        hx, hy = bx + 6 * f, cy - 14
-        mid = (bx + 9 * f, cy - 8)
-        beak = (f * 5, 1)
-    pts = []
-    for i in range(7):        # 二次曲线的 S 颈
-        u = i / 6
-        px = (1 - u) ** 2 * nx0 + 2 * (1 - u) * u * mid[0] + u * u * hx
-        py = (1 - u) ** 2 * ny0 + 2 * (1 - u) * u * mid[1] + u * u * hy
-        pts.append((px, py))
-    g.d.line(pts, fill=1, width=2)
-    g.d.ellipse((hx - 2, hy - 2, hx + 2, hy + 1), fill=1)
-    g.px(hx + f, hy - 3)                                             # 丹顶
-    g.px(hx, hy - 3)
-    g.px(hx + f, hy - 1, 0)                                          # 眼
-    g.d.line((hx + 2 * f, hy, hx + 2 * f + beak[0], hy + beak[1]), fill=1)
+        pix.blit(g, FLY_BODY, bx, by)
+        pix.blit(g, w, bx + wx, by + wy)
+    return i
 
 
-def crane_fly(g: Gfx, x: float, y: float, flap: float, face: int = 1, s: float = 1.0):
-    """飞翔的鹤：身体中心 (x, y)，flap 为扇翅相位（弧度），s 缩放"""
-    f = face
-    w = math.sin(flap)
-    up = -1 if w >= 0 else 1
-    span_ = 15 * s * abs(w) + 3 * s
-    # 远侧翅（翅膀抬起时在身后露出一点）
-    if w > 0.3:
-        g.d.line((x - 1 * f * s, y - 2, x + 2 * f * s, y - span_ * 0.8, x - 3 * f * s, y - span_ * 0.7), fill=1)
-    g.d.ellipse((x - 6 * s, y - 2 * s, x + 5 * s, y + 2 * s), fill=0, outline=1)
-    g.d.line((x + 4 * f * s, y - 1, x + 13 * f * s, y - 3 * s), fill=1, width=2 if s >= 0.8 else 1)   # 直颈前伸
-    hx, hy = x + 13 * f * s, y - 3 * s
-    g.d.rectangle((hx - 1, hy - 1, hx + 1, hy + 1), fill=1)
-    g.px(hx, hy - 2)
-    g.d.line((hx + 1 * f, hy, hx + 5 * f * s, hy + 1), fill=1)                                   # 喙
-    g.d.line((x - 5 * f * s, y + 1, x - 15 * f * s, y + 2 * s), fill=1)                          # 长腿后拖
-    # 近侧翅：前缘、翅尖黑羽（实心）、后缘锯齿
-    tip = (x - 2 * f * s, y + up * span_)
-    lead = [(x + 3 * f * s, y - 1), (x + 2 * f * s, y + up * span_ * 0.6), tip]
-    trail = [(x - 6 * f * s, y + up * span_ * 0.8), (x - 5 * f * s, y + up * span_ * 0.4), (x - 4 * f * s, y)]
-    g.d.polygon(lead + trail, fill=0, outline=1)
-    g.d.polygon([tip, (x - 6 * f * s, y + up * span_ * 0.8), (x - 3 * f * s, y + up * span_ * 0.65)], fill=1)
+MX_HEAD = {
+    "up": ["  ###   ", " ##.##  ", " #.#####", " ####   ", "  ##    ", "  ##    ", "   ##   ", "  ####  "],
+    "blink": ["  ###   ", " ##.##  ", " ###### ", " ####   ", "  ##    ", "  ##    ", "   ##   ", "  ####  "],
+    "call": ["     ## ", "   ### #", " ##.#   ", " ####   ", "  ##    ", "  ##    ", "   ##   ", "  ####  "],
+}
+MX_FLY = [["#      #", "##    ##", " ##  ## ", "  ####  ", "  ####  ", "   ##   ", "        ", "        "],
+          ["        ", "        ", "#      #", "########", "  ####  ", "   ##   ", "        ", "        "],
+          ["        ", "        ", "        ", "  ####  ", "########", "##    ##", "#      #", "        "]]
 
 
 @register
-class CraneReturns(Rest):
+class CraneRest(Rest):
     id = "x4.crane"
     name = "鹤归华表"
-    desc = "仙鹤立在城门华表上梳羽长鸣；少年举弓，鹤便腾空盘旋吟出丁令威的诗，再落回柱顶"
-    T = {"enter": 3.0, "exit": 1.3}
+    desc = "丹顶鹤立在华表顶上梳羽长鸣；小道士路过仰望，鹤腾空绕城楼盘旋，空中写出丁令威的诗，再落回柱顶"
+    T = {"enter": 3.2, "exit": 1.4}
 
     def setup(self):
+        self.clock = Clock()
         self.poem0 = self.rng.randrange(4)
 
-    # ------------------------------------------------------------ 布景
+    # ------------------------------------------------------------ 鹤站着时的小动作（按 t）
 
-    def city(self, g: Gfx):
-        """远处的城郭：垛口城墙 + 城门楼（细线）"""
-        y = 47
-        g.d.line((72, y, 127, y), fill=1)
-        for x in range(74, 128, 6):
-            g.d.rectangle((x, y - 2, x + 2, y), fill=1)
-        g.d.line((72, y, 72, GROUND), fill=1)
-        g.d.line((72, 54, 127, 54), fill=1)
-        # 城门楼
-        g.d.rectangle((92, 40, 112, 46), fill=0, outline=1)
-        g.d.polygon([(87, 41), (117, 41), (111, 36), (93, 36)], fill=0, outline=1)
-        g.d.line((99, 36, 105, 36), fill=1)
-        g.d.line((102, 33, 102, 36), fill=1)
-        g.d.arc((97, 49, 107, 63), 180, 360, fill=1)  # 城门洞
-        g.d.line((97, 56, 97, GROUND), fill=1)
-        g.d.line((107, 56, 107, GROUND), fill=1)
-        # 城外的坟冢（冢累累）
-        for i, x in enumerate((82, 120)):
-            g.d.arc((x - 4, 57, x + 4, 65), 180, 360, fill=1)
+    def idle_pose(self, t: float):
+        """返回 (neck, legs)：一个 32 秒的小循环，叠加眨眼"""
+        k = t % 32
+        if 4 < k < 7.5:
+            return ("look" if k < 7 else "up"), 0
+        if 11 < k < 15:
+            return ("preen" if int((k - 11) * 3) % 3 != 2 else "look"), 0
+        if 18 < k < 26:
+            return "up", 1
+        if 27.5 < k < 30:
+            return ("call" if (k - 27.5) % 0.8 < 0.55 else "up"), 0
+        return ("blink" if t % 3.3 < 0.15 else "up"), 0
 
-    def scenery(self, g: Gfx, t: float):
-        g.d.line((0, GROUND, 127, GROUND), fill=1)
-        self.city(g)
-        for i in range(2):  # 远云
-            x = (rand(i, self.seed) * 160 + t * (1.5 + i)) % 170 - 30
-            y = 8 + i * 11
-            g.d.line((x, y, x + 16, y), fill=1)
-            g.d.line((x + 5, y - 2, x + 12, y - 2), fill=1)
-        g.blit(HUABIAO, PX - 14, PY)
+    def calling(self, t: float) -> bool:
+        k = t % 32
+        return 27.5 < k < 30 and (k - 27.5) % 0.8 < 0.55
 
-    # ------------------------------------------------------------ 鹤的日常
+    # ------------------------------------------------------------ 事件：小道士来、鹤盘旋写诗
 
-    def idle(self, t: float):
-        """返回 (pose, k, face, one_leg)"""
-        face = 1 if int((t + 9) // 23) % 3 != 2 else -1
-        one_leg = int((t + 4) // 31) % 2 == 1
-        k = (t + 3) % 17
-        if k < 3.0:
-            return "preen", span(k, 0, 0.6) * (1 - span(k, 2.4, 3.0)), face, one_leg
-        k = (t + 11) % 29
-        if k < 2.6:
-            return "call", span(k, 0, 0.4) * (1 - span(k, 2.1, 2.6)), face, False
-        return "up", 0.0, face, one_leg
+    def flight(self, loc: float):
+        """事件中鹤的位置：返回 (x, y, mode, flip)；mode = stand / fly / glide / crouch"""
+        if loc < 5.0:
+            return PX, PY, "stand", False
+        if loc < 5.5:
+            return PX, PY, "crouch", False
+        cx, cy, rx, ry = CIRCLE
+        if loc < 7.0:  # 腾空：从柱顶斜升到盘旋圈的左端
+            q = ease_out(span(loc, 5.5, 7.0))
+            return lerp(PX, cx - rx, q), lerp(PY - 14, cy, q) - math.sin(q * math.pi) * 6, "fly", False
+        if loc < 16.0:  # 盘旋：从左端出发顺时针绕 1.5 圈
+            a = math.pi + (loc - 7.0) / 9.0 * 3 * math.pi
+            x, y = cx + math.cos(a) * rx, cy + math.sin(a) * ry
+            return x, y, "fly", math.sin(a) > 0
+        if loc < 18.5:  # 滑翔落回（从右端）
+            q = ease_in_out(span(loc, 16.0, 18.5))
+            return lerp(cx + rx, PX, q), lerp(cy, PY - 14, q), "glide", True
+        return PX, PY, "stand", False
 
-    def calling(self, t: float) -> float:
-        k = (t + 11) % 29
-        return (k - 0.4) / 1.7 if 0.4 < k < 2.1 else -1
-
-    # ------------------------------------------------------------ 少年举弓事件
-
-    def event(self, t: float):
-        if t < EV0:
-            return None, 0
-        n = int((t - EV0) // EV_P)
-        return (t - EV0) % EV_P, n
-
-    def youth(self, g: Gfx, k: float):
-        if k > 12:
-            return
-        if k < 2:
-            x = lerp(130, 54, ease_out(k / 2))
-        elif k < 9:
-            x = 54
+    def scene(self, g: Gfx, t: float, dt: float, show_crane: bool = True):
+        """画一帧 hold（t = hold 时间）；返回点阵用的状态"""
+        scenery(g, t)
+        e = ev(t, EV_P, EV0, EV_D)
+        cx_state = ("stand", PX, PY)
+        text = None
+        if e is None:
+            neck, legs = self.idle_pose(t)
+            if show_crane:
+                draw_crane(g, PX, PY, neck, legs)
+                if self.calling(t):
+                    sound_arcs(g, PX + 9, PY - 28, (t * 1.5) % 1, d=1, n=2)
+            return {"mode": "stand", "neck": neck}, None
+        n, loc = e
+        # 小道士
+        if loc < 3.0:
+            daoshi(g, lerp(140, DX, ease_out(span(loc, 0, 3.0))), FLOOR, "walk", loc, flip=True)
+        elif loc < 5.5:
+            daoshi(g, DX, FLOOR, "point" if loc > 3.6 else "idle", loc, flip=True, face="wow")
+        elif loc < 16.0:
+            pose = "raise" if 8.5 < loc < 12 and int(loc * 3) % 2 == 0 else "idle"
+            daoshi(g, DX, FLOOR, pose, loc, flip=loc < 7.0, face="happy")
+        elif loc < 20.5:
+            daoshi(g, DX, FLOOR, "bow" if 18.8 < loc < 20 else "gongshou" if loc > 18.5 else "idle", loc, flip=True)
         else:
-            x = lerp(54, 132, ease_in((k - 9) / 3))
-        walk = (k < 2 or k > 9) and int(k * 6) % 2
-        y = GROUND - 15 - (1 if walk else 0)
-        g.blit(YOUTH, x, y)
-        if 2 < k < 7.5:   # 举弓：斜指柱顶的鹤
-            r = span(k, 2, 2.6)
-            ax, ay = x, y + 7 - r * 4
-            dx, dy = -0.8, -0.6                      # 指向左上
-            nx, ny = -dy, dx
-            g.d.line((x + 1, y + 7, ax, ay), fill=1)   # 手臂
-            pts = [(ax + nx * 6 * c + dx * 3 * (1 - c * c), ay + ny * 6 * c + dy * 3 * (1 - c * c))
-                   for c in (-1, -0.5, 0, 0.5, 1)]
-            g.d.line(pts, fill=1)                         # 弓
-            g.d.line((pts[0], pts[-1]), fill=1)           # 弦
-            g.d.line((ax + 2, ay + 1, ax + dx * 8, ay + dy * 8), fill=1)   # 箭
-
-    def flight(self, k: float):
-        """事件中鹤的位置：返回 (x, y, flap, face) 或 None（在柱上）"""
-        if k < 3.0 or k >= 15.5:
-            return None
-        if k < 4.0:      # 起飞：斜向上
-            p = ease_in(k - 3.0)
-            return PX + p * 14, PY - 12 - p * 10, k * 14, 1
-        if k < 13.0:     # 盘旋（椭圆）
-            a = (k - 4.0) / 9.0 * 2 * math.pi * 1.5
-            cx, cy = 74, 22
-            x = cx + math.cos(a - math.pi * 0.85) * 44
-            y = cy + math.sin(a - math.pi * 0.85) * 9
-            face = 1 if -math.sin(a - math.pi * 0.85) > 0 else -1
-            return x, y, k * 9, face
-        p = ease_in_out((k - 13.0) / 2.5)  # 落回柱顶
-        a = 9.0 / 9.0 * 2 * math.pi * 1.5 - math.pi * 0.85
-        sx, sy = 74 + math.cos(a) * 44, 22 + math.sin(a) * 9
-        return lerp(sx, PX, p), lerp(sy, PY - 12, p), k * (9 - 4 * p), -1 if sx > PX else 1
-
-    # ------------------------------------------------------------ 阶段
-
-    def hold(self, g: Gfx, t: float):
-        self.scenery(g, t)
-        k, n = self.event(t)
-        fl = self.flight(k) if k is not None else None
-        if k is not None:
-            self.youth(g, k)
-        if fl:
-            x, y, flap, face = fl
-            crane_fly(g, x, y, flap, face)
-            if 4.2 < k < 13.5:
-                line = POEM[(self.poem0 + n) % 4]
-                typewriter(g, 64, 1, line, k - 4.2, cps=1.6, align="center")
-            mx_sprite(g, MX_UP if math.sin(flap) > 0 else MX_DOWN)
-            return
-        if k is not None and k < 3.0:   # 少年来了：鹤低头看，然后下蹲准备起飞
-            pose, pk = "look", span(k, 1.0, 1.6)
-            crouch = span(k, 2.5, 3.0)
-            crane_stand(g, PX, PY, 1, pose, pk, False, crouch)
-        elif k is not None and k < 17.0:  # 刚落下：收翅、整理
-            crane_stand(g, PX, PY, -1 if k < 16 else 1, "up", 0, False, 1 - span(k, 15.5, 16.2))
+            daoshi(g, lerp(DX, 140, ease_in(span(loc, 20.5, EV_D))), FLOOR, "walk", loc)
+        x, y, mode, flip = self.flight(loc)
+        neck = "up"
+        if mode in ("stand", "crouch"):
+            neck = "down" if 4.0 < loc < 5.5 else ("blink" if loc % 3.3 < 0.15 else "up")
+            if loc > 18.5:
+                neck = "look" if 19 < loc < 20.2 else neck
+            if mode == "crouch" or 18.5 <= loc < 18.8:  # 起跳前一蹲 / 落地一蹲
+                draw_crane(g, x, y, neck, 2)
+            else:
+                draw_crane(g, x, y, neck, 0)
+            if 3.6 < loc < 4.4:  # 小道士惊喜：头上一个“！”
+                g.d.rectangle((DX + 9, 18, DX + 10, 22), fill=1)
+                g.d.rectangle((DX + 9, 24, DX + 10, 25), fill=1)
         else:
-            pose, pk, face, one = self.idle(t)
-            crane_stand(g, PX, PY, face, pose, pk, one)
-            c = self.calling(t)
-            if c >= 0:
-                hx = PX - 2 * face + 9 * face
-                sound_arcs(g, hx + 2 * face, PY - 30, c % 1, n=3, gap=3, right=face > 0, spread=0.8)
-                g.mx_level = 2
-        mx_sprite(g, MX_HEAD)
-        if (t % 5.1) < 0.15:
-            g.mx[2, 4] = True
-        c = self.calling(t)
-        if c >= 0:
-            for i in range(3):
-                if int(c * 6) % 3 >= i:
-                    g.mx_set(5 + i, 1 + i)
+            draw_fly(g, x, y, loc, flip=flip, glide=mode == "glide")
+        if 7.0 < loc < 16.5:
+            text = (POEM[(self.poem0 + n) % 4], loc - 7.0)
+        return {"mode": mode, "neck": neck, "loc": loc}, text
+
+    def poem(self, g: Gfx, text):
+        if not text:
+            return
+        s, k = text
+        n = min(len(s), int(k * 2.2) + 1)
+        w = text_width(s)
+        x0 = 126 - w
+        label(g, x0, 2, s[:n])
+
+    def mx(self, g: Gfx, st: dict, t: float):
+        if st["mode"] in ("fly", "glide"):
+            i = 1 if st["mode"] == "glide" else [0, 1, 2, 1][int(t * 7) % 4]
+            mx_art(g, MX_FLY[i])
+            return
+        nk = st["neck"]
+        mx_art(g, MX_HEAD["call" if nk == "call" else "blink" if nk == "blink" else "up"])
+        if nk == "call":
+            g.mx_set(7, 1 + int(t * 6) % 3)
+
+    # ------------------------------------------------------------ 三段
 
     def enter(self, g: Gfx, t: float):
-        T = self.T["enter"]
-        self.scenery(g, t - T)
-        if t < 2.2:   # 从右上飞来，绕一个弧落到柱顶
-            p = ease_out(span(t, 0, 2.2))
-            x = lerp(140, PX, p) + math.sin(p * math.pi) * 6
-            y = lerp(-8, PY - 12, p) - math.sin(p * math.pi) * 10
-            crane_fly(g, x, y, t * 10 * (1 - 0.5 * p), -1)
-            mx_sprite(g, MX_UP if math.sin(t * 10 * (1 - 0.5 * p)) > 0 else MX_DOWN)
-        else:         # 落定、收翅、转身
-            crane_stand(g, PX, PY, -1 if t < 2.6 else 1, "up", 0, False, 1 - span(t, 2.2, 2.8))
-            mx_sprite(g, MX_HEAD)
+        self.clock.dt(t)
+        scenery(g, t)
+        if t < 2.2:  # 从右上方划弧飞来
+            q = ease_out(span(t, 0, 2.2))
+            x = lerp(150, PX + 2, q)
+            y = lerp(4, PY - 14, q) - math.sin(q * math.pi) * 4
+            draw_fly(g, x, y, t, flip=True, glide=q > 0.8)
+            mx_art(g, MX_FLY[[0, 1, 2, 1][int(t * 7) % 4]])
+        else:
+            k = t - 2.2
+            if k < 0.35:
+                draw_crane(g, PX, PY, "up", 2)
+            else:
+                draw_crane(g, PX, PY, "look" if k < 0.7 else "up", 0)
+            mx_art(g, MX_HEAD["up"])
+
+    def hold(self, g: Gfx, t: float):
+        self.clock.dt(t)
+        st, text = self.scene(g, t, 0)
+        self.mx(g, st, t)
+        self.poem(g, text)
 
     def exit(self, g: Gfx, t: float):
-        T = self.T["exit"]
-        t0 = self.hold_t
-        self.scenery(g, t0 + t)
-        k, n = self.event(t0)
-        fl = self.flight(k) if k is not None else None
-        if k is not None:
-            self.youth(g, k)
-        p = ease_in(span(t, 0, T))
-        if fl:            # 正在天上：直接往高处冲
-            x0, y0 = fl[0], fl[1]
-            p = ease_in(span(t, 0, T))
-        elif t < 0.25:
-            crane_stand(g, PX, PY, 1, "up", 0, False, span(t, 0, 0.25))
-            mx_sprite(g, MX_HEAD)
-            g.fade(1 - span(t, T * 0.5, T))
-            return
-        else:
-            x0, y0 = PX, PY - 12
-            p = ease_in(span(t, 0.25, T))
-        # 遂高上冲天
-        x = x0 + p * 50
-        y = y0 - p * 60
-        crane_fly(g, x, y, t * 16, 1, s=1 - 0.4 * p)
-        mx_sprite(g, MX_UP if math.sin(t * 16) > 0 else MX_DOWN, dy=-int(p * 6))
-        g.fade(1 - span(t, T * 0.5, T))
+        """展翅冲天：站着就一蹲起飞；在空中就从那里直接往上冲"""
+        h = self.hold_t
+        e = ev(h, EV_P, EV0, EV_D)
+        x, y, mode = PX, PY - 14, "stand"
+        if e is not None:
+            x, y, mode, _ = self.flight(e[1])
+        scenery(g, h + t)
+        if e is not None and 3.0 <= e[1] < 20.5:  # 小道士还在：仰头目送
+            daoshi(g, DX, FLOOR, "raise" if t > 0.4 else "idle", h + t, flip=True, face="wow")
+        if mode in ("stand", "crouch"):
+            if t < 0.3:
+                draw_crane(g, PX, PY, "up", 2)
+                mx_art(g, MX_HEAD["up"])
+                return
+            x, y = PX, PY - 14
+        q = ease_in(span(t, 0.0 if mode not in ("stand", "crouch") else 0.3, self.T["exit"]))
+        draw_fly(g, x + q * 24, y - q * 60, t, flap=11)
+        mx_art(g, MX_FLY[[0, 1, 2, 1][int(t * 11) % 4]])
+        g.mx_level = 1 + int(5 * q)

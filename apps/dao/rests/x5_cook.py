@@ -1,294 +1,315 @@
-"""烧火：斋堂的砖灶，大铁锅扣着木锅盖，烟囱冒烟。小道士坐小板凳守灶门：转身从柴堆抽一根柴塞进灶膛，
-火一旺；拿吹火筒鼓腮吹三口，火苗蹿起；锅里水开，盖缝冒白汽。
-彩蛋：一口倒烟扑了满脸——熏成花脸，眼冒金星，“咳咳”；水开得太猛，锅盖噗噗直跳。
+"""烧火（像素风）：斋堂的砖灶，大铁锅扣着木锅盖，锅盖缝冒白汽，烟囱冒烟；灶门里火苗一跳一跳。
+小道士跪坐在灶前的蒲墩上，一段 12 秒：转身从柴堆抽一根柴，转回来送进灶膛（火一旺、火星迸出）；
+拿吹火筒对着灶门鼓腮吹三口，每口火苗都往上蹿；然后守着火，仰头打个哈欠。
+彩蛋：约三成的轮次第三口吹完倒烟——一团黑烟从灶门扑到脸上，熏成花脸、头上转金星，冒出“咳咳”；
+约每 53 秒水开得太猛，锅盖噗噗直跳、白汽喷一圈。
 左侧竖写“若烹小鲜”（《道德经》六十章：治大国，若烹小鲜）。
 """
 from __future__ import annotations
 
 import math
 
-from ..engine.anim import clamp, ease_in, ease_in_out, ease_out, lerp, noise, rand, span
-from ..engine.fx import flame, smoke_wisp
-from ..engine.gfx import Gfx
+from ..engine import pix
+from ..engine.anim import lerp, rand, span
+from ..engine.gfx import Gfx, Sprite
 from ..engine.scene import Rest, register
-from .x5_common import bubble, daoshi, dellipse, dpoly, event, fade_box, phase
+from .x5_common import STARS, Clock, cyc, event, fade_out, keys, scroll, worker
 
-GY = 60
-S0, S1, STOP = 72, 127, 34          # 灶台左右、台面
-DOOR = (76, 90, 45, 57)             # 灶门 x0 x1 拱顶 底
-X = 52                              # 坐的位置
-SEAT = 56                           # 板凳面
-P = 12.0
-LX0, LX1 = 78, 110                  # 锅盖
-LC = (LX0 + LX1) // 2
+FLOOR = 56
+TEXT_X = 3
+DX = 52
+S0, S1, TOP = 68, 108, 32          # 灶台左右、台面
+DOOR = (72, 43, 84, 55)            # 灶门
+CYC = 12.0
+
+FLAME = pix.frames("""
+   #
+  ##  #
+  ### #
+ #.## #
+ #..###
+##...##
+#.....#
+---
+  #
+  #  #
+ ### #
+ #.###
+##..##
+#...###
+#.....#
+---
+    #
+ #  #
+ #  ##
+ ##.##
+##..##
+#...###
+#.....#
+""")
+EMBER = Sprite("""
+#.#.#.#.#
+.#.#.#.#.
+""")
+
+STICK = Sprite("""
+.#
+############
+##.#.###.##
+""")
+
+TUBE = Sprite("""
+################
+#.##.###.##.###.
+################
+""")
+
+PIECE = Sprite("""
+  ####
+ #....#
+#..##..#
+#.#..#.#
+########
+""")
+
+LID = Sprite("""
+         ###
+        #...#
+         ###
+   ###############
+ ####.#########.####
+#####.#########.#####
+#####################
+""")
+
+MATCH_FIRE = Sprite(" #\n###\n #")
+
+STOOL = Sprite("""
+##############
+#.##########.#
+ #          #
+ #          #
+""")
 
 
 @register
 class Cook(Rest):
     id = "x5.cook"
     name = "烧火"
-    desc = "坐小板凳守灶门添柴、吹火筒吹火，锅盖冒汽；偶尔倒烟熏成花脸"
-    T = {"enter": 3.0, "exit": 1.3}
+    desc = "斋堂砖灶前跪坐烧火：抽柴送进灶膛、拿吹火筒鼓腮吹三口，火苗蹿高；偶尔倒烟熏成花脸，锅盖噗噗直跳"
+    T = {"enter": 3.0, "exit": 1.2}
 
     def setup(self):
-        self.s = self.rng.randrange(1000)
-        self._ht = 0.0
+        self.clock = Clock()
+        self.puffs = pix.Puffs(self.seed)        # 烟囱的烟、锅上的汽
+        self.soot = pix.Puffs(self.seed + 1)     # 倒烟
+        self.sparks = pix.Sparks(self.seed + 2)
+        self.s = self.seed * 31 + 3
 
-    # ------------------------------------------------------------ 灶
+    # ------------------------------------------------ 灶台
 
-    def stove(self, g: Gfx, t: float, fire: float, lid_hop: float = 0.0, steam: float = 1.0):
-        d = g.d
-        d.rectangle((S0, STOP, S1, GY), fill=0, outline=1)
-        d.rectangle((S0 - 2, STOP - 2, S1 + 2, STOP), fill=1)            # 台面
-        for r, y in enumerate(range(STOP + 7, GY, 7)):                   # 砖缝（疏一点）
-            for x in range(S0 + 2 + (r % 2) * 7, S1 - 2, 14):
-                d.line((x, y, x + 9, y), fill=1)
-                d.line((x + 11, y - 3, x + 11, y - 1), fill=1)
-        x0, x1, ytop, ybot = DOOR
-        d.rectangle((x0, ytop + 3, x1, ybot), fill=0, outline=1)       # 灶门
-        d.chord((x0, ytop, x1, ytop + 7), 180, 360, fill=0, outline=1)
-        d.rectangle((x0 + 1, ytop + 3, x1 - 1, ybot - 1), fill=0)
-        # 灶膛里的火
-        cx = (x0 + x1) / 2
-        if fire > 0:
-            flame(g, cx - 2, ybot - 1, 5 + fire * 2, 4 + fire * 6, t, 1)
-            flame(g, cx + 3, ybot - 1, 4 + fire, 3 + fire * 4, t + 0.3, 2)
-        for j in range(4):  # 炭
-            g.px(x0 + 2 + j * 3, ybot - 1)
+    def stove(self, g: Gfx, t: float, heat: float, boil: float | None):
+        # 后墙：一个挂勺的钉、一扇小窗
+        g.d.rectangle((30, 8, 46, 22), outline=1)
+        g.d.line((38, 8, 38, 22), fill=1)
+        g.d.line((30, 15, 46, 15), fill=1)
+        g.d.line((19, FLOOR, 127, FLOOR), fill=1)
+        pix.checker(g, (19, FLOOR + 2, 128, 64), 0.125)
         # 烟囱
-        d.rectangle((116, 4, 123, STOP - 2), fill=0, outline=1)
-        d.rectangle((114, 2, 125, 5), fill=1)
-        for y in range(11, STOP - 2, 8):
-            d.line((117, y, 122, y), fill=1)
-        smoke_wisp(g, 119.5, 1, 6 + fire * 2, t, self.s, sway=2, speed=4, drift=-4)
-        # 锅 + 木盖
-        hop = lid_hop
-        d.chord((LX0, STOP - 9 - hop, LX1, STOP + 5 - hop), 180, 360, fill=0, outline=1)
-        d.line((LX0 + 2, STOP - 2 - hop, LX1 - 2, STOP - 2 - hop), fill=1)
-        for x in (LC - 9, LC, LC + 9):
-            d.line((x, STOP - 7 - hop + (1 if x != LC else 0), x, STOP - 2 - hop), fill=1)
-        d.rectangle((LC - 3, STOP - 11 - hop, LC + 3, STOP - 9 - hop), fill=1)   # 盖钮
-        d.line((LX0 - 2, STOP - 1, LX1 + 2, STOP - 1), fill=1)                   # 锅沿
-        # 白汽
-        if steam > 0:
-            for i, sx in enumerate((LX0 + 2, LX1 - 3)):
-                h = (7 + 6 * steam) * (0.7 + 0.3 * noise(t * 0.7 + i, 3))
-                smoke_wisp(g, sx, STOP - 3 - hop, h, t, self.s + 5 + i, sway=2.5, speed=5, drift=(-1 if i == 0 else 1) * 3)
+        g.d.rectangle((S1 - 9, 6, S1 - 2, TOP), fill=1)
+        g.d.rectangle((S1 - 11, 4, S1, 6), fill=1)
+        for y in range(9, TOP, 4):
+            g.d.line((S1 - 9, y, S1 - 2, y), fill=0)
+            g.px(S1 - 6 + (y // 4) % 2 * 2, y + 1, 0), g.px(S1 - 6 + (y // 4) % 2 * 2, y + 2, 0)
+        # 灶身：砖缝
+        g.d.rectangle((S0, TOP, S1, FLOOR), fill=1)
+        g.d.rectangle((S0 - 2, TOP - 2, S1 + 2, TOP), fill=1)
+        g.d.line((S0 - 2, TOP + 1, S1 + 2, TOP + 1), fill=0)
+        for r, y in enumerate(range(TOP + 5, FLOOR, 4)):
+            g.d.line((S0, y, S1, y), fill=0)
+            for x in range(S0 + 3 + (r % 2) * 4, S1, 8):
+                g.d.line((x, y - 3, x, y - 1), fill=0)
+        pix.checker(g, (S1 - 6, TOP + 2, S1 + 1, FLOOR), 0.5, fill=0)
+        # 灶门：拱形开口，里面火
+        x0, y0, x1, y1 = DOOR
+        g.d.rectangle((x0 - 2, y0 - 1, x1 + 2, y1), fill=1)
+        g.d.pieslice((x0, y0 - 4, x1, y0 + 6), 180, 360, fill=0)
+        g.d.rectangle((x0, y0 + 1, x1, y1), fill=0)
+        g.d.line((x0 - 2, y0 - 4, x1 + 2, y0 - 4), fill=0)
+        pix.blit(g, EMBER, x0 + 2, y1 - 2, outline=False)
+        fr = pix.anim(FLAME, t + heat * 0.3, 8 + heat * 6)
+        sc = 1.0 + heat * 0.5
+        spr = pix.stretch(fr, 1.0, sc)
+        pix.blit(g, spr, x0 + 2, y1 - 2 - spr.h, outline=False)
+        if heat > 0.4:
+            fr2 = pix.anim(FLAME, t + 0.4, 9)
+            pix.blit(g, fr2, x0 + 5, y1 - 2 - fr2.h, outline=False)
+        # 锅盖（水开得猛时噗噗跳）
+        jump = 0
+        if boil is not None and boil < 5.0:
+            jump = 2 if int(boil * 7) % 2 == 0 else 0
+        pix.blit(g, LID, 77, TOP - 9 - jump)
+        g.d.line((76, TOP - 2, 101, TOP - 2), fill=1)
 
-    def woodpile(self, g: Gfx, n: int):
-        """身后的柴：一根根横放的劈柴"""
-        for i in range(n):
-            row, col = divmod(i, 3)
-            x = 16 + col * 3 + row * 2
-            y = GY - 3 - row * 3
-            g.d.rounded_rectangle((x, y, x + 15, y + 2), radius=1, fill=0, outline=1)
-            g.px(x + 15, y + 1)
+    def frame(self, g: Gfx, t: float, text_k: float = 1.0):
+        dt = self.clock.tick(t)
+        n, k = cyc(t, CYC)
+        back = rand(n, self.s) < 0.3
+        boil = event(t, 53.0, 6.0, self.s + 1)
+        boil_q = boil[1] if boil else None
+        # 火势
+        heat = 0.0
+        if 2.4 < k < 3.6:
+            heat = 1 - span(k, 2.6, 3.6)
+        for m in range(3):
+            pk = 4.0 + m * 1.1
+            if pk < k < pk + 0.9:
+                heat = max(heat, math.sin(span(k, pk, pk + 0.9) * math.pi))
+        self.stove(g, t, heat, boil_q)
+        # 柴堆
+        for x, y in ((21, 51), (29, 51), (25, 46)):
+            pix.blit(g, PIECE, x, y)
+        pix.blit(g, STOOL, DX - 7, FLOOR - 4)
+        st = self.pose(k)
+        if back and 7.2 < k < 11.5:
+            st["face"] = "sleep"
 
-    def stool(self, g: Gfx, x: float):
-        g.d.rectangle((x - 6, SEAT, x + 6, SEAT + 1), fill=1)
-        g.d.line((x - 5, SEAT + 2, x - 5, GY), fill=1)
-        g.d.line((x + 5, SEAT + 2, x + 5, GY), fill=1)
+        def tool(gg, h1, h2):
+            if st["stick"] == "hand" and h1:
+                pix.blit(gg, STICK, h1[0] - 6, h1[1] - 1)
+            if st["tube"] and h1:
+                mx, my = DX + 7, FLOOR - 24
+                tx, ty = DOOR[0] + 1, DOOR[1] + 6
+                gg.d.line((mx + 1, my + 1, tx, ty), fill=1, width=3)
+                for j in range(1, 4):  # 竹节
+                    gg.px(lerp(mx, tx, j / 4), lerp(my, ty, j / 4) + 1, 0)
 
-    # ------------------------------------------------------------ 状态
+        worker(g, DX, FLOOR, t, hand=st["hand"], legs="kneel", flip=st["flip"], face=st["face"], tool=tool,
+               head=st["head"], bob=False)
+        if st["stick"] == "door":  # 柴推进灶膛
+            q = span(k, 2.0, 2.6)
+            pix.blit(g, STICK, lerp(DOOR[0] - 10, DOOR[0] + 1, q), DOOR[3] - 6)
+        if st["cheek"]:  # 鼓腮：脸颊鼓出一圈
+            g.d.ellipse((DX + 6, FLOOR - 25, DX + 10, FLOOR - 21), fill=1)
+            g.d.ellipse((DX + 7, FLOOR - 24, DX + 9, FLOOR - 22), fill=0)
+        # 打击：送柴、每口气
+        if self.clock.crossed(t, t - k + 2.6):
+            self.sparks.burst(DOOR[0] + 6, DOOR[1] + 4, 8, 22, up=20, life=0.6, gravity=30)
+        for m in range(3):
+            if self.clock.crossed(t, t - k + 4.0 + m * 1.1 + 0.15):
+                self.sparks.burst(DOOR[0] + 6, DOOR[1] + 2, 5 + m * 2, 26, up=24, life=0.7, gravity=25)
+        if back and self.clock.crossed(t, t - k + 6.6):
+            for j in range(7):
+                self.soot.emit(DOOR[0] - 2 - j, DOOR[1] + 4 - j, vx=-9 - j * 1.5, vy=-7 - j, life=1.6 + j * 0.1,
+                               rmax=3.6, spread=3)
+        # 烟囱冒烟、锅盖缝冒汽
+        if int(t * 1.6) != int((t - dt) * 1.6):
+            self.puffs.emit(S1 - 5, 2, vx=4, vy=-6, life=1.6, rmax=2.0, spread=1)
+        if int(t * 2.2) != int((t - dt) * 2.2):
+            self.puffs.emit(78 + (int(t * 2.2) % 2) * 22, TOP - 5, vy=-7, life=1.3, rmax=1.5, spread=1)
+        if boil_q is not None and boil_q < 5.0 and int(t * 8) != int((t - dt) * 8):
+            self.puffs.emit(89 + (int(t * 8) % 3 - 1) * 9, TOP - 10, vx=(int(t * 8) % 3 - 1) * 10, vy=-10,
+                            life=0.9, rmax=2.5, spread=2)
+        self.puffs.step(dt, wind=2)
+        self.puffs.draw(g)
+        self.sparks.step(dt)
+        self.sparks.draw(g)
+        self.soot.step(dt)
+        self.soot.draw(g, hollow_after=0.9)
+        cough = back and 7.0 < k < 11.5
+        if cough:  # 花脸：脸上几块黑；头上转金星
+            for x, y in ((DX + 2, FLOOR - 23), (DX + 5, FLOOR - 21), (DX - 1, FLOOR - 20), (DX + 6, FLOOR - 26)):
+                g.px(x, y, 0), g.px(x + 1, y, 0)
+            pix.blit(g, pix.anim(STARS, t, 6), DX - 4, FLOOR - 42)
+        self.matrix(g, t, heat, back and 6.6 < k < 8.0)
+        if cough and int((k - 7.0) * 2.5) % 2 == 0:
+            g.d.rectangle((DX + 10, 6, DX + 31, 16), fill=0)
+            g.text(DX + 12, 8, "咳咳", size=8)
+        scroll(g, TEXT_X, "若烹小鲜", k=text_k, side="left")
 
-    def state(self, t: float):
-        n, c = phase(t, P)
-        fire = 0.6 + 0.4 * noise(t * 0.5, 2)
-        if 3.4 <= c < 4.4:
-            fire += 0.8 * (1 - span(c, 3.6, 4.4))             # 添柴后一旺
-        for b in (5.2, 6.4, 7.6):                               # 吹三口
-            if b <= c < b + 1.0:
-                fire += 0.9 * math.sin(span(c, b + 0.3, b + 1.0) * math.pi)
-        return n, c, clamp(fire, 0, 2)
+    def pose(self, k: float) -> dict:
+        st = dict(hand=None, flip=False, face="normal", head="up", stick=None, tube=False, cheek=False)
+        if k < 1.2:  # 转身抽一根柴
+            st["flip"] = True
+            st["hand"] = keys(k, [(0, (DX - 9, FLOOR - 12)), (0.6, (36, FLOOR - 7)), (1.2, (DX - 9, FLOOR - 14))])
+            if k > 0.6:
+                st["stick"] = "hand"
+            return st
+        if k < 2.6:  # 转回来送进灶膛
+            st["hand"] = keys(k, [(1.2, (DX + 10, FLOOR - 14)), (2.0, (DX + 14, FLOOR - 8)),
+                                  (2.6, (DOOR[0] - 4, DOOR[3] - 5))])
+            st["stick"] = "hand" if k < 2.0 else "door"
+            return st
+        if k < 3.8:
+            st["hand"] = keys(k, [(2.6, (DOOR[0] - 4, DOOR[3] - 5)), (3.4, (DX + 12, FLOOR - 17))])
+            return st
+        if k < 7.4:  # 吹火筒：三口
+            st["tube"] = True
+            st["hand"] = (DX + 12, FLOOR - 19)
+            for m in range(3):
+                pk = 4.0 + m * 1.1
+                if pk - 0.45 < k < pk:
+                    st["cheek"] = True
+            st["face"] = "sleep" if any(4.0 + m * 1.1 <= k < 4.6 + m * 1.1 for m in range(3)) else "normal"
+            return st
+        if 9.0 < k < 10.6:  # 打哈欠：手捂嘴
+            st["hand"] = keys(k, [(9.0, (DX + 9, FLOOR - 14)), (9.4, (DX + 9, FLOOR - 21)), (10.2, (DX + 9, FLOOR - 21)),
+                                  (10.6, (DX + 9, FLOOR - 14))])
+            st["face"] = "wow"
+            return st
+        st["face"] = "happy" if 7.4 < k < 8.6 else "normal"
+        return st
 
-    def blowback(self, t: float):
-        """倒烟：选在某一轮第三口吹的时候。返回 (发生后的秒数) 或 None"""
-        n, c = phase(t, P)
-        for m in (n, n - 1):
-            if m >= 1 and rand(m, self.s + 3) < 0.28:
-                k = (n - m) * P + c - 7.6
-                if 0 <= k < 9.0:
-                    return k
-        return None
-
-    # ------------------------------------------------------------ 画
-
-    def draw(self, g: Gfx, t: float, final: float = 0.0):
-        t += 8.8  # 从“守着火”那段开始，接得上入场
-        n, c, fire = self.state(t)
-        bb = self.blowback(t)
-        ev_lid = event(t, 53.0, 4.0, self.s + 7)
-        hop = 0.0
-        steam = 1.0
-        if ev_lid:
-            k = ev_lid[1]
-            hop = abs(math.sin(k * 9)) * 3 * (1 - span(k, 2.5, 4.0))
-            steam = 2.0
-        self.stove(g, t, fire * (1 - final), hop, steam)
-        if ev_lid and hop > 1.5:
-            for j in range(4):
-                a = -math.pi / 2 + (j - 1.5) * 0.6
-                g.px(LC + math.cos(a) * (14 + hop * 2), STOP - 8 - hop + math.sin(a) * (6 + hop))
-        # 柴堆：抽一根少一根，一轮里补满（看不出来）
-        pile = 6 - (1 if 1.0 <= c else 0)
-        self.woodpile(g, pile)
-        self.stool(g, X)
-        # 人
-        f, lean, look = 1, 2.0, 0.0
-        hands = [None, None]
-        stick = None
-        tube = False
-        eye = "closed" if (t % 4.3) < 0.14 else "open"
-        if c < 1.0:  # 转身去抽柴
-            f = -1
-            q = ease_in_out(span(c, 0.1, 0.8))
-            lean = 4 * q
-            hands = [(lerp(X - 4, 38, q), lerp(48, GY - 5, q)), None]
-        elif c < 1.6:  # 抽出来
-            f = -1
-            q = ease_in_out(span(c, 1.0, 1.6))
-            lean = 4 * (1 - q)
-            hx, hy = lerp(38, X - 4, q), lerp(GY - 5, 46, q)
-            hands = [(hx, hy), None]
-            stick = (hx - 6 + q * 6, hy, hx + 10 - q * 2, hy)
-        elif c < 3.4:  # 转回来，把柴往灶膛里送
-            q = ease_in_out(span(c, 1.8, 3.2))
-            lean = 2 + 3 * q
-            hx, hy = lerp(X + 4, X + 11, q), lerp(46, 52, q)
-            hands = [(hx, hy), (hx - 3, hy)]
-            ln = lerp(16, 6, ease_in(span(c, 2.6, 3.3)))
-            stick = (hx - 2, hy, hx - 2 + ln, hy + 1.5)
-        elif c < 4.8:  # 缩手
-            q = ease_out(span(c, 3.4, 4.2))
-            hands = [(lerp(X + 11, X + 5, q), lerp(52, 49, q)), None]
-            lean = 5 - 3 * q
-        elif c < 8.8:  # 拿吹火筒吹
-            tube = True
-            lean = 5
-        else:  # 守着火，打个哈欠
-            q = span(c, 9.4, 10.6)
-            if 0 < q < 1:
-                look = -1.2 * math.sin(q * math.pi)
-                eye = "closed"
-            lean = 1.5
-        if final > 0:
-            lean = lerp(lean, 1.5, final)
-        if tube:
-            puff = 0.0
-            for b in (5.2, 6.4, 7.6):
-                if b <= c < b + 1.0:
-                    puff = math.sin(span(c, b + 0.2, b + 0.8) * math.pi)
-            # 吹火筒：从嘴到灶门
-            sy = SEAT - 21 + 6 * 0.6
-            mx_, my_ = X + lean + 4.5, sy - 4.0
-            ex, ey = DOOR[0] + 2, DOOR[3] - 4
-            hands = [(lerp(mx_, ex, 0.45), lerp(my_, ey, 0.45) + 1), (lerp(mx_, ex, 0.2), lerp(my_, ey, 0.2) + 1)]
-        pz = daoshi(g, X, SEAT, f, hands=hands, lean=lean, crouch=0.6, sit=True, eye=eye, look=look)
-        if stick:
-            g.d.line(stick, fill=1)
-            g.d.line((stick[0], stick[1] + 1, stick[2], stick[3] + 1), fill=1)
-        if tube:
-            hx, hy = pz.head
-            mx_, my_ = hx + 4, hy + 1.5
-            ex, ey = DOOR[0] + 2, DOOR[3] - 4
-            g.d.line((mx_, my_, ex, ey), fill=1)
-            g.d.line((mx_, my_ + 1, ex, ey + 1), fill=1)
-            if puff > 0.2:  # 鼓腮
-                g.d.ellipse((hx + 1, hy - 0.5, hx + 3 + puff * 1.5, hy + 3), fill=1)
-                for j in range(3):  # 吹出的气
-                    u = (c * 3 + j / 3) % 1
-                    g.px(lerp(mx_, ex, u), lerp(my_, ey, u) - 2)
-        # 倒烟
-        if bb is not None:
-            self.soot(g, pz, bb)
-        # 字
-        self.text(g)
-        self.mx(g, t, fire, bb)
-
-    def soot(self, g: Gfx, pz, k: float):
-        hx, hy = pz.head
-        if k < 0.4:  # 一团烟从灶门扑出来
-            u = ease_out(k / 0.4)
-            cx, cy = lerp(DOOR[0], hx + 2, u), lerp(DOOR[3] - 6, hy, u)
-            r = 3 + u * 7
-            dellipse(g, (cx - r, cy - r * 0.8, cx + r, cy + r * 0.8), 0.5)
-        elif k < 1.6:  # 罩住脸，慢慢散
-            u = span(k, 0.4, 1.6)
-            r = 10 + u * 6
-            lv = 0.5 * (1 - u)
-            if lv > 0.05:
-                dellipse(g, (hx - r, hy - r * 0.8 - u * 4, hx + r, hy + r * 0.8 - u * 4), lv, None)
-        if k >= 1.0:  # 花脸：脸上一片灰
-            if k < 7.5:
-                dellipse(g, (hx - 1, hy - 1, hx + 3.5, hy + 3), 0.4, None)
-            if k < 3.0:  # 眼冒金星
-                g.d.line((hx + 1, hy - 0.5, hx + 3, hy + 1.5), fill=1)
-                g.d.line((hx + 1, hy + 1.5, hx + 3, hy - 0.5), fill=1)
-                for j in range(3):
-                    a = k * 6 + j * 2.1
-                    g.px(hx + math.cos(a) * 7, hy - 7 + math.sin(a) * 2)
-        if 1.2 < k < 3.6:
-            hop = 1 if int(k * 6) % 2 else 0
-            bubble(g, hx - 24, hy - 21 - hop, "咳咳")
-
-    def text(self, g: Gfx, a: float = 1.0):
-        s = "若烹小鲜"
-        g.vtext(2, 2, s[:int(round(len(s) * clamp(a)))])
-
-    def mx(self, g: Gfx, t: float, fire: float, bb):
-        if bb is not None and bb < 2.0:  # 一团烟
-            for y in range(8):
-                for x in range(8):
-                    g.mx[y, x] = math.hypot(x - 3.5, y - 3.5) < 2 + bb * 2 and (x + y + int(t * 6)) % 2 == 0
+    def matrix(self, g: Gfx, t: float, heat: float, smoke: bool):
+        """点阵：一排炭上的火苗，随火势跳，火旺时偶尔蹦火星；倒烟时是一团烟"""
+        if smoke:
+            g.mx_rows([0x00, 0x3C, 0x7E, 0xDB, 0xFF, 0x7E, 0x3C, 0x00])
             return
-        # 灶火：底下一排炭，火苗随旺度跳
-        g.mx[7, :] = True
-        h = 2 + fire * 2.2
-        for x in range(1, 7):
-            hh = h * (0.6 + 0.6 * noise(t * 6 + x * 1.7, x)) * (1 - abs(x - 3.5) / 5)
-            for y in range(7, 7 - int(round(hh)) - 1, -1):
+        g.mx_rows([0, 0, 0, 0, 0, 0, 0, 0xFF])
+        for x in range(8):
+            h = 1 + int((math.sin(t * 9 + x * 1.7) * 0.5 + 0.5) * (2 + heat * 4))
+            for y in range(7 - h, 7):
                 g.mx_set(x, y)
-        if fire > 1.3:
+        if heat > 0.6:
+            g.mx_set(int(t * 13) % 8, int(t * 7) % 2)
             g.mx_level = 3
-            if int(t * 8) % 3 == 0:
-                g.mx_set(int(2 + noise(t * 3, 5) * 4), 0)
-
-    # ------------------------------------------------------------ 阶段
 
     def enter(self, g: Gfx, t: float):
-        """抱一捆柴走来，放下、坐上板凳，划火——灶膛亮起来"""
-        T = self.T["enter"]
-        fire = ease_out(span(t, 2.2, T)) * 0.6
-        self.stove(g, t, fire, 0.0, span(t, 2.4, T))
-        self.stool(g, X)
-        if t < 1.6:
-            x = lerp(-14, X - 2, ease_out(span(t, 0, 1.6)))
-            pz = daoshi(g, x, GY, 1, hands=[(x + 6, 44), (x + 4, 45)], step=t * 11 if t < 1.5 else None)
-            for j in range(3):
-                g.d.rounded_rectangle((x - 4, 41 - j * 3, x + 11, 43 - j * 3), radius=1, fill=0, outline=1)
-            self.woodpile(g, 0)
-        else:
-            self.woodpile(g, int(min(6, (t - 1.6) * 12)))
-            q = ease_in_out(span(t, 1.6, 2.2))
-            if q < 1:
-                # 坐下
-                daoshi(g, X - 2 + q * 2, lerp(GY, SEAT, q), 1, crouch=0.6 * q, lean=2 * q, sit=q > 0.5)
-            else:
-                lean = 2.0 + 3 * math.sin(span(t, 2.2, 2.9) * math.pi)
-                hands = [(X + 11 - 6 * span(t, 2.6, T), 51), None] if t < T - 0.1 else [None, None]
-                daoshi(g, X, SEAT, 1, crouch=0.6, lean=lean, sit=True, hands=hands)
-                if t < 2.7:  # 火柴一亮
-                    flame(g, X + 12, 50, 3, 5, t, 4)
-        self.text(g, span(t, 1.2, T - 0.3))
-        self.mx(g, t, fire, None)
-
-    def hold(self, g: Gfx, t: float):
-        self._ht = t
-        self.draw(g, t)
-
-    def exit(self, g: Gfx, t: float):
-        self.draw(g, self._ht, final=ease_in_out(span(t, 0, 0.6)))
-        fade_box(g, 1 - ease_in(span(t, 0.35, self.T["exit"])))
-        if t > 0.7:
+        """跪坐在灶前，划火柴点着灶膛：火苗从无到有，锅上开始冒汽"""
+        dt = self.clock.tick(t)
+        heat = span(t, 1.2, 2.4)
+        self.stove(g, t, 0.0, None)
+        if heat < 1:  # 火还没起来时灶门里是黑的：盖住火苗
+            x0, y0, x1, y1 = DOOR
+            g.d.rectangle((x0, y0 + 1, x1, y1 - 3), fill=0)
+            if heat > 0:
+                fr = pix.anim(FLAME, t, 10)
+                spr = pix.stretch(fr, 1.0, max(0.3, heat))
+                pix.blit(g, spr, x0 + 2, y1 - 2 - spr.h, outline=False)
+        for x, y in ((21, 51), (29, 51), (25, 46)):
+            pix.blit(g, PIECE, x, y)
+        pix.blit(g, STOOL, DX - 7, FLOOR - 4)
+        hand = keys(t, [(0, (DX + 9, FLOOR - 14)), (0.6, (DX + 12, FLOOR - 16)), (1.0, (DX + 16, FLOOR - 14)),
+                        (1.3, (DOOR[0] - 2, DOOR[3] - 4)), (2.0, (DOOR[0] - 2, DOOR[3] - 4)), (2.6, (DX + 9, FLOOR - 14))])
+        worker(g, DX, FLOOR, t, hand=hand, legs="kneel", bob=False, face="happy" if t > 2.0 else "normal")
+        if 0.8 < t < 1.6:  # 火柴头一点火
+            hx, hy = hand
+            g.d.line((hx + 1, hy, hx + 4, hy - 1), fill=1)
+            if t > 1.0:
+                pix.blit(g, MATCH_FIRE, hx + 4, hy - 4)
+        if self.clock.crossed(t, 1.3):
+            self.sparks.burst(DOOR[0] + 5, DOOR[3] - 4, 8, 20, up=16, life=0.6, gravity=30)
+        self.sparks.step(dt)
+        self.sparks.draw(g)
+        self.matrix(g, t, heat * 0.5, False)
+        if heat <= 0:
             g.mx[:] = False
             g.mx[7, :] = True
+        scroll(g, TEXT_X, "若烹小鲜", k=span(t, 0.4, 2.4), side="left")
+
+    def hold(self, g: Gfx, t: float):
+        self.frame(g, t)
+
+    def exit(self, g: Gfx, t: float):
+        self.frame(g, self.hold_t + t)
+        fade_out(g, span(t, 0.1, self.T["exit"]))

@@ -1,348 +1,413 @@
-"""洒净：宽袖手执柳枝，蘸净水盂里的法水，一甩一甩洒向四方，水珠划弧落下闪光；左侧逐句念《净天地神咒》。
+"""洒净：清晨的坛场，石栏杆、远处朝阳；坛中一只净水盂，小道士手执柳枝蘸水，一甩，水珠扇形飞出、落地溅起。
 
-依据：科仪开坛先“洒净”（荡秽）：高功以柳枝（或杨枝）蘸净水洒坛，诵《净天地神咒》：
-“天地自然，秽炁分散。洞中玄虚，晃朗太玄。八方威神，使我自然。灵宝符命，普告九天。乾罗答那，洞罡太玄。
-斩妖缚邪，杀鬼万千。中山神咒，元始玉文。持诵一遍，却病延年。按行五岳，八海知闻。魔王束首，侍卫我轩。
-凶秽消散，道炁长存。急急如律令。”（字库无“炁”，以“气”代）
+依据：开坛先洒净荡秽，高功以柳枝（杨枝）蘸净水洒坛，同时诵《净天地神咒》
+（“天地自然，秽炁分散……凶秽消散，道炁长存。急急如律令”）。字库没有“炁”，用“气”代替。
 
-入场：净水盂落在画面里，宽袖手执柳枝从右边伸来，第一句咒出现。
-持续：每 6 秒一个动作：蘸水 → 提起 → 一甩，十二颗水珠成扇形飞出、划抛物线落下（方向轮流变）。
-      一轮 600 秒念完全咒二十二句（左侧竖排本句）；柳叶每甩几下掉一片，盂里的水慢慢浅下去。
-      一轮结束：旧枝收回，天降甘露把盂注满，手换一枝新柳再来。
-中断：柳枝横放在盂沿上，手收走。
-恢复：手回来拿起柳枝。
-圆满：柳枝绕手一转，水珠四面八方洒开，满屏闪光，“急急如律令”。
+入场：净水盂“咚”地落到盂架上，水面一圈涟漪；小道士举着柳枝走来，柳叶一颤。
+持续：每 6 秒一个动作：柳梢点进盂里（水面涟漪）→ 提起（梢头滴水）→ 举过头蓄力 → 一甩，
+      九颗水珠呈扇形飞出、沿抛物线落下，飞到最高点一闪，落地溅起一圈水花。每甩四次绕到盂的另一边换个方向洒。
+      一轮 600 秒念完全咒二十二句（左上牌子一句一句换）；柳叶隔一阵掉一片飘落，朝阳的光芒慢慢转。
+      续：旧柳枝的叶子差不多掉光了，天上落下三滴甘露“叮”地注进盂里，柳枝重新抽出满枝新叶。
+中断：小道士把柳枝横搁在盂沿上，拱手，牌子“暂歇”。  恢复：拿起柳枝，蘸水一甩。
+圆满：小道士举柳枝原地一转，水珠向四面八方洒开，天边挂起一道彩虹（三道点弧），闪白，“急急如律令”。
 """
 from __future__ import annotations
 
 import math
 
-from ..engine.anim import blink, clamp, ease_in, ease_in_out, ease_out, ease_out_back, ease_out_bounce, lerp, noise, \
-    rand, span
+from ..engine import pix
+from ..engine.anim import ease_in_out, ease_out, ease_out_bounce, lerp, rand, span
+from ..engine.chars import Part, daoshi
 from ..engine.gfx import Gfx
 from ..engine.scene import Ritual, register
-from .r1_common import sleeve, sparkles
+from .r1_common import FLOOR, Clock, badge, floor, hit, mx_art, mx_burst, pose_arm, ring_dots, star, title
 
-MANTRA = ["天地自然", "秽气分散", "洞中玄虚", "晃朗太玄", "八方威神", "使我自然", "灵宝符命", "普告九天",
-          "乾罗答那", "洞罡太玄", "斩妖缚邪", "杀鬼万千", "中山神咒", "元始玉文", "持诵一遍", "却病延年",
-          "按行五岳", "八海知闻", "魔王束首", "侍卫我轩", "凶秽消散", "道气长存"]
-BCX, RIM, BBOT = 82, 44, 56   # 净水盂
-BHW = 15
-WATER_FULL, WATER_LOW = 46, 52
-PERIOD = 6.0
-FLICK = 2.45
-LEAVES = 11
-TWIG = 28
-GRAV = 70.0
-GROUND = 63
-RENEW = 6.0
-# 动作关键帧：(时刻, 手 x, 手 y, 枝角度)。枝角度：0 = 向右，π = 向左，π/2 = 向下
-REST = (106, 24, 2.55)
-KEYS = [(0.0, *REST), (0.4, *REST), (1.3, 104, 30, 2.42), (1.7, 104, 30, 2.42), (2.2, 110, 17, 3.55),
-        (2.45, 96, 20, 2.8), (2.7, 98, 22, 2.65), (4.2, *REST), (PERIOD, *REST)]
-DIRS = (-2.3, -1.9, -2.7)  # 水珠飞出的方向（左上、上、左）
+BOWL_X = 64
+BOWL_TOP = 41            # 盂口 y
+SIDES = (46, 82)         # 小道士站在盂左边（朝右洒）/ 右边（朝左洒）
+ACT = 6.0
+RENEW = 7.0
+GRAV = 90.0
 
+CHANT = ["天地自然", "秽气分散", "洞中玄虚", "晃朗太元", "八方威神", "使我自然", "灵宝符命", "普告九天",
+         "乾罗答那", "洞罡太玄", "斩妖缚邪", "度人万千", "中山神咒", "元始玉文", "持诵一遍", "却病延年",
+         "按行五岳", "八海知闻", "魔王束首", "侍卫我轩", "凶秽消散", "道气长存"]
 
-def pose(u: float):
-    """动作周期内 u 秒时的 (手 x, 手 y, 枝角)"""
-    for (t0, x0, y0, a0), (t1, x1, y1, a1) in zip(KEYS, KEYS[1:]):
-        if t0 <= u <= t1:
-            p = (u - t0) / (t1 - t0) if t1 > t0 else 1
-            p = ease_in(p) if t0 == 2.2 else ease_in_out(p)
-            return lerp(x0, x1, p), lerp(y0, y1, p), lerp(a0, a1, p)
-    return REST
+LEAF = pix.frames("""
+#
+#
+---
+ #
+#
+---
+#
+ #
+""")
 
 
-def twig_pts(hx: float, hy: float, ang: float, n: int = 8):
-    """柳枝主干：从手里伸出，梢头下垂"""
+def _bowl():
+    """净水盂 17×13：卷沿、鼓腹（缠枝纹一道）、盂架三足"""
+    p = Part(17, 14)
+    p.shape("rectangle", (1, 0, 15, 1), fill=1)
+    p.d.line((3, 1, 13, 1), fill=0)
+    p.shape("ellipse", (0, 1, 16, 9), fill=1)
+    p.shape("rectangle", (1, 0, 15, 0), fill=1)
+    for x in range(2, 15, 3):                 # 缠枝纹
+        p.px(x, 5, 0), p.px(x + 1, 4, 0)
+    p.d.line((2, 6, 14, 6), fill=0)
+    p.dither([(10, 2), (16, 2), (16, 9), (10, 9)], 0.5, 0)
+    p.shape("rectangle", (5, 9, 11, 10), fill=1)
+    for x0, x1 in ((5, 2), (8, 8), (11, 14)):  # 盂架
+        p.shape("line", (x0, 10, x1, 13), fill=1)
+    return p.sprite()
+
+
+_P: dict = {}
+
+
+def P(name):
+    if name not in _P:
+        _P[name] = {"bowl": _bowl}[name]()
+    return _P[name]
+
+
+def court(g: Gfx, t: float):
+    """坛场：远处朝阳（光芒慢转）、一道远山、石栏杆（望柱 + 寻杖 + 栏板）、地面"""
+    sx, sy = 108, 14
+    g.d.ellipse((sx - 6, sy - 6, sx + 6, sy + 6), fill=1)
+    g.d.ellipse((sx - 4, sy - 4, sx + 4, sy + 4), fill=0)
+    g.d.ellipse((sx - 3, sy - 3, sx + 3, sy + 3), fill=1)
+    for j in range(10):
+        a = j / 10 * 2 * math.pi + t * 0.15
+        pix.dotted(g, sx + math.cos(a) * 9, sy + math.sin(a) * 9, sx + math.cos(a) * 12, sy + math.sin(a) * 12, 2)
+    pix.dotted(g, 0, 33, 30, 28, 2)
+    pix.dotted(g, 30, 28, 58, 32, 2)
+    pix.dotted(g, 58, 32, 90, 26, 2)
+    pix.dotted(g, 90, 26, 127, 31, 2)
+    for x, h in ((6, 22), (121, 22)):                         # 两根望柱
+        y0 = FLOOR - 4 - h
+        g.d.rectangle((x - 2, y0, x + 2, FLOOR - 5), fill=1)
+        g.d.ellipse((x - 3, y0 - 5, x + 3, y0 + 1), fill=1)
+        g.px(x, y0 - 3, 0)
+        g.d.line((x - 1, y0 + 3, x + 1, y0 + 3), fill=0)
+        pix.checker(g, (x + 1, y0 + 4, x + 3, FLOOR - 5), 0.5, fill=0)
+    for x in range(10, 120, 6):                               # 坛沿石阶的砖缝
+        g.px(x, FLOOR - 2)
+    g.d.line((0, FLOOR - 4, 127, FLOOR - 4), fill=1)
+    floor(g)
+
+
+def willow(g: Gfx, hx: float, hy: float, tx: float, ty: float, t: float, leaves: int = 10, wet: bool = False):
+    """柳枝：从手到梢的弯枝，柳叶沿枝垂下、随风轻摆"""
+    mx, my = (hx + tx) / 2 - (ty - hy) * 0.15, (hy + ty) / 2 + (tx - hx) * 0.15
     pts = []
-    for i in range(n + 1):
-        s = i / n * TWIG
-        pts.append((hx + math.cos(ang) * s, hy + math.sin(ang) * s + (s / TWIG) ** 2 * 5))
-    return pts
-
-
-def willow(g: Gfx, hx: float, hy: float, ang: float, leaves: int, t: float, seed: int, wet: bool = False):
-    pts = twig_pts(hx, hy, ang)
-    g.d.line(pts, fill=1)
-    for j in range(leaves):  # 柳叶：沿枝挂下，细长
-        s = 0.25 + 0.75 * (j + 0.5) / LEAVES
-        i = min(int(s * 8), 7)
-        f = s * 8 - i
-        x = lerp(pts[i][0], pts[i + 1][0], f)
-        y = lerp(pts[i][1], pts[i + 1][1], f)
-        sw = (noise(t * 1.5 + j, seed) - 0.5) * 2
-        ln = 5 + (j % 3)
-        g.d.line((x, y + 1, x + sw, y + ln), fill=1)
-        g.px(x + sw * 1.2 + (1 if j % 2 else -1), y + ln + 1)
-    tip = pts[-1]
-    if wet:
-        g.px(tip[0], tip[1] + 2)
-    return tip
-
-
-def bowl(g: Gfx, level: float, t: float, ripple: float = 0.0):
-    d = g.d
-    wy = lerp(WATER_FULL, WATER_LOW, level)
-    d.chord((BCX - BHW, RIM - 12, BCX + BHW, BBOT), 0, 180, fill=0, outline=1)
-    # 水：抖动
-    hw = BHW * math.sqrt(max(0.0, 1 - ((wy - (RIM - 12 + BBOT) / 2) / ((BBOT - RIM + 12) / 2)) ** 2)) - 1
-    poly = [(BCX - hw, wy)]
     for i in range(9):
-        a = math.pi * i / 8
-        x = BCX - math.cos(a) * (BHW - 1)
-        y = (RIM - 12 + BBOT) / 2 + math.sin(a) * ((BBOT - RIM + 12) / 2 - 1)
-        if y > wy:
-            poly.append((x, y))
-    poly.append((BCX + hw, wy))
-    if len(poly) >= 3:
-        g.shade_poly(poly, 0.3, outline=None)
-    d.line((BCX - hw, wy, BCX + hw, wy), fill=1)
-    if ripple > 0:  # 蘸水的涟漪
-        r = (1 - ripple) * 10 + 2
-        d.line((BCX - 4 - r, wy - 1, BCX - 4 - r + 3, wy - 1), fill=1)
-        d.line((BCX - 4 + r - 3, wy - 1, BCX - 4 + r, wy - 1), fill=1)
-    d.line((BCX - BHW - 2, RIM, BCX + BHW + 2, RIM), fill=1)          # 口沿
-    d.rectangle((BCX - 5, BBOT, BCX + 5, BBOT + 2), fill=0, outline=1)  # 足
-    d.line((BCX - 9, BBOT + 4, BCX + 9, BBOT + 4), fill=1)
-    d.line((BCX - 7, BBOT + 3, BCX + 7, BBOT + 3), fill=1)
-    for x in (-9, -3, 3, 9):  # 莲瓣纹
-        d.arc((BCX + x - 3, RIM + 1, BCX + x + 3, RIM + 7), 0, 180, fill=1)
+        k = i / 8
+        x = (1 - k) ** 2 * hx + 2 * (1 - k) * k * mx + k * k * tx
+        y = (1 - k) ** 2 * hy + 2 * (1 - k) * k * my + k * k * ty
+        pts.append((x, y))
+    g.d.line(pts, fill=0, width=3)
+    g.d.line(pts, fill=1)
+    for i in range(min(leaves, 12)):
+        k = 0.25 + i / 12 * 0.75
+        j = int(k * 8)
+        x, y = pts[j]
+        side = 1 if i % 2 else -1
+        sw = math.sin(t * 3 + i) * 0.8
+        g.d.line((x, y, x + side * 2 + sw, y + 3), fill=1)
+        g.px(x + side * 2 + sw, y + 4)
+    if wet and int(t * 8) % 3 == 0:
+        g.px(tx, ty + 2)
+    g.d.rectangle((hx - 1, hy - 1, hx + 1, hy + 1), fill=1)
+
+
+def drops(g: Gfx, age: float, x0: float, y0: float, s: int, seed: int, n: int = 9, spread: float = 1.0,
+          radial: bool = False):
+    """甩出的水珠：抛物线、最高点一闪、落地溅起；age = 甩出后秒数（确定性）"""
+    for j in range(n):
+        if radial:
+            a = j / n * 2 * math.pi
+            v = 40 + rand(j, seed) * 25
+            vx, vy = math.cos(a) * v, math.sin(a) * v - 35
+        else:
+            vx = s * (18 + rand(j, seed) * 40) * spread
+            vy = -(16 + rand(j + 30, seed) * 30)
+        # 落地时刻
+        A, B, C = 0.5 * GRAV, vy, y0 - FLOOR
+        land = (-B + math.sqrt(max(B * B - 4 * A * C, 0))) / (2 * A)
+        if age < land:
+            x, y = x0 + vx * age, y0 + vy * age + 0.5 * GRAV * age * age
+            if abs(vy + GRAV * age) < 8:      # 最高点一闪
+                star(g, x, y, 1)
+            else:                             # 水珠：两像素 + 拖尾
+                g.px(x, y), g.px(x, y + 1)
+                g.px(x - vx * 0.03, y - (vy + GRAV * age) * 0.03)
+        elif age < land + 0.3:
+            x = x0 + vx * land
+            k = (age - land) / 0.3
+            r = 1 + k * 3
+            g.px(x - r, FLOOR - 1 - k * 2)
+            g.px(x + r, FLOOR - 1 - k * 2)
+            g.px(x, FLOOR - 2 - k * 3)
+
+
+def mx_sprinkle(g: Gfx, age: float, s: int, t: float, dew: bool = False):
+    mx_art(g, """
+........
+........
+........
+........
+........
+.######.
+..####..
+...##...
+""")
+    if 0 <= age < 1.2:
+        for j in range(3):
+            x = 3.5 + s * (1 + j) * age * 2.5
+            y = 4 - math.sin(min(age / 1.0, 1) * math.pi) * (2 + j)
+            g.mx_set(int(round(x)), int(round(y)))
+    if dew:
+        g.mx[int(t * 8) % 5, 3] = True
 
 
 @register
 class Sprinkle(Ritual):
     id = "r1.sprinkle"
     name = "洒净"
-    desc = "柳枝蘸净水，一甩一甩洒向四方，水珠划弧闪光；左侧逐句念净天地神咒"
-    T = {"enter": 3.6, "interrupt": 1.6, "resume": 1.6, "complete": 5.5}
+    desc = "清晨坛场，小道士柳枝蘸净水一甩，水珠扇形飞出落地溅花，绕着净水盂换方向洒；诵净天地神咒，一轮后甘露注盂"
+    T = {"enter": 4.5, "interrupt": 1.6, "resume": 3.2, "complete": 5.5}
     CYCLE = 600.0
 
-    # ------------------------------------------------------------ 状态
+    def setup(self):
+        self.clock = Clock()
+        self.sparks = pix.Sparks(self.seed)
 
-    def leaves(self, k: float) -> int:
-        return LEAVES - int(clamp(k / self.CYCLE) * (LEAVES - 3))
-
-    def level(self, k: float) -> float:
-        return clamp(k / self.CYCLE)
-
-    def phrase(self, k: float) -> int:
-        return min(len(MANTRA) - 1, int(k / self.CYCLE * len(MANTRA)))
-
-    # ------------------------------------------------------------ 零件
-
-    def drops(self, g: Gfx, t: float, x0: float, y0: float, m: int, age: float, n: int = 12, spread: float = 1.3,
-              base: float | None = None, speed: float = 80):
-        """第 m 甩的水珠，甩出 age 秒后"""
-        if age < 0 or age > 3.0:
-            return
-        d0 = DIRS[m % 3] if base is None else base
-        for i in range(n):
-            a = d0 + (rand(i, m * 13 + self.seed) - 0.5) * spread
-            v = speed * (0.6 + 0.6 * rand(i + 40, m * 13 + self.seed))
-            x = x0 + math.cos(a) * v * age
-            y = y0 + math.sin(a) * v * age + 0.5 * GRAV * age * age
-            if y >= GROUND:  # 落地：一点闪
-                tl = age - self.land_time(y0, math.sin(a) * v)
-                if tl < 0.35:
-                    xx = x0 + math.cos(a) * v * (age - tl)
-                    for dx, dy in ((0, 0), (1, 0), (-1, 0), (0, -1)):
-                        g.px(xx + dx * (1 + tl * 6), GROUND - 1 + dy * (1 + tl * 4))
-                continue
-            g.px(x, y)
-            g.px(x - math.cos(a) * 0.8, y - 1)  # 水珠拖一点尾
-            vy = math.sin(a) * v + GRAV * age
-            if abs(vy) < 12 and i % 2 == 0:  # 抛物线顶点：一闪
-                for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
-                    g.px(x + dx * 2, y + dy * 2)
-
-    @staticmethod
-    def land_time(y0: float, vy: float) -> float:
-        # y0 + vy t + 0.5 g t² = GROUND
-        a, b, c = 0.5 * GRAV, vy, y0 - GROUND
-        disc = b * b - 4 * a * c
-        return (-b + math.sqrt(max(disc, 0))) / (2 * a)
-
-    def mantra(self, g: Gfx, k: float, a: float = 1.0):
-        i = self.phrase(k)
-        since = k - i * self.CYCLE / len(MANTRA)
-        cur = MANTRA[i]
-        typed = 1.0 if i == 0 else clamp(since / 1.2)  # 第一句入场时已写出
-        n = int(typed * 4 * clamp(a) + 1e-6)
-        g.vtext(2, 2, cur[:n])
-
-    def falling_leaf(self, g: Gfx, k: float, t: float):
-        """柳叶掉落：每次少一片叶时，一片叶从枝上飘到地上（e 定时）"""
-        per = self.CYCLE / (LEAVES - 3)
-        u = k % per
-        if k < per or u > 3.0:
-            return
-        x = 74 - u * 6 + math.sin(u * 4) * 3
-        y = 30 + u * 11
-        if y < GROUND:
-            g.d.line((x, y, x + 2 + math.sin(u * 5), y + 2), fill=1)
-
-    def mx(self, g: Gfx, t: float, phase: float, level: float):
-        g.mx[7, 2:6] = True
-        g.mx[6, 1:7] = True
-        if level < 0.6:
-            g.mx[5, 1:7] = True
-        u = phase
-        if 0.5 < u < 1.6:  # 枝点进水
-            g.mx[4, 4] = True
-            g.mx[3, 5] = True
-        elif FLICK <= u < FLICK + 1.6:  # 水珠飞起、落下
-            a = u - FLICK
-            for i, dx in enumerate((-2, 0, 2)):
-                x = 3.5 + dx * a * 1.6
-                y = 4 - 6 * a + 6 * a * a
-                g.mx_set(round(x), round(y))
-
-    # ------------------------------------------------------------ 阶段
-
-    def enter(self, g: Gfx, t: float):
-        drop = ease_out_bounce(span(t, 0, 0.9))
-        g_off = lerp(-60, 0, drop)
-        if drop > 0:
-            # 先画到临时位置：整体平移太麻烦，盂直接画在落点，入场时上面盖黑
-            bowl(g, 0, t)
-            if drop < 1:
-                g.d.rectangle((BCX - BHW - 3, 0, BCX + BHW + 3, 63), fill=0)
-                d = g.d
-                y = RIM + g_off
-                d.chord((BCX - BHW, y - 12, BCX + BHW, y + BBOT - RIM), 0, 180, fill=0, outline=1)
-                d.line((BCX - BHW - 2, y, BCX + BHW + 2, y), fill=1)
-        p = ease_out(span(t, 0.9, 2.2))
-        hx, hy, ang = REST
-        hx, hy = lerp(160, hx, p), lerp(10, hy, p)
-        willow(g, hx, hy, ang + (1 - p) * 0.4, LEAVES, t, self.seed)
-        sleeve(g, hx + 3, hy, -0.15)
-        self.mantra(g, 0, a=span(t, 2.2, 3.4))
-        self.mx(g, t, 0, 0)
-        if t < 0.9:
-            g.mx[5:, :] = False
-
-    def hold(self, g: Gfx, t: float, e: float):
+    def leaves(self, e: float) -> int:
         k = e % self.CYCLE
         if e >= self.CYCLE and k < RENEW:
-            self._renew(g, t, k, e)
-            return
-        lv = self.level(k)
-        u = t % PERIOD
-        m = int(t // PERIOD)
-        hx, hy, ang = pose(u)
-        rip = 1 - span(u, 1.2, 2.0) if u > 1.2 else 0
-        self.mantra(g, k)
-        bowl(g, lv, t, ripple=rip)
-        self.falling_leaf(g, k, t)
-        tip = willow(g, hx, hy, ang, self.leaves(k), t, self.seed, wet=1.7 < u < FLICK)
-        sleeve(g, hx + 3, hy, -0.15)
-        # 这一甩、上一甩的水珠
-        for mm, age in ((m, u - FLICK), (m - 1, u + PERIOD - FLICK)):
-            if mm >= 0:
-                fx, fy, fa = pose(FLICK)
-                tp = twig_pts(fx, fy, fa)[-1]
-                self.drops(g, t, tp[0], tp[1], mm, age)
-        self.mx(g, t, u, lv)
+            return 2 if k < 4.5 else int(lerp(2, 12, span(k, 4.5, 6.0)))
+        return 12 - int(10 * k / self.CYCLE)
 
-    def _renew(self, g: Gfx, t: float, k: float, e: float):
-        """换一枝新柳；天降甘露注满净水盂"""
-        fill = ease_in_out(span(k, 1.2, 3.6))
-        lv = 1 - fill
-        self.mantra(g, self.CYCLE - 1 if k < 1.0 else 0, a=1 if k < 1.0 else span(k, 3.6, 4.8))
-        if 1.0 < k < 3.8:  # 甘露：三道细流从天而降
-            for j, x in enumerate((76, 82, 88)):
-                for y in range(0, int(lerp(WATER_LOW, WATER_FULL, fill)) - 1):
-                    if (y + int(t * 50) + j * 3) % 6 < 2:
-                        g.px(x + math.sin(y * 0.2 + j) * 0.8, y)
-        bowl(g, lv, t, ripple=(k * 2) % 1 if 1.2 < k < 3.6 else 0)
-        hx, hy, ang = REST
-        if k < 1.2:
-            p = ease_in(span(k, 0, 1.2))
-            x, y = lerp(hx, 160, p), lerp(hy, 0, p)
-            willow(g, x, y, ang, 3, t, self.seed)
-            sleeve(g, x + 3, y, -0.15)
-        elif k > 3.6:
-            p = ease_out(span(k, 3.6, RENEW))
-            x, y = lerp(160, hx, p), lerp(0, hy, p)
-            willow(g, x, y, ang + (1 - p) * 0.4, LEAVES, t, self.seed)
-            sleeve(g, x + 3, y, -0.15)
-        self.mx(g, t, 0, lv)
-        if 1.0 < k < 3.8:
-            g.mx[0:5, 3] = [((y + int(t * 10)) % 3 == 0) for y in range(5)]
+    def counter(self, g: Gfx, e: float, label: str | None = None):
+        k = e % self.CYCLE
+        i = min(int(k / (self.CYCLE / len(CHANT))), len(CHANT) - 1)
+        badge(g, 4, 3, label or CHANT[i], size=12)
+
+    def bowl(self, g: Gfx, ripple: float = -1.0):
+        spr = P("bowl")
+        pix.blit(g, spr, BOWL_X - 8, BOWL_TOP)
+        g.d.line((BOWL_X - 5, BOWL_TOP + 1, BOWL_X + 5, BOWL_TOP + 1), fill=0)
+        if 0 <= ripple < 1:
+            r = 2 + ripple * 6
+            ring_dots(g, BOWL_X, BOWL_TOP, r, 2, sy=0.3, a0=math.pi, a1=2 * math.pi)
+
+    def act(self, g: Gfx, t: float, u: float, a: int, e: float, dt: float):
+        """一个洒水动作（u ∈ [0, 6]）。a = 第几个动作，决定方向"""
+        side = (a // 4) % 2
+        s = 1 if side == 0 else -1
+        x = SIDES[side]
+        flip = side == 1
+        nl = self.leaves(e)
+        mouth = (BOWL_X, BOWL_TOP + 2)
+        switching = (a % 4) == 3
+        if switching and u >= 3.6:   # 绕到盂的另一边
+            x2 = SIDES[1 - side]
+            q = ease_in_out(span(u, 3.6, 5.6))
+            xx = lerp(x, x2, q)
+            h = pose_arm(g, xx, FLOOR, t, 0, legs="walk" if q < 1 else "stand", flip=(not flip) if q >= 1 else flip)
+            hx, hy = h["hand"]
+            fs = -s if q >= 1 else s
+            willow(g, hx, hy, hx + fs * 6, hy - 12, t, nl)
+            self.bowl(g, -1)
+            return
+        if u < 1.2:        # 蘸水
+            h = pose_arm(g, x, FLOOR, t, 30, flip=flip)
+            hx, hy = h["hand"]
+            q = ease_in_out(span(u, 0.0, 0.6))
+            tip = (lerp(hx + s * 6, mouth[0], q), lerp(hy - 10, mouth[1], q))
+            self.bowl(g, span(u, 0.6, 1.2) if u >= 0.6 else -1)
+            willow(g, hx, hy, *tip, t, nl)
+        elif u < 2.4:      # 提起，梢头滴水
+            h = pose_arm(g, x, FLOOR, t, -30, flip=flip)
+            hx, hy = h["hand"]
+            self.bowl(g, -1)
+            willow(g, hx, hy, hx + s * 7, hy - 12, t, nl, wet=True)
+        elif u < 2.75:     # 举过头蓄力
+            h = daoshi(g, x, FLOOR, "raise", t, flip=flip)
+            hx, hy = h["hand"]
+            self.bowl(g, -1)
+            willow(g, hx, hy, hx - s * 8, hy - 8, t, nl, wet=True)
+        elif u < 3.1:      # 甩！
+            q = span(u, 2.75, 3.1)
+            h = pose_arm(g, x, FLOOR, t, 0 if q < 0.5 else 30, flip=flip)
+            hx, hy = h["hand"]
+            self.bowl(g, -1)
+            ang = lerp(-2.2, 0.4, q)
+            tip = (hx + s * math.cos(ang) * 13, hy + math.sin(ang) * 13)
+            willow(g, hx, hy, *tip, t, nl)
+            for j in range(5):   # 挥动的弧线
+                aa = lerp(-2.2, ang, j / 4)
+                g.px(hx + s * math.cos(aa) * 15, hy + math.sin(aa) * 15)
+        else:
+            h = pose_arm(g, x, FLOOR, t, 30, flip=flip, face="happy" if u < 4.5 else "normal")
+            hx, hy = h["hand"]
+            self.bowl(g, -1)
+            willow(g, hx, hy, hx + s * 6, hy - 11, t, nl)
+        if u >= 2.95:   # 水珠
+            drops(g, u - 2.95, x + s * 18, FLOOR - 30, s, self.seed + a, n=11)
+
+    def falling_leaf(self, g: Gfx, e: float):
+        k = (e + self.seed * 5) % 23
+        if k < 4:
+            x = 60 + math.sin(k * 3) * 8 + k * 6
+            y = 18 + k * 10
+            pix.blit(g, pix.anim(LEAF, k, 4), x, min(y, FLOOR - 2), outline=False)
+
+    # ------------------------------------------------------------ 入场 / 持续
+
+    def enter(self, g: Gfx, t: float):
+        dt = self.clock(t)
+        court(g, t)
+        drop = ease_out_bounce(span(t, 0.1, 1.0))
+        y = lerp(-20, BOWL_TOP, drop)
+        pix.blit(g, P("bowl"), BOWL_X - 8, y)
+        if hit(t, 0.48, dt):
+            pix.shake(g, t, 1.0)
+            self.sparks.burst(BOWL_X, BOWL_TOP, 8, 18, up=12, life=0.4, gravity=60)
+        if t > 0.5:
+            r = (t - 0.5) * 8
+            if r < 8:
+                ring_dots(g, BOWL_X, BOWL_TOP, r, 2, sy=0.3, a0=math.pi, a1=2 * math.pi)
+        x = lerp(-14, SIDES[0], ease_out(span(t, 1.0, 3.2)))
+        h = pose_arm(g, x, FLOOR, t, -30 if t > 3.2 else 0, legs="walk" if t < 3.2 else "stand")
+        hx, hy = h["hand"]
+        willow(g, hx, hy, hx + 7, hy - 12, t + (math.sin(t * 20) if 3.2 < t < 3.6 else 0), 12)
+        self.sparks.step(dt)
+        self.sparks.draw(g)
+        if t > 3.2:
+            self.counter(g, 0.0)
+        mx_sprinkle(g, -1, 1, t)
+
+    def hold(self, g: Gfx, t: float, e: float):
+        dt = self.clock(t)
+        k = e % self.CYCLE
+        if e >= self.CYCLE and k < RENEW:
+            self._renew(g, t, k, e, dt)
+            return
+        court(g, t)
+        a = int(e // ACT)
+        u = e % ACT
+        self.act(g, t, u, a, e, dt)
+        self.falling_leaf(g, e)
+        self.counter(g, e)
+        side = (a // 4) % 2
+        mx_sprinkle(g, u - 2.95, 1 if side == 0 else -1, t)
+
+    def _renew(self, g: Gfx, t: float, k: float, e: float, dt: float):
+        """甘露注盂，柳枝抽新叶"""
+        court(g, t)
+        a = int((e - k) // ACT)
+        side = (a // 4) % 2
+        s = 1 if side == 0 else -1
+        x = SIDES[side]
+        ripple = -1.0
+        for j in range(3):     # 三滴甘露
+            t0 = 0.6 + j * 0.9
+            q = span(k, t0, t0 + 0.7)
+            if 0 < q < 1:
+                y = lerp(-4, BOWL_TOP, q * q)
+                g.d.ellipse((BOWL_X - 1, y - 2, BOWL_X + 1, y + 1), fill=1)
+                g.px(BOWL_X, y - 3)
+                pix.dotted(g, BOWL_X, 0, BOWL_X, y - 4, 3, int(t * 10))
+            if hit(k, t0 + 0.7, dt):
+                self.sparks.burst(BOWL_X, BOWL_TOP, 8, 18, up=14, life=0.5, gravity=60)
+            if t0 + 0.7 <= k < t0 + 1.4:
+                ripple = (k - t0 - 0.7) / 0.7
+        self.bowl(g, ripple)
+        nl = self.leaves(e)
+        face = "wow" if k < 3.4 else "happy"
+        h = pose_arm(g, x, FLOOR, t, -30, flip=side == 1, face=face)
+        hx, hy = h["hand"]
+        willow(g, hx, hy, hx + s * 7, hy - 12, t, nl)
+        if hit(k, 4.5, dt):
+            self.sparks.burst(hx + s * 4, hy - 8, 12, 20, life=0.5, gravity=10)
+        self.sparks.step(dt)
+        self.sparks.draw(g)
+        self.counter(g, e)
+        mx_sprinkle(g, -1, s, t, dew=k < 3.5)
+
+    # ------------------------------------------------------------ 中断 / 恢复 / 圆满
+
+    def rest_branch(self, g: Gfx, t: float):
+        """柳枝横搁在盂沿上"""
+        willow(g, BOWL_X - 9, BOWL_TOP - 1, BOWL_X + 10, BOWL_TOP - 3, t, 8)
 
     def interrupt(self, g: Gfx, t: float, e: float):
-        k = e % self.CYCLE
-        lv = self.level(k)
-        self.mantra(g, k)
-        bowl(g, lv, t)
-        hx, hy, ang = REST
-        p = ease_in_out(span(t, 0, 0.9))
-        lay = (BCX + 18, RIM - 2, math.pi + 0.08)  # 横放在盂沿上
-        x, y, a = lerp(hx, lay[0], p), lerp(hy, lay[1], p), lerp(ang, lay[2], p)
-        willow(g, x, y, a, self.leaves(k), t * (1 - p), self.seed)
-        if t < 0.9:
-            sleeve(g, x + 3, y, -0.15)
+        dt = self.clock(t)
+        court(g, t)
+        a = int(e // ACT)
+        side = (a // 4) % 2
+        s = 1 if side == 0 else -1
+        x = SIDES[side]
+        self.bowl(g)
+        if t < 0.7:
+            h = pose_arm(g, x, FLOOR, t, 30, flip=side == 1)
+            hx, hy = h["hand"]
+            q = span(t, 0, 0.7)
+            willow(g, hx, hy, lerp(hx + s * 6, BOWL_X + s * 10, q), lerp(hy - 11, BOWL_TOP - 3, q), t, 8)
         else:
-            q = ease_in(span(t, 0.9, 1.5))
-            sleeve(g, lerp(x + 3, 170, q), lerp(y, -10, q), -0.15, fist=False)
-        self.mx(g, 0, 0, lv)
+            daoshi(g, x, FLOOR, "gongshou", t, flip=side == 1)
+            self.rest_branch(g, t)
+        self.counter(g, e, "暂歇" if t > 0.6 else None)
+        mx_sprinkle(g, -1, s, t)
 
     def resume(self, g: Gfx, t: float, e: float):
-        k = e % self.CYCLE
-        lv = self.level(k)
-        self.mantra(g, k)
-        bowl(g, lv, t)
-        hx, hy, ang = REST
-        lay = (BCX + 18, RIM - 2, math.pi + 0.08)
-        if t < 0.6:
-            q = ease_out(span(t, 0, 0.6))
-            willow(g, *lay, self.leaves(k), 0, self.seed)
-            sleeve(g, lerp(170, lay[0] + 3, q), lerp(-10, lay[1], q), -0.15, fist=False)
+        dt = self.clock(t)
+        court(g, t)
+        a = int(e // ACT)
+        side = (a // 4) % 2
+        if t < 0.5:
+            self.bowl(g)
+            daoshi(g, SIDES[side], FLOOR, "gongshou", t, flip=side == 1)
+            self.rest_branch(g, t)
         else:
-            p = ease_in_out(span(t, 0.6, 1.6))
-            x, y, a = lerp(lay[0], hx, p), lerp(lay[1], hy, p), lerp(lay[2], ang, p)
-            willow(g, x, y, a, self.leaves(k), t, self.seed)
-            sleeve(g, x + 3, y, -0.15)
-        self.mx(g, t, 0, lv)
+            self.act(g, t, min(t - 0.5 + 0.6, 3.5), a, e, dt)
+        self.counter(g, e)
+        mx_sprinkle(g, t - 2.8, 1 if side == 0 else -1, t)
 
     def complete(self, g: Gfx, t: float, e: float):
-        k = e % self.CYCLE
-        lv = self.level(k)
-        hx, hy, ang = REST
-        bowl(g, lv, t, ripple=1 - span(t, 0.6, 1.2) if t > 0.6 else 0)
-        if t < 1.0:  # 蘸水
-            u = 0.4 + t * 1.3
+        dt = self.clock(t)
+        court(g, t)
+        self.bowl(g, span(t, 0.2, 0.8) if t < 0.8 else -1)
+        x = SIDES[0]
+        if t < 0.8:
+            h = pose_arm(g, x, FLOOR, t, 30)
+            hx, hy = h["hand"]
+            willow(g, hx, hy, BOWL_X, BOWL_TOP + 2, t, 12)
+        elif t < 1.6:      # 原地一转
+            flip = int(t * 8) % 2 == 1
+            h = daoshi(g, x, FLOOR, "raise", t, flip=flip)
+            hx, hy = h["hand"]
+            willow(g, hx, hy, hx + (6 if not flip else -6), hy - 10, t, 12)
         else:
-            u = None
-        if u is not None:
-            x, y, a = pose(min(u, 1.6))
-        else:  # 绕手一转
-            q = ease_in_out(span(t, 1.0, 2.4))
-            x, y = lerp(104, 100, q), lerp(30, 24, q)
-            a = 2.42 + q * 2 * math.pi
-        tip = willow(g, x, y, a, self.leaves(k), t, self.seed)
-        sleeve(g, x + 3, y, -0.15)
-        if t > 1.0:
-            for j in range(6):  # 绕的一圈里分六次洒出
-                t0 = 1.2 + j * 0.2
-                if t > t0:
-                    qq = ease_in_out(span(t0, 1.0, 2.4))
-                    aa = 2.42 + qq * 2 * math.pi
-                    tp = twig_pts(lerp(104, 100, qq), lerp(30, 24, qq), aa)[-1]
-                    self.drops(g, t, tp[0], tp[1], 100 + j, t - t0, n=6, spread=1.2, base=aa - 0.3, speed=55)
+            pose = "kneel" if 2.4 < t < 4.6 else "idle"
+            daoshi(g, x, FLOOR, pose, t, face="happy")
+        if t > 1.6:
+            drops(g, t - 1.6, x + 4, FLOOR - 40, 1, self.seed, n=24, radial=True)
+        if t > 2.2:        # 彩虹
+            k = ease_out(span(t, 2.2, 3.0))
+            for j in range(3):
+                r = 22 + j * 4
+                ring_dots(g, 94, FLOOR - 1, r, 2 + j * 0.5, a0=math.pi, a1=math.pi + math.pi * k)
+        if hit(t, 1.6, dt):
+            pix.flash(g)
+            self.sparks.burst(x + 4, FLOOR - 40, 20, 40, life=0.8, gravity=40)
+        if 1.6 < t < 1.9:
+            pix.shake(g, t, 1.5)
+        self.sparks.step(dt)
+        self.sparks.draw(g)
         if t > 2.6:
-            sparkles(g, 64, 30, 64, 32, t, n=14, seed=self.seed)
-            g.d.rectangle((0, 0, 30, 63), fill=0)
-            vt = "急急如律令"
-            n = int(clamp((t - 2.6) * 4 / len(vt)) * len(vt))
-            g.vtext(4, 2, vt[:n])
-        else:
-            self.mantra(g, k)
-        self.mx(g, t, 0, lv)
-        if t > 1.2:
-            g.mx[0:5, :] = False
-            for j in range(8):
-                a = j / 8 * 2 * math.pi + t
-                r = (t - 1.2) * 3 % 4
-                g.mx_set(round(3.5 + math.cos(a) * r), round(3 + math.sin(a) * r))
+            title(g, 60, 4, "急急如律令", t, 2.6)
+        mx_sprinkle(g, -1, 1, t)
+        mx_burst(g, t, 1.6)

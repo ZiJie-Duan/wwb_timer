@@ -1,398 +1,398 @@
-"""喂鸡：竹篱笆前，小道士端着瓢，抓一把谷子扬出去，谷粒成弧落地；三只母鸡一只公鸡跑过来一粒粒啄。
-彩蛋：公鸡伸脖子打鸣；公鸡偶尔定住不动，像木头雕的——“望之似木鸡”（《庄子·达生》纪渻子为王养斗鸡：
-“几矣。鸡虽有鸣者，已无变矣，望之似木鸡矣，其德全矣”）。左侧平时竖写“鸡犬相闻”（《道德经》八十章）。
+"""喂鸡（像素风）：院角竹篱、鸡舍，小道士端着葫芦瓢，抓一把谷子往后一蓄、一扬，谷粒成弧撒在地上；
+三只母鸡一只公鸡各奔离自己近的谷粒，一粒粒啄（头一点一点），啄到哪粒哪粒就没了；吃完左右张望、刨两下地，
+一轮快完时溜达到下一轮的位置。
+彩蛋：约每 37 秒公鸡伸脖子打鸣（声波一圈圈）；约每 61 秒公鸡忽然定住不动，头上慢慢冒出三个点，
+字换成“望之似木鸡”，过一阵才回过神来。
+左侧竖写“鸡犬相闻”（《道德经》八十章“鸡犬之声相闻”；《庄子·达生》纪渻子养斗鸡“望之似木鸡矣，其德全矣”）。
 """
 from __future__ import annotations
 
-import math
-
-from ..engine.anim import clamp, ease_in, ease_in_out, ease_out, lerp, noise, rand, span
+from ..engine import pix
+from ..engine.anim import ease_in_out, ease_out, lerp, rand, span
 from ..engine.gfx import Gfx, Sprite
 from ..engine.scene import Rest, register
-from .x5_common import daoshi, event, fade_box, phase
+from .x5_common import Clock, arc_pt, cyc, event, fade_out, keys, scroll, worker
 
-GY = 58
-FB = 44          # 篱笆脚
-X = 26
-P = 11.0
-THROW = 1.5      # 撒出的时刻
-LAND = 2.1
+FLOOR = 56
+TEXT_X = 3
+DX = 34
+R = 11.0                 # 一轮
+NG = 9                   # 一把撒几粒
 SPEED = 16.0
 PECK = 0.7
-NG = 12          # 一把几粒
 
-HEN = Sprite("""
-.........##.
-........####
-........#.##
-.##.....###.
-.###...####.
-.##########.
-..#########.
-..########..
-....####....
-....#..#....
-""")
-HEN_PECK = Sprite("""
-............
-............
-.##.........
-.###........
-.#######....
-.#########..
-..#########.
-..######.###
-....####.#.#
-....#..#....
-""")
-COCK = Sprite("""
-.........#.#.
-........####.
-........#.###
-##......###..
-#.#....####..
-#..#..#####..
-.#.#########.
-..#########..
-...#######...
-....#####....
-.....#..#....
-.....#..#....
-""")
-COCK_CROW = Sprite("""
-..........#.#
-.........####
-.........#.##
-##.......###.
-#.#.....###.#
-#..#...####..
-.#.#########.
-..#########..
-...#######...
-....#####....
-.....#..#....
-.....#..#....
-""")
-COCK_PECK = Sprite("""
-.............
-.............
-##...........
-#.#..........
-#..########..
-.#.#########.
-..##########.
-...#######.#.
-....#####.###
-.....#..#.#.#
-.....#..#....
-.....#..#....
-""")
-SPRITES = {}
+HEN = pix.frames("""
+         #.#
+        #####
+       ###.##
+       ########
+#      #####.#
+##    ######
+###.#########
+##.##.#######
+#.##.##.####
+ ##.......##
+  #########
+    #   #
+    #   #
+   ##  ##
+---
+         #.#
+        #####
+       ###.##
+       ########
+#      #####.#
+##    ######
+###.#########
+##.##.#######
+#.##.##.####
+ ##.......##
+  #########
+    #  #
+   #    #
+  ##    ##
+---
 
 
-def spr(name: str, f: int) -> Sprite:
-    key = (name, f)
-    if key not in SPRITES:
-        base = {"hen": HEN, "henp": HEN_PECK, "cock": COCK, "cockc": COCK_CROW, "cockp": COCK_PECK}[name]
-        SPRITES[key] = base if f > 0 else base.flip()
-    return SPRITES[key]
+
+
+
+#
+##
+###.#######
+##.##.######
+#.##.##.##### #.#
+ ##.......#######
+  ##########.###.
+    #   #   ####
+    #   #     .
+   ##  ##
+""")
+
+ROOSTER = pix.frames("""
+          #.#.#
+          #####
+         ###.##
+         ########
+ ##      #####.#
+#..#    ######
+#.#.#   #####
+ #.#.#.######
+#.#.#.#######
+ #.#.##.#####
+  ##.#......##
+   ##########
+     #   #
+     #   #
+    ##  ##
+---
+          #.#.#
+          #####
+         ###.##
+         ########
+ ##      #####.#
+#..#    ######
+#.#.#   #####
+ #.#.#.######
+#.#.#.#######
+ #.#.##.#####
+  ##.#......##
+   ##########
+     #  #
+    #    #
+   ##    ##
+---
+
+
+
+
+
+#
+##
+###.#######
+##.##.######
+#.##.##.##### #.#
+ ##.......#######
+  ##########.###.
+    #   #   ####
+    #   #     .
+   ##  ##
+---
+            #.#.#
+            #####
+           ###.## ##
+           ######.#
+ ##        #####
+#..#      #####
+#.#.#   ######
+ #.#.#.######
+#.#.#.#######
+ #.#.##.#####
+  ##.#......##
+   ##########
+     #   #
+     #   #
+    ##  ##
+
+""")
+
+LADLE = Sprite("""
+#......#
+ ######.##
+  ####   ##
+""")
+
+COOP = Sprite("""
+      #####
+    ##.....##
+  ##.#######.##
+##.###########.##
+ ##############
+ #.....##.....#
+ #.###.##.###.#
+ #.#.#.##.#.#.#
+ #.###.##.###.#
+ #.....##.....#
+ #....####....#
+ ##############
+""")
+
+BOWL = Sprite("""
+#.......#
+ #######
+""")
+
+
+def chick_plan(n: int, seed: int):
+    """第 n 轮：谷粒位置、每只鸡的起点，以及每只鸡吃哪几粒（按就近排）"""
+    grains = [50 + (i + rand(n * 31 + i, seed)) * 54 / NG for i in range(NG)]
+    slots = sorted(range(4), key=lambda c: rand(n * 7 + c, seed + 2))
+    homes = [52 + slots[c] * 16 + (rand(n * 7 + c, seed + 1) - 0.5) * 6 for c in range(4)]
+    left = list(range(NG))
+    order = {c: [] for c in range(4)}
+    pos = list(homes)
+    for step in range(NG):  # 轮流：每只鸡挑离自己最近的一粒
+        c = step % 4
+        if not left:
+            break
+        i = min(left, key=lambda i: abs(grains[i] - pos[c]))
+        left.remove(i)
+        order[c].append(i)
+        pos[c] = grains[i]
+    return grains, homes, order
 
 
 @register
 class Hens(Rest):
     id = "x5.hens"
     name = "喂鸡"
-    desc = "扬一把谷子，母鸡公鸡跑来一粒粒啄；公鸡打鸣，偶尔呆立如木鸡"
-    T = {"enter": 3.0, "exit": 1.3}
-    NH = 4  # 0..2 母鸡，3 公鸡
+    desc = "端着葫芦瓢撒谷子，三只母鸡一只公鸡跑来一粒粒啄；公鸡伸脖子打鸣，或者定住成了木鸡"
+    T = {"enter": 3.0, "exit": 1.2}
 
     def setup(self):
-        self.s = self.rng.randrange(1000)
-        self._ht = 0.0
-        self._cache: dict[int, tuple] = {}
+        self.clock = Clock()
+        self.s = self.seed * 37 + 5
+        self._plans: dict = {}
 
-    # ------------------------------------------------------------ 计划（每轮确定性算一遍并缓存）
+    def plan(self, n):
+        p = self._plans.get(n)
+        if p is None:
+            if len(self._plans) > 6:
+                self._plans.clear()
+            p = self._plans[n] = chick_plan(n, self.s)
+        return p
 
-    def home(self, h: int) -> tuple[float, float]:
-        return 60 + h * 16, GY
+    # ------------------------------------------------ 背景
 
-    def start(self, n: int, h: int) -> float:
-        """第 n 轮开始时每只鸡在哪（上一轮最后一秒多它们会溜达过去）"""
-        if n <= 0:
-            return self.home(h)[0]
-        return 54 + h * 17 + (rand(n * 5 + h, self.s + 21) - 0.5) * 12
+    def yard(self, g: Gfx, t: float):
+        for x in range(21, 100, 8):  # 竹篱
+            g.d.line((x, FLOOR - 30, x, FLOOR - 18), fill=1)
+            g.px(x, FLOOR - 31)
+            g.px(x, FLOOR - 24, 0)
+        g.d.line((19, FLOOR - 27, 99, FLOOR - 27), fill=1)
+        g.d.line((19, FLOOR - 21, 99, FLOOR - 21), fill=1)
+        pix.blit(g, COOP, 108, FLOOR - 12)
+        g.d.line((106, FLOOR, 112, FLOOR - 4), fill=1)    # 斜坡
+        g.d.line((19, FLOOR, 127, FLOOR), fill=1)
+        pix.checker(g, (19, FLOOR + 2, 128, 64), 0.125)
+        pix.blit(g, BOWL, 98, FLOOR - 2)
+        g.d.line((99, FLOOR - 2, 105, FLOOR - 2), fill=1)
+        if int(t * 1.5) % 4 == 0:
+            g.px(101 + int(t * 3) % 4, FLOOR - 3)
 
-    def grains(self, n: int):
-        """第 n 轮撒出去的谷粒落点"""
-        out = []
-        for i in range(NG):
-            x = 52 + rand(i, self.s + n * 17) * 64
-            y = GY - 1 - rand(i + 40, self.s + n * 17) * 3
-            out.append((x, y))
-        return out
+    # ------------------------------------------------ 鸡
 
-    def plan(self, n: int):
-        """→ 每只鸡的路线：[(到达时刻, 离开时刻, x, 啄的谷粒下标或 -1)]，以及每粒谷的被啄时刻"""
-        if n in self._cache:
-            return self._cache[n]
-        gr = self.grains(n)
-        starts = [self.start(n, h) for h in range(self.NH)]
-        # 分配：每粒给最近的鸡（按 x）
-        owner = [min(range(self.NH), key=lambda h: abs(starts[h] - gx) + h * 3) for gx, _ in gr]
-        routes, eaten = [], [P * 2] * NG
-        for h in range(self.NH):
-            mine = sorted([i for i in range(NG) if owner[i] == h], key=lambda i: abs(gr[i][0] - starts[h]))
-            t0 = LAND + 0.2 + h * 0.15 + rand(h, self.s + n) * 0.4
-            x = starts[h]
-            route = [(0.0, t0, x, -1)]
-            for i in mine:
-                gx = gr[i][0] + (-5 if gr[i][0] > x else 5)  # 停在谷粒旁边，嘴够得着
-                arr = t0 + abs(gx - x) / SPEED
-                dep = arr + PECK
-                if dep > P - 1.6:
-                    break
-                route.append((arr, dep, gx, i))
-                eaten[i] = arr + PECK * 0.5
-                x, t0 = gx, dep
-            routes.append(route)
-        res = (routes, eaten)
-        if len(self._cache) > 6:
-            self._cache.clear()
-        self._cache[n] = res
-        return res
+    def chicken(self, c: int, n: int, k: float):
+        """第 c 只鸡在第 n 轮第 k 秒：(x, 朝右?, 动作 stand/walk/peck, 吃掉的谷粒 {i: 时刻})"""
+        grains, homes, order = self.plan(n)
+        nxt = self.plan(n + 1)[1]
+        x = homes[c]
+        face = rand(n * 5 + c, self.s + 9) > 0.5
+        eaten = {}
+        tt = 2.7 + c * 0.15
+        if k < tt:  # 撒之前：张望、偶尔啄地
+            ph = (k + c) % 3.0
+            return x, face, ("peck" if 1.0 < ph < 1.35 else "stand"), eaten
+        for i in order[c]:
+            gx = grains[i]
+            walk = abs(gx - 3 - x) / SPEED if gx > x else abs(gx + 3 - x) / SPEED
+            tx = gx - 3 if gx > x else gx + 3
+            if k < tt + walk:
+                q = (k - tt) / max(walk, 1e-3)
+                return lerp(x, tx, q), tx > x, "walk", eaten
+            face = tx > x if abs(tx - x) > 0.5 else face
+            x = tx
+            tt += walk
+            if k < tt + PECK:
+                ph = (k - tt) / PECK
+                return x, face, ("peck" if ph % 0.5 < 0.3 else "stand"), eaten
+            tt += PECK
+            eaten[i] = tt
+        if k < R - 1.6:
+            ph = (k + c * 0.7) % 2.2
+            act = "peck" if 0.6 < ph < 0.9 else "stand"
+            if 1.4 < ph < 1.6:
+                face = not face  # 左右张望
+            return x, face, act, eaten
+        q = span(k, R - 1.6, R)
+        tx = nxt[c]
+        return lerp(x, tx, ease_in_out(q)), tx > x if abs(tx - x) > 1 else face, "walk" if abs(tx - x) > 1 else "stand", eaten
 
-    def hen_at(self, n: int, c: float, h: int):
-        """→ (x, 朝向, 状态 walk/peck/idle)"""
-        routes, _ = self.plan(n)
-        route = routes[h]
-        prev_x = route[0][2]
-        prev_dep = route[0][1]
-        face = 1 if (h % 2) else -1
-        for arr, dep, x, i in route[1:]:
-            if c < arr:  # 在路上
-                u = span(c, prev_dep, arr)
-                face = 1 if x > prev_x else -1
-                if c < prev_dep:
-                    return prev_x, face, "idle"
-                return lerp(prev_x, x, u), face, "walk"
-            if c < dep:
-                face = 1 if x > prev_x else -1
-                return x, face, "peck"
-            prev_x, prev_dep = x, dep
-            face = 1 if x > route[0][2] else -1
-        # 一轮快完：溜达到下一轮的起点
-        nx = self.start(n + 1, h)
-        if c > P - 1.4 and abs(nx - prev_x) > 0.5:
-            u = ease_in_out(span(c, P - 1.4, P))
-            return lerp(prev_x, nx, u), (1 if nx > prev_x else -1), ("walk" if u < 1 else "idle")
-        return prev_x, face, "idle"
-
-    # ------------------------------------------------------------ 画
-
-    def fence(self, g: Gfx):
-        """院子后面的竹篱笆（远一点：脚在 FB），前面是空的鸡场"""
-        for x in range(40, 128, 7):
-            top = 26 + (x // 7) % 2 * 2
-            g.d.line((x, top, x, FB), fill=1)
-        g.d.line((38, 31, 127, 31), fill=1)
-        g.d.line((38, 39, 127, 39), fill=1)
-        for x in range(43, 128, 14):   # 绑绳
-            g.px(x, 30)
-            g.px(x, 38)
-        g.d.line((14, FB, 127, FB), fill=1)
-        for i in range(10):  # 场上几处草茎
-            x = 40 + rand(i, 51) * 86
-            y = FB + 3 + rand(i, 52) * 8
-            g.px(x, y)
-        g.d.line((0, GY, 127, GY), fill=1)
-
-    def chicken(self, g: Gfx, n: int, c: float, h: int, t: float, frozen, crow: float):
-        if frozen is not None and h == 3:  # 定在开始发呆的那一刻；最后一秒走回自己的路线
-            nf, cf = phase(frozen, P)
-            x, face, st = self.hen_at(nf, cf, h)
-            back = span(t - frozen, 10.0, 11.0)
-            if back > 0:
-                x2, f2, _ = self.hen_at(n, c, h)
-                face = 1 if x2 > x else -1
-                x = lerp(x, x2, ease_in_out(back))
-                frozen = None
-                st = "walk"
+    def draw_chicken(self, g: Gfx, c: int, x: float, face: bool, act: str, t: float, crow=None, frozen=False):
+        fr = ROOSTER if c == 0 else HEN
+        if c == 0 and crow is not None:
+            spr = fr[3]
+        elif frozen:
+            spr = fr[0]
+        elif act == "walk":
+            spr = fr[int(t * 8 + c) % 2]
+        elif act == "peck":
+            spr = fr[2]
         else:
-            x, face, st = self.hen_at(n, c, h)
-        cock = h == 3
-        bob = 0
-        if frozen is not None and cock:
-            st = "statue"
-        if st == "walk":
-            bob = 1 if int(c * 8 + h) % 2 else 0
-            name = "cock" if cock else "hen"
-        elif st == "peck":
-            name = ("cockp" if cock else "henp") if (c * 4 + h) % 1 < 0.5 else ("cock" if cock else "hen")
-        elif st == "statue":
-            name = "cock"
+            spr = fr[0]
+        pix.blit(g, spr, x - spr.w // 2, FLOOR - spr.h, flip=not face)
+        return spr
+
+    # ------------------------------------------------ 主循环
+
+    def frame(self, g: Gfx, t: float, text_k: float = 1.0):
+        self.clock.tick(t)
+        n, k = cyc(t, R)
+        self.yard(g, t)
+        grains, homes, order = self.plan(n)
+        crow = event(t, 37.0, 3.0, self.s + 1)
+        wood = event(t, 61.0, 12.0, self.s + 2)
+        states = [self.chicken(c, n, k) for c in range(4)]
+        eaten = {}
+        for st in states:
+            eaten.update(st[3])
+        # 地上的谷粒（落地后才画；被啄掉就没了）
+        if k > 2.5:
+            for i, gx in enumerate(grains):
+                if i not in eaten:
+                    g.px(gx, FLOOR - 1)
+                    if i % 3 == 0:
+                        g.px(gx + 1, FLOOR - 1)
+        # 鸡（按 y 不分前后，后画的在前）
+        rooster = None
+        for c in (1, 2, 3, 0):
+            x, face, act, _ = states[c]
+            frozen = False
+            if c == 0 and wood:
+                q = wood[1]
+                fx, fface, _, _ = self.chicken(0, n, k - q) if k - q >= 0 else (x, face, None, None)
+                if q < 10.0:
+                    x, face, frozen = fx, fface, True
+                else:
+                    x = lerp(fx, x, ease_in_out(span(q, 10.0, 12.0)))
+            spr = self.draw_chicken(g, c, x, face, act, t, crow[1] if (c == 0 and crow and not wood) else None,
+                                    frozen)
+            if c == 0:
+                rooster = (x, face, spr, frozen)
+        # 小道士：抓、蓄、扬
+        hand, face, fling = self.toss(k)
+
+        def tool(gg, h1, h2):
+            pix.blit(gg, LADLE, DX + 3, FLOOR - 15)
+            if fling is not None and h1 and fling < 0.25:
+                gg.px(h1[0] + 1, h1[1] - 1), gg.px(h1[0] - 1, h1[1])
+
+        worker(g, DX, FLOOR, t, hand=hand, face=face, tool=tool, fist=fling is None and 0.3 < k < 1.6)
+        if fling is not None:  # 谷粒成弧飞出去
+            for i, gx in enumerate(grains):
+                q = span(fling, i * 0.03, 0.6 + i * 0.03)
+                if 0 < q < 1:
+                    x, y = arc_pt((DX + 14, FLOOR - 26), (gx, FLOOR - 1), q, 9 + (i % 3) * 2)
+                    g.px(x, y)
+        # 公鸡：打鸣的声波 / 木鸡的三个点
+        rx, rface, rspr, frozen = rooster
+        top = FLOOR - rspr.h
+        if crow and not wood:
+            q = crow[1]
+            bx = rx + (6 if rface else -6)
+            for j in range(3):
+                r = ((q * 1.6 + j / 3) % 1) * 12 + 2
+                if q < 2.4:
+                    a0, a1 = (-60, 10) if rface else (170, 240)
+                    g.d.arc((bx - r, top - r + 1, bx + r, top + r + 1), a0, a1, fill=1)
+        if wood and wood[1] < 10.0:
+            dots = min(int(wood[1] / 1.2), 3)
+            for j in range(dots):
+                g.d.rectangle((rx - 4 + j * 3, top - 5, rx - 3 + j * 3, top - 4), fill=1)
+        self.matrix(g, t, k, crow and not wood, wood is not None and wood[1] < 10)
+        txt = "望之似木鸡" if wood and 3.6 < wood[1] < 11.0 else "鸡犬相闻"
+        scroll(g, TEXT_X, txt, y=2 if len(txt) == 5 else 3, k=text_k, side="left")
+
+    def toss(self, k: float):
+        """→ (手, 表情, 撒出去以后的秒数)"""
+        if k < 0.9:  # 手伸进瓢里抓一把
+            return keys(k, [(0, (DX + 9, FLOOR - 15)), (0.5, (DX + 8, FLOOR - 13)), (0.9, (DX + 6, FLOOR - 14))]), \
+                "normal", None
+        if k < 1.6:  # 往后一蓄
+            return keys(k, [(0.9, (DX + 6, FLOOR - 14)), (1.6, (DX - 6, FLOOR - 16))]), "normal", None
+        if k < 1.9:  # 一扬
+            return keys(k, [(1.6, (DX - 6, FLOOR - 16)), (1.9, (DX + 14, FLOOR - 27))], ease=ease_out), "happy", None
+        if k < 3.2:
+            return keys(k, [(1.9, (DX + 14, FLOOR - 27)), (3.2, (DX + 9, FLOOR - 15))]), "happy", k - 1.9
+        return (DX + 9, FLOOR - 15), ("happy" if 5.0 < k < 6.0 else "normal"), None
+
+    def matrix(self, g: Gfx, t: float, k: float, crow: bool, frozen: bool):
+        """点阵：一只鸡，啄米时头点下去、打鸣时伸脖子张嘴"""
+        body = [0x00, 0x00, 0x00, 0xC6, 0xFE, 0x7C, 0x28, 0x6C]
+        if crow:
+            g.mx_rows([0x0B, 0x06, 0x04, 0xCC, 0xFC, 0x78, 0x28, 0x6C])
+            return
+        peck = not frozen and (t * 1.6) % 1 < 0.3
+        g.mx_rows(body)
+        if peck:
+            g.mx_rows([0x00, 0x00, 0x00, 0xC0, 0xFE, 0x7F, 0x2B, 0x6C])
         else:
-            # 闲着：偶尔啄地、偶尔左右看
-            k = noise(t * 0.8 + h * 5, self.s + h)
-            name = ("cockp" if cock else "henp") if k > 0.7 else ("cock" if cock else "hen")
-            if noise(t * 0.3 + h * 9, self.s + 30) > 0.62:
-                face = -face
-            if cock and crow > 0:
-                name = "cockc"
-        sp = spr(name, face)
-        g.blit(sp, x - sp.w // 2, GY - sp.h - bob)
-        return x, face, sp
-
-    def thrower(self, g: Gfx, c: float, t: float, final: float = 0.0):
-        """撒谷：远手端瓢在腰前，近手抓一把——一扬"""
-        bowl = (X + 5, GY - 13)
-        if c < 0.8:
-            q = ease_in_out(span(c, 0.1, 0.8))
-            hand = (lerp(X + 7, bowl[0] + 1, q), lerp(GY - 10, bowl[1] - 1, q))
-            lean = 1.5 * q
-        elif c < THROW:  # 往后蓄
-            q = ease_in_out(span(c, 0.8, 1.2))
-            hand = (lerp(bowl[0] + 1, X - 2, q), lerp(bowl[1] - 1, GY - 12, q))
-            lean = 1.5 - 2 * q
-        elif c < 2.2:  # 一扬
-            q = ease_out(span(c, THROW, THROW + 0.25))
-            hand = (lerp(X - 2, X + 14, q), lerp(GY - 12, GY - 27, q))
-            lean = -0.5 + 3 * q
-        else:
-            q = ease_in_out(span(c, 2.2, 3.0))
-            hand = (lerp(X + 14, X + 7, q), lerp(GY - 27, GY - 10, q))
-            lean = 2.5 * (1 - q)
-        if final > 0:
-            hand = (lerp(hand[0], X + 7, final), lerp(hand[1], GY - 10, final))
-        eye = "closed" if (t % 4.4) < 0.14 else "open"
-        pz = daoshi(g, X, GY, 1, hands=[hand, (bowl[0] - 1, bowl[1] + 2)], lean=lean, eye=eye)
-        # 瓢：半个葫芦
-        bx, by = bowl[0] + lean, bowl[1]
-        g.d.chord((bx - 6, by - 4, bx + 4, by + 4), 0, 180, fill=0, outline=1)
-        g.d.line((bx - 6, by, bx + 4, by), fill=1)
-        g.d.line((bx - 6, by, bx - 10, by - 2), fill=1)
-        for j in range(3):
-            g.px(bx - 3 + j * 2, by - 1)
-        return pz
-
-    def draw(self, g: Gfx, t: float, final: float = 0.0):
-        n, c = phase(t, P)
-        self.fence(g)
-        # 谷粒：飞行中 / 地上（被啄掉就没了）
-        gr = self.grains(n)
-        _, eaten = self.plan(n)
-        for i, (gx, gy) in enumerate(gr):
-            if c < THROW:
-                continue
-            if c < LAND + rand(i, self.s) * 0.3:
-                u = span(c, THROW + 0.05, LAND + rand(i, self.s) * 0.3)
-                x = lerp(X + 14, gx, u)
-                y = lerp(GY - 28, gy, u) - math.sin(u * math.pi) * (10 + rand(i + 3, self.s) * 8)
-                g.px(x, y)
-            elif c < eaten[i]:
-                g.px(gx, gy)
-        # 上一轮没吃完的也在（下一把落地时被“盖住”）
-        if n > 0:
-            pg = self.grains(n - 1)
-            _, pe = self.plan(n - 1)
-            for i, (gx, gy) in enumerate(pg):
-                if pe[i] > P and c < LAND:
-                    g.px(gx, gy)
-        ev_frz = event(t, 61.0, 12.0, self.s + 4)
-        ev_crow = event(t + 25, 37.0, 2.6, self.s + 5)
-        crow = 0.0
-        if ev_crow and not ev_frz:
-            crow = 1.0
-        frozen = (t - (ev_frz[1] - 1.0)) if (ev_frz is not None and ev_frz[1] > 1.0) else None
-        cock_xy = None
-        for h in range(self.NH):
-            x, face, sp = self.chicken(g, n, c, h, t, frozen if h == 3 else None, crow)
-            if h == 3:
-                cock_xy = (x, face, sp)
-        pz = self.thrower(g, c, t, final)
-        # 扬手时手里撒出的一蓬
-        if THROW - 0.05 < c < THROW + 0.2:
-            hx, hy = pz.near
-            for j in range(5):
-                g.px(hx + 2 + j, hy - 1 - (j % 2))
-        # 公鸡打鸣：声波
-        if crow > 0 and cock_xy:
-            x, face, sp = cock_xy
-            k = ev_crow[1]
-            hx, hy = x + face * 6, GY - sp.h - 1
-            for r in range(3):
-                rr = 3 + r * 3 + (k * 8) % 3
-                g.d.arc((hx - rr, hy - rr, hx + rr, hy + rr), -60 if face > 0 else 120, 0 if face > 0 else 180, fill=1)
-        if frozen is not None and cock_xy:  # 定住：头上三个点，慢慢出现
-            x, face, sp = cock_xy
-            k = ev_frz[1]
-            for j in range(min(3, int((k - 1.0) * 1.5))):
-                g.px(x - 2 + j * 3, GY - sp.h - 4)
-        if ev_frz and frozen is not None and ev_frz[1] > 2.5:
-            self.text(g, "望之似木鸡", span(ev_frz[1], 2.5, 3.5))
-        else:
-            self.text(g, "鸡犬相闻")
-        self.mx(g, t, n, c, crow, frozen is not None)
-
-    def text(self, g: Gfx, s: str, a: float = 1.0):
-        g.d.rectangle((0, 0, 14, 63), fill=0)
-        g.vtext(2, 1, s[:int(round(len(s) * clamp(a)))])
-
-    def mx(self, g: Gfx, t: float, n: int, c: float, crow: float, frozen: bool):
-        # 一只鸡：啄米时头一点一点；打鸣时伸脖子
-        x, face, st = self.hen_at(n, c, 0)
-        peck = (st == "peck" and (c * 4) % 1 < 0.5) or (st == "idle" and noise(t * 0.8, self.s) > 0.7)
-        body = ["00000000", "00000000", "00000000", "10001110", "11011110", "11111110", "01111100", "00101000"]
-        for y, row in enumerate(body):
-            for xx, ch in enumerate(row):
-                if ch == "1":
-                    g.mx_set(xx, y)
-        if crow > 0:
-            g.mx_set(6, 1)
-            g.mx_set(6, 2)
-            g.mx_set(7, 0)
-            g.mx_set(5, 0)
-        elif peck:
-            g.mx_set(7, 5)
-            g.mx_set(7, 6)
-        else:
-            g.mx_set(6, 2)
-            g.mx_set(5, 2)
-            g.mx_set(7, 3)
-        if frozen:
-            g.mx_level = 1
-        g.mx_set(1, 7)
-
-    # ------------------------------------------------------------ 阶段
+            g.mx_set(5, 1), g.mx_set(6, 1), g.mx_set(5, 2), g.mx_set(6, 2), g.mx_set(7, 2), g.mx_set(5, 0)
+        if peck and k > 2.6:
+            g.mx_set(7, 7)
 
     def enter(self, g: Gfx, t: float):
-        """端着瓢走出来，鸡从画外一只只跑进来"""
-        T = self.T["enter"]
-        self.fence(g)
-        for h in range(self.NH):
-            hx = self.home(h)[0]
-            st = 0.3 + h * 0.35
-            u = ease_out(span(t, st, st + 1.4))
-            x = lerp(140 + h * 10, hx, u)
-            name = ("cock" if h == 3 else "hen")
-            sp = spr(name, -1 if u < 1 else (1 if h % 2 else -1))
-            bob = 1 if (u < 1 and int(t * 8 + h) % 2) else 0
-            g.blit(sp, x - sp.w // 2, GY - sp.h - bob)
-        x = lerp(-12, X, ease_out(span(t, 0, 1.8)))
-        bowl = (x + 5, GY - 13)
-        daoshi(g, x, GY, 1, hands=[(x + 7, GY - 10), (bowl[0] - 1, bowl[1] + 2)], step=t * 11 if t < 1.7 else None)
-        g.d.chord((bowl[0] - 6, bowl[1] - 4, bowl[0] + 4, bowl[1] + 4), 0, 180, fill=0, outline=1)
-        g.d.line((bowl[0] - 6, bowl[1], bowl[0] + 4, bowl[1]), fill=1)
-        g.d.line((bowl[0] - 6, bowl[1], bowl[0] - 10, bowl[1] - 2), fill=1)
-        self.text(g, "鸡犬相闻", span(t, 1.2, T - 0.3))
-        self.mx(g, t, 0, 0, 0, False)
+        """端着瓢从左边走出来，鸡一只只从鸡舍里跑出来"""
+        self.clock.tick(t)
+        self.yard(g, t)
+        grains, homes, order = self.plan(0)
+        for c in (1, 2, 3, 0):
+            q = span(t, 0.3 + c * 0.45, 1.6 + c * 0.45)
+            if q <= 0:
+                continue
+            x = lerp(112, homes[c], ease_out(q))
+            self.draw_chicken(g, c, x, False if q < 1 else rand(c, self.s + 9) > 0.5, "walk" if q < 1 else "stand", t)
+        x = lerp(4, DX, ease_out(span(t, 0, 2.2)))
+
+        def tool(gg, h1, h2):
+            pix.blit(gg, LADLE, x + 3, FLOOR - 15)
+        worker(g, x, FLOOR, t, hand=(x + 9, FLOOR - 15), legs="walk" if t < 2.2 else "stand", tool=tool)
+        self.matrix(g, t, 0, False, False)
+        scroll(g, TEXT_X, "鸡犬相闻", k=span(t, 0.4, 2.4), side="left")
 
     def hold(self, g: Gfx, t: float):
-        self._ht = t
-        self.draw(g, t)
+        self.frame(g, t)
 
     def exit(self, g: Gfx, t: float):
-        self.draw(g, self._ht, final=ease_in_out(span(t, 0, 0.5)))
-        fade_box(g, 1 - ease_in(span(t, 0.35, self.T["exit"])))
-        if t > 0.7:
-            g.mx[:] = False
-            g.mx[7, 1:7] = True
+        self.frame(g, self.hold_t + t)
+        fade_out(g, span(t, 0.1, self.T["exit"]))

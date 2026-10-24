@@ -1,313 +1,532 @@
-"""掐诀：左手依次结剑诀、灵官诀、五雷诀、三山诀。
+"""掐诀：左边小道士立掌掐诀，右边一个圆形“特写框”里是他那只大号像素手，一诀一诀地结，每诀各有气象。
 
-道士行法“手掐诀、脚踏罡、口念咒”，掐诀多用左手（右手执剑、执铃）。手型依据民间道坛流传的诀谱：
-  剑诀：食指、中指并伸，拇指压住无名指、小指；
-  灵官诀：中指直竖，食指屈来掐中指第一节，拇指相抵；
-  五雷诀：四指屈入掌心，拇指压在四指背上，如握拳；
-  三山诀：握拳后依次弹出食指、小指、拇指。
+掐诀多用左手（右手执剑、执铃）。手型据民间道坛流传的诀谱：剑诀（食、中二指并伸，拇指压无名指和小指）、
+灵官诀（中指直竖，食指屈来勾住中指第一节，拇指压住无名指和小指）、五雷诀（四指屈入掌心，拇指压在指背上如握拳）、
+三山诀（握拳后依次弹出食指、小指、拇指）。
+
+入场：小道士走上来站定，举手；特写框“啵”地弹开，一只张开的手从框底升上来，四指依次屈下，结成剑诀，指尖冒出剑气。
+持续：一轮 600 秒，依次结四诀，每诀 150 秒，换诀时手指一根根屈伸过去。每诀各有气象：剑诀指尖一道光剑、流光上冲；
+      灵官诀中指尖一团灵官火；五雷诀拳边雷光乱闪（框里一闪）；三山诀身后升起三座山。
+      每 12 秒“一按”：手一紧，一圈光从手上荡开、火星迸出。框外一圈点状“气圈”随本诀时间合拢。
+      左上写诀名，下面小字“第几遍”。四诀走完后甩手散诀（张开一抖，余气散出），再结剑诀开始下一遍。
+中断：手松开、垂下沉出框外，写“松诀”。  恢复：手升回来重新结诀。
+圆满：四诀快速连掐一遍，每结成一诀闪一圈光，然后握拳收诀，四周光芒放射，题“道法自然”（《道德经》）。
 """
 from __future__ import annotations
 
 import math
 
-from ..engine.anim import blink, clamp, ease_in_out, ease_out, ease_out_back, lerp, noise, rand, span
-from ..engine.fx import flame, lightning, typewriter
-from ..engine.gfx import Gfx
+import numpy as np
+
+from ..engine import pix
+from ..engine.anim import ease_in_out, ease_out, ease_out_back, lerp, rand, span
+from ..engine.chars import Part, daoshi
+from ..engine.gfx import Gfx, Sprite
 from ..engine.scene import Ritual, register
-from .r3_kit import capsule, nth, ocapsule, round_of, side_text, sleeve, sparkle
+from .r3_kit import (FLOOR, Clock, banner, banner_text, crossed, hand_at, label, mx_ring, nth, pose_arm, put, rays,
+                     round_of, sparkle)
 
-CX = 64
-LEN = (17, 21, 19, 14)          # 食、中、无名、小指伸直的长度
-FX = (-9, -3, 3, 9)             # 四指根部相对掌心的 x
-# 诀：四指 (伸展 0..1, 偏角)，拇指尖相对 (CX, 掌顶) 的位置
-OPEN = {"f": ((1, -0.12), (1, -0.03), (1, 0.05), (1, 0.16)), "th": (-22, -2)}
-SEALS = [
-    ("剑诀", {"f": ((1, 0.02), (1, -0.02), (0, 0), (0, 0)), "th": (7, 7)}),
-    ("灵官诀", {"f": ((0.5, 0.42), (1, 0), (0, 0), (0, 0)), "th": (-4, -9)}),
-    ("五雷诀", {"f": ((0, 0), (0, 0), (0, 0), (0, 0)), "th": (6, 3)}),
-    ("三山诀", {"f": ((1, -0.1), (0, 0), (0, 0), (1, 0.12)), "th": (-21, -1)}),
-]
-EACH = 150.0                    # 每个诀持续的秒数
-MORPH = 1.4                     # 换诀的过渡秒数
+DX = 20                       # 小道士
+BX, BY, BR = 86, 32, 30       # 特写框
+WRIST = (86, 62)              # 大手腕底
+CYCLE = 600.0
+EACH = 150.0
+TRANS = 2.0
+RENEW = 4.0
+NAMES = ["剑诀", "灵官诀", "五雷诀", "三山诀"]
+# 手型：(食, 中, 无名, 小) 伸展 0..1（食指 -1 = 勾住中指），拇指：out 张开 / up 贴边 / fold 压无名小指 / over 压指背
+MUDRA = {
+    "open": ((1, 1, 1, 1), "out"),
+    "jian": ((1, 1, 0, 0), "fold"),
+    "lingguan": ((-1, 1, 0, 0), "fold"),
+    "wulei": ((0, 0, 0, 0), "over"),
+    "sanshan": ((1, 0, 0, 1), "out"),
+}
+ORDER = ["jian", "lingguan", "wulei", "sanshan"]
+FULL = (15, 18, 16, 12)              # 四指伸直时露出掌顶的长度
+FX = (72, 78, 84, 90)                # 四指左边 x（特写框坐标）
+FW = (5, 5, 5, 4)
+TOP = 34                             # 掌顶（指根）y
 
 
-def mix(a: dict, b: dict, p: float) -> dict:
-    p = ease_in_out(p)
-    f = tuple((lerp(fa[0], fb[0], p), lerp(fa[1], fb[1], p)) for fa, fb in zip(a["f"], b["f"]))
-    th = (lerp(a["th"][0], b["th"][0], p), lerp(a["th"][1], b["th"][1], p))
-    return {"f": f, "th": th}
+# ---------------------------------------------------------------- 大号像素手
 
+def _hand(L: tuple, thumb: str) -> Sprite:
+    """大手（掌心朝外，四指朝上，拇指在左）：宽袖口 → 手腕 → 手掌（大鱼际隆起、掌纹、右侧阴影）→ 四指 → 拇指。
+    伸直的指头：圆指尖、两道指节纹、右侧一道暗边显圆；屈起的指头：从指根往下折、盖住掌心上部，指甲朝外；
+    L = 四指露出的长度（≤4 为屈起；-1 为食指勾住中指第一节）"""
+    ox = -56
+    p = Part(56, 64)
 
-def hand(g: Gfx, cx: float, y0: float, pose: dict, arm: bool = True):
-    """左手，掌心朝外，拇指在画面左侧。y0 = 掌顶"""
-    if arm:
-        sleeve(g, cx + 1, y0 + 30, math.pi / 2, length=30, w0=20, w1=44, shade=0.25)
-        g.d.rectangle((cx - 9, y0 + 20, cx + 10, y0 + 31), fill=0, outline=1)  # 手腕
-    # 手掌
-    g.d.rounded_rectangle((cx - 13, y0, cx + 13, y0 + 24), radius=5, fill=0, outline=1)
-    g.d.arc((cx - 9, y0 + 8, cx + 15, y0 + 30), 200, 250, fill=1)  # 掌纹
-    g.d.line((cx - 3, y0 + 13, cx + 7, y0 + 11), fill=1)
-    # 四指：从小指到食指（食指盖在前面）
-    for i in (3, 2, 1, 0):
-        ext, tilt = pose["f"][i]
-        bx, by = cx + FX[i], y0 + 4
-        ln = 3 + (LEN[i] - 3) * ext
-        tx, ty = bx + math.sin(tilt) * ln, by - math.cos(tilt) * ln
-        ocapsule(g, bx, by, tx, ty, 7)
-        if ext > 0.45:  # 指节纹
-            for k in (0.42, 0.72):
-                jx, jy = bx + (tx - bx) * k, by + (ty - by) * k
-                g.d.line((jx - 1, jy, jx + 1, jy), fill=1)
-        else:           # 屈入掌心：看得见指尖
-            a = 1 - ext / 0.45
-            g.d.rounded_rectangle((bx - 2, y0 + 5 + 3 * a, bx + 2, y0 + 8 + 3 * a), radius=1, outline=1, fill=0)
-    # 掌顶的手指根部缝
-    g.d.line((cx - 12, y0 + 4, cx + 12, y0 + 4), fill=0)
+    def X(x):
+        return x + ox
+
+    def R(x0, y0, x1, y1, fill=1, r=2):
+        p.shape("rounded_rectangle", (X(x0), y0, X(x1), y1), radius=r, fill=fill)
+
+    def ink(x0, y0, x1, y1, v=0):
+        p.d.line((X(x0), y0, X(x1), y1), fill=v)
+
+    # 宽袖口：两道镶边，下半网点
+    p.shape("polygon", [(X(66), 63), (X(70), 56), (X(100), 56), (X(104), 63)], fill=1)
+    ink(70, 58, 100, 58)
+    ink(69, 60, 101, 60, 1)
+    p.dither([(X(67), 61), (X(103), 61), (X(104), 63), (X(66), 63)], 0.5, 0)
+    # 手腕
+    R(76, 50, 92, 57, r=1)
+    # 手掌：上宽下窄，左下大鱼际鼓出来
+    p.shape("polygon", [(X(71), TOP + 1), (X(95), TOP + 1), (X(95), TOP + 12), (X(92), TOP + 19), (X(77), TOP + 19),
+                        (X(70), TOP + 14), (X(68), TOP + 9)], fill=1)
+    p.d.arc((X(70), TOP + 6, X(84), TOP + 22), 190, 280, fill=0)          # 大鱼际纹
+    ink(80, TOP + 9, 93, TOP + 7)                                            # 感情线
+    ink(78, TOP + 13, 86, TOP + 12)                                          # 智慧线
+    p.dither([(X(93), TOP + 4), (X(96), TOP + 4), (X(96), TOP + 13), (X(93), TOP + 17)], 0.5, 0)
+    # 伸直的指头（先画，屈起的指头之后盖在掌上）
+    curled = []
+    for i in range(4):
+        x0, w = FX[i], FW[i]
+        x1 = x0 + w - 1
+        ln = L[i]
+        if i == 0 and ln == -1:      # 灵官诀：食指（之后再画，勾在中指上）
+            continue
+        if ln <= 4:
+            curled.append(i)
+            continue
+        ln = int(round(ln))
+        R(x0, TOP - ln, x1, TOP + 3, r=2)
+        for k in (1, 2):
+            y = TOP - int(ln * k / 3)
+            ink(x0 + 1, y, x1 - 2, y)
+        ink(x1, TOP - ln + 3, x1, TOP - 1)                                    # 右侧暗边
+        p.px(X(x0 + 1), TOP - ln + 1, 0) if w >= 5 else None                  # 指尖一点高光边
+    if L[0] == -1:                   # 灵官诀：食指立起一截，再勾过去搭在中指第一节上（暗线勾边，压在中指上）
+        x0, x1 = FX[0], FX[0] + 4
+        R(x0, TOP - 8, x1, TOP + 3)
+        ink(x0 + 1, TOP - 3, x1 - 1, TOP - 3)
+        hook = (X(x0), TOP - 13, X(FX[1] + 3), TOP - 8)
+        p.d.rounded_rectangle((hook[0] - 1, hook[1] - 1, hook[2] + 1, hook[3] + 1), radius=2, fill=0)
+        p.shape("rounded_rectangle", hook, radius=2, fill=1)
+        ink(x1, TOP - 12, x1, TOP - 9)                                         # 弯折处
+        p.d.arc((X(FX[1]), TOP - 13, X(FX[1] + 4), TOP - 9), 270, 90, fill=0)  # 指甲
+    m = np.array(p.mk, bool)
+    for i in range(3):                                                         # 指缝：伸直的两指之间挖开
+        gx = X(FX[i] + FW[i])
+        if not (L[0] == -1 and i == 0):
+            m[:TOP, gx] = False
+    p.mk = __import__("PIL.Image", fromlist=["Image"]).fromarray(m)
+    p.m = __import__("PIL.ImageDraw", fromlist=["ImageDraw"]).Draw(p.mk)
+    # 屈起的指头：从指根折下来盖住掌心上部，暗线勾边，指甲（暗弧）在下端
+    for i in curled:
+        x0, w = FX[i], FW[i]
+        x1 = x0 + w - 1
+        p.d.rounded_rectangle((X(x0 - 1), TOP - 3, X(x1 + 1), TOP + 9), radius=2, fill=0)
+        R(x0, TOP - 2, x1, TOP + 8, r=2)
+        ink(x0 + 1, TOP + 1, x1 - 1, TOP + 1)                                  # 指节
+        p.d.arc((X(x0), TOP + 4, X(x1), TOP + 10), 200, 340, fill=0)          # 指甲
+        p.shape("rectangle", (X(x0), TOP - 2, X(x1), TOP - 1), fill=1)        # 指背顶上一点
     # 拇指
-    rx, ry = cx - 11, y0 + 18
-    tx, ty = cx + pose["th"][0], y0 + pose["th"][1]
-    mx, my = lerp(rx, tx, 0.45) - 3, lerp(ry, ty, 0.45) + 1   # 拇指根的鱼际
-    ocapsule(g, rx, ry, mx, my, 9)
-    ocapsule(g, mx, my, tx, ty, 7)
-    g.d.ellipse((mx - 2.5, my - 2.5, mx + 2.5, my + 2.5), fill=0)
-    jx, jy = lerp(mx, tx, 0.5), lerp(my, ty, 0.5)
-    g.d.point((jx, jy))
+    if thumb == "out":      # 张开：从大鱼际往左上伸出
+        poly = [(X(70), TOP + 15), (X(68), TOP + 8), (X(62), TOP + 1), (X(59), TOP - 3), (X(62), TOP - 6),
+                (X(67), TOP - 2), (X(73), TOP + 5)]
+        p.shape("polygon", poly, fill=1)
+        ink(62, TOP - 2, 65, TOP - 4)                                          # 指甲
+        ink(64, TOP + 4, 67, TOP + 2)                                          # 指节纹
+    elif thumb == "up":     # 贴着掌边立起
+        p.d.rounded_rectangle((X(65), TOP - 7, X(71), TOP + 16), radius=3, fill=0)
+        R(66, TOP - 6, 70, TOP + 15, r=2)
+        ink(66, TOP + 3, 69, TOP + 3)
+        ink(67, TOP - 5, 69, TOP - 5)
+    elif thumb == "fold":   # 从大鱼际斜着横过掌心，指肚压在无名指、小指的指甲上
+        poly = [(X(69), TOP + 15), (X(70), TOP + 9), (X(80), TOP + 5), (X(92), TOP + 3), (X(94), TOP + 6),
+                (X(92), TOP + 9), (X(81), TOP + 12), (X(74), TOP + 17)]
+        p.d.polygon([(x - 1 if i in (0, 1, 7) else x, y - 1 if i in (2, 3) else (y + 1 if i in (5, 6, 7) else y))
+                     for i, (x, y) in enumerate(poly)], fill=0)
+        p.shape("polygon", poly, fill=1)
+        ink(80, TOP + 6, 80, TOP + 10)                                         # 指节纹
+        p.d.arc((X(87), TOP + 3, X(95), TOP + 9), 300, 60, fill=0)            # 指甲
+    elif thumb == "over":   # 五雷：拇指横压在四个指背中段
+        poly = [(X(68), TOP + 12), (X(70), TOP + 4), (X(86), TOP + 2), (X(89), TOP + 5), (X(86), TOP + 8),
+                (X(73), TOP + 10)]
+        p.d.polygon([(x, y - 1) if i in (1, 2) else ((x, y + 1) if i in (4, 5) else (x, y)) for i, (x, y) in enumerate(poly)],
+                    fill=0)
+        p.shape("polygon", poly, fill=1)
+        ink(78, TOP + 4, 78, TOP + 8)
+        p.d.arc((X(82), TOP + 2, X(90), TOP + 8), 300, 60, fill=0)
+    on = np.array(p.on, bool) & np.array(p.mk, bool)
+    s = Sprite(on=on, mask=np.array(p.mk, bool))
+    s.anchor = (X(86), 63)
+    tips = {}
+    for i in range(4):
+        ln = L[i]
+        tips[f"f{i}"] = (X(FX[i] + FW[i] // 2), TOP - (int(round(ln)) if ln > 4 else 2))
+    tips["fist"] = (X(82), TOP + 4)
+    s.pts = tips
+    return s
+
+
+_H: dict = {}
+
+
+def hand_spr(L, thumb) -> Sprite:
+    k = (tuple(int(round(v)) for v in L), thumb)
+    if k not in _H:
+        _H[k] = _hand(*k)
+    return _H[k]
+
+
+def mudra_lengths(name: str):
+    ext, thumb = MUDRA[name]
+    return tuple(-1 if v == -1 else lerp(3, FULL[i], v) for i, v in enumerate(ext)), thumb
+
+
+def blend(a: str, b: str, q: float):
+    """两诀之间：四指一根根屈伸过去（食指先动），拇指在中途换位置"""
+    La, ta = mudra_lengths(a)
+    Lb, tb = mudra_lengths(b)
+    out = []
+    for i in range(4):
+        qi = ease_in_out(span(q, i * 0.12, 0.55 + i * 0.12))
+        va, vb = La[i], Lb[i]
+        if va == -1 or vb == -1:
+            v = (-1 if qi > 0.5 else va) if vb == -1 else (vb if qi > 0.5 else 3)
+            if va == -1 and qi <= 0.5:
+                v = -1
+        else:
+            v = lerp(va, vb, qi)
+        out.append(v)
+    thumb = ta if q < 0.3 else ("up" if q < 0.7 else tb)
+    if ta == tb:
+        thumb = ta
+    return tuple(out), thumb
+
+
+FLAME = pix.frames("""
+  #
+ ##
+ ###
+####
+#.##
+#..#
+ ##
+---
+  #
+  ##
+ ###
+####
+##.#
+#..#
+ ##
+---
+ #
+ ##
+###
+####
+#.##
+#..#
+ ##
+""")
+
+MX_HAND = {
+    "open": (4, 4, 4, 4, True), "jian": (4, 4, 1, 1, False), "lingguan": (2, 4, 1, 1, False),
+    "wulei": (1, 1, 1, 1, False), "sanshan": (4, 1, 1, 4, True),
+}
 
 
 @register
-class HandSeal(Ritual):
+class ShoujueRitual(Ritual):
     id = "r3.shoujue"
     name = "掐诀"
-    desc = "左手依次结剑诀、灵官诀、五雷诀、三山诀，每诀各有气象，气圈随时间合拢"
-    T = {"enter": 3.2, "interrupt": 1.4, "resume": 1.6, "complete": 5.0}
-    CYCLE = EACH * 4
-    Y0 = 34
+    desc = "小道士立掌掐诀，右边特写框里一只大号像素手依次结剑诀、灵官诀、五雷诀、三山诀，各有剑气、灵火、雷光、三山"
+    T = {"enter": 6.0, "interrupt": 1.6, "resume": 1.8, "complete": 6.0}
+    CYCLE = CYCLE
 
-    # ------------------------------------------------------------ 零件
+    def setup(self):
+        self.sparks = pix.Sparks(self.seed)
+        self.clock = Clock()
+        self.rings: list[list] = []
 
-    def pose_at(self, e: float) -> tuple[int, dict, float]:
-        """→ (第几诀, 手型, 本诀进度)"""
-        n, k, _ = round_of(e, self.CYCLE)
-        i = min(3, int(k // EACH))
-        kk = k - i * EACH
-        cur = SEALS[i][1]
-        if kk < MORPH and not (i == 0 and n == 1):
-            prev = SEALS[i - 1][1] if i > 0 else OPEN
-            return i, mix(prev, cur, kk / MORPH), kk / EACH
-        return i, cur, kk / EACH
+    # ------------------------------------------------------------ 公用
 
-    def formed(self, e: float) -> float:
-        """本诀结成后气象显现的程度"""
-        n, k, _ = round_of(e, self.CYCLE)
-        i = min(3, int(k // EACH))
-        if i == 0 and n == 1:
-            return 1.0
-        return span(k - i * EACH, MORPH * 0.7, MORPH * 0.7 + 0.8)
-
-    def aura(self, g: Gfx, i: int, t: float, a: float = 1.0, y0: float | None = None):
-        """每个诀的气象（画在手前后）"""
-        y0 = self.Y0 if y0 is None else y0
-        if a <= 0:
+    def bubble(self, g: Gfx, k: float = 1.0, ring: float = 0.0, t: float = 0.0):
+        """特写框：双线圆框 + 从小道士手边连过来的两道虚线；ring = 外圈气圈合拢的比例"""
+        r = BR * ease_out_back(k) if k < 1 else BR
+        if r < 2:
             return
-        if i == 0:  # 剑诀：指尖剑气直冲
-            top = y0 + 4 - 24
-            x = CX - 6
-            tip = top - (top + 2) * a
-            g.d.polygon([(x - 4, top), (x - 4, lerp(top, tip, 0.8)), (x, tip), (x + 4, lerp(top, tip, 0.8)),
-                         (x + 4, top)], outline=1, fill=0)
-            for j in range(3):  # 剑气流光
-                yy = top - ((t * 50 + j * 11) % max(top - tip, 1))
-                g.d.line((x, yy, x, yy - 4), fill=1)
-            if blink(t, 0.4, 0.5):
-                sparkle(g, x, tip - 1, 2)
-        elif i == 1:  # 灵官诀：中指尖一团灵官火
-            flame(g, CX - 3, y0 + 4 - 22, 6 * a, 11 * a, t, self.seed)
-        elif i == 2:  # 五雷诀：拳上雷光
-            if a > 0.5 and int(t * 8) % 3 != 0:
-                s = int(t * 8)
-                ang = rand(s, self.seed) * math.pi - math.pi
-                r0, r1 = 15, 15 + 14 * a
-                lightning(g, CX + math.cos(ang) * r0, y0 + 10 + math.sin(ang) * r0 * 0.8,
-                          CX + math.cos(ang) * r1, y0 + 10 + math.sin(ang) * r1 * 0.8, s * 13 + self.seed,
-                          jag=2, branches=0)
-        else:  # 三山诀：身后三座山
+        h = hand_at(DX, FLOOR, "up30", t, "jian")
+        hx, hy = h[0] + 2, h[1] - 3
+        for a in (150, 215):
+            ex, ey = BX + math.cos(math.radians(a)) * r, BY + math.sin(math.radians(a)) * r
+            pix.dotted(g, hx, hy, ex, ey, 2)
+        g.d.ellipse((BX - r - 1, BY - r - 1, BX + r + 1, BY + r + 1), fill=0)
+        g.d.ellipse((BX - r, BY - r, BX + r, BY + r), outline=1)
+        if ring > 0:
+            n = 48
+            for i in range(int(n * ring)):
+                a = -math.pi / 2 + i / n * 2 * math.pi
+                if i % 2 == 0:
+                    g.px(BX + math.cos(a) * (r + 3), BY + math.sin(a) * (r + 3))
+
+    def clip(self, g: Gfx, before: np.ndarray):
+        """特写框外面的东西恢复成画框之前的样子（手和气象只在框里）"""
+        a = g.array()
+        ys, xs = np.mgrid[0:64, 0:128]
+        inside = (xs - BX) ** 2 + (ys - BY) ** 2 <= (BR - 1) ** 2
+        a[~inside] = before[~inside]
+        g.put(a)
+
+    def big_hand(self, g: Gfx, L, thumb, dy: float = 0.0, jit: int = 0):
+        spr = hand_spr(L, thumb)
+        return put(g, spr, WRIST[0] + jit, WRIST[1] + dy)
+
+    def omen(self, g: Gfx, name: str, pts, t: float, e: float, power: float = 1.0):
+        """各诀的气象（画在框里）"""
+        if name == "jian":       # 剑气：两指尖上一道光剑，流光上冲
+            x0 = pts["f0"][0] - 2
+            x1 = pts["f1"][0] + 2
+            ytop = BY - BR + 3
+            y0 = min(pts["f0"][1], pts["f1"][1]) - 2
+            cx = (x0 + x1) / 2
+            g.d.line((x0, y0, x0, ytop + 6), fill=1)            # 光剑：两道刃线，顶上收成剑尖
+            g.d.line((x1, y0, x1, ytop + 6), fill=1)
+            g.d.line((x0, ytop + 6, cx, ytop), fill=1)
+            g.d.line((x1, ytop + 6, cx, ytop), fill=1)
+            for j in range(3):                                   # 流光往上冲
+                q = (t * 1.2 + j / 3) % 1
+                y = lerp(y0, ytop + 4, q)
+                g.d.line((cx, y, cx, y - 2), fill=1)
+        elif name == "lingguan":  # 灵官火：中指尖一团火
+            x, y = pts["f1"]
+            fr = pix.anim(FLAME, t, 8)
+            pix.blit(g, pix.stretch(fr, 1.0 * power + 0.6, 1.0 * power + 0.6), x - 3, y - 13)
+        elif name == "wulei":     # 雷光：拳边乱闪
+            if (t * 3) % 1 < 0.35:
+                from ..engine.fx import lightning
+                k = int(t * 3)
+                side = -1 if k % 2 else 1
+                x = BX + side * 14
+                lightning(g, x, BY - 20, x + side * 4, BY + 6, seed=k)
+                if (t * 3) % 1 < 0.06:
+                    sparkle(g, x, BY - 20, 3)
+        elif name == "sanshan":   # 三山：手后升起三座山
             pass
 
-    def mountains(self, g: Gfx, a: float, y0: float):
-        if a <= 0:
+    def mountains(self, g: Gfx, h: float):
+        """三山诀：三座山（在手后面先画）"""
+        if h <= 0:
             return
-        base = 64
-        for j, (x, h) in enumerate(((CX - 34, 22), (CX, 34), (CX + 34, 22))):
-            hh = h * ease_out(clamp(a * 1.4 - j * 0.2))
-            if hh <= 0:
-                continue
-            g.d.line((x - 18, base, x, base - hh, x + 18, base), fill=1)
-            g.d.line((x - 4, base - hh + 6, x, base - hh + 3, x + 3, base - hh + 7), fill=1)
+        base = BY + 14
+        for cx, ww, hh in ((BX - 16, 14, 22), (BX, 16, 30), (BX + 16, 14, 22)):
+            top = base - hh * h
+            g.d.polygon([(cx - ww, base), (cx, top), (cx + ww, base)], fill=0, outline=1)
+            g.d.line((cx, top, cx - 3, top + 6), fill=1)
+            g.d.line((cx - 3, top + 6, cx + 2, top + 9), fill=1)
 
-    def ring(self, g: Gfx, p: float, t: float, cy: float = 34):
-        """气圈：随本诀进度合拢"""
-        n = 56
-        m = int(n * clamp(p))
-        for j in range(m):
-            a = -math.pi / 2 + j / n * 2 * math.pi
-            x, y = CX + math.cos(a) * 44, cy + math.sin(a) * 27
-            if j == m - 1 and blink(t, 0.5):
-                sparkle(g, x, y, 1)
-            else:
-                g.px(x, y)
-
-    def mx_hand(self, g: Gfx, pose: dict, lit: float = 1.0):
-        g.mx[6:8, 2:7] = True
-        for i, (ext, _) in enumerate(pose["f"]):
-            col = 3 + i
-            h = int(round(ext * 4))
-            for r in range(5, 5 - h, -1):
-                g.mx[r, col] = True
-            if h == 0:
-                g.mx[5, col] = True
-        out = pose["th"][0] < -10
-        if out:
-            g.mx_set(1, 5)
-            g.mx_set(0, 4)
+    def little(self, g: Gfx, t: float, pose: str = "jue", face: str = "normal"):
+        """左边的小道士：jue 立掌掐诀 / idle 垂手 / gong 拱手"""
+        if pose == "jue":
+            pose_arm(g, DX, "up30", t, "jian", face=face)
+        elif pose == "gong":
+            daoshi(g, DX, FLOOR, "gongshou", t, face=face)
         else:
-            g.mx_set(1, 6)
-        g.mx[7, 2:7] = True
+            daoshi(g, DX, FLOOR, "idle", t, face=face)
 
-    def labels(self, g: Gfx, i: int, e: float, a: float = 1.0, right: str | None = None):
-        side_text(g, 3, 3, SEALS[i][0], a)
-        n = int(e // self.CYCLE) + 1
-        side_text(g, 113, 3, right if right is not None else nth(n, "遍"), a)
+    def emit_ring(self, x, y):
+        self.rings.append([x, y, 0.0])
 
-    def scene(self, g: Gfx, t: float, e: float, pose: dict | None = None, aura: float = 1.0, ring: bool = True,
-              y0: float | None = None, right: str | None = None):
-        i, p0, prog = self.pose_at(e)
-        pose = pose or p0
-        y0 = self.Y0 if y0 is None else y0
-        if i == 3:
-            self.mountains(g, aura * clamp(prog * EACH / 2.0), y0)
-        if ring:
-            self.ring(g, prog, t)
-        hand(g, CX, y0, pose)
-        a = aura * self.formed(e)
-        self.aura(g, i, t, a, y0)
-        self.labels(g, i, e, right=right)
-        self.mx_hand(g, pose)
-        if i == 2 and int(t * 8) % 3 and a > 0.5:
-            g.mx_set(0, 0, blink(t, 0.25))
-            g.mx_set(7, 0, not blink(t, 0.25))
+    def fx(self, g: Gfx, dt: float):
+        keep = []
+        for r in self.rings:
+            r[2] += dt
+            if r[2] < 0.5:
+                rr = 6 + r[2] * 40
+                g.d.ellipse((r[0] - rr, r[1] - rr, r[0] + rr, r[1] + rr), outline=1)
+                keep.append(r)
+        self.rings = keep
+        self.sparks.step(dt)
+        self.sparks.draw(g)
+
+    def mx(self, g: Gfx, name: str, t: float, flash: bool = False):
+        a, b, c, d, th = MX_HAND[name]
+        for i, h in enumerate((a, b, c, d)):
+            for y in range(4 - h, 8):
+                g.mx[y, 2 + i] = True
+        g.mx[4:8, 2:6] = True
+        if th:
+            g.mx[3, 0] = g.mx[4, 1] = True
+        else:
+            g.mx[4, 1] = g.mx[4, 2] = True
+        if name == "wulei" and (t * 3) % 1 < 0.35:
+            g.mx[0, 0] = g.mx[0, 7] = g.mx[1, 7] = True
+        if flash:
+            g.mx[:] = True
+
+    def names(self, g: Gfx, name: str, n: int, s: str | None = None):
+        if not s:
+            s = NAMES[ORDER.index(name)] if name in ORDER else "掐诀"
+        label(g, 3, 3, s)
+        if n:
+            label(g, 4, 16, nth(n, "遍"), size=8)
+
+    def state(self, k: float):
+        """本轮第 k 秒：(诀名, 指长, 拇指, 本诀进度)"""
+        i = min(int(k // EACH), 3)
+        u = k - i * EACH
+        name = ORDER[i]
+        if i > 0 and u < TRANS:
+            L, th = blend(ORDER[i - 1], name, u / TRANS)
+        else:
+            L, th = mudra_lengths(name)
+        return name, L, th, u / EACH
 
     # ------------------------------------------------------------ 阶段
 
+    def frame(self, g: Gfx, t: float, e: float, dt: float, name: str, L, thumb, ring: float, n: int,
+              pulse: float = -1.0, little: str = "jue", dy: float = 0.0, label_s: str | None = None,
+              power: float = 1.0, shake_hand: int = 0, omen: bool = True, bubble_k: float = 1.0, bob: int = 0):
+        self.little(g, t, little)
+        before = g.array()
+        self.bubble(g, bubble_k, ring, t)
+        if bubble_k >= 1:
+            if name == "sanshan" and omen:
+                self.mountains(g, min(1.0, power))
+            pts = self.big_hand(g, L, thumb, dy + bob, shake_hand)
+            if omen and dy == 0:
+                self.omen(g, name, pts, t, e, power)
+            if 0 <= pulse < 0.3:   # 一按：一圈光从手上荡开
+                fx, fy = pts["fist"]
+                g.d.ellipse((fx - 6 - pulse * 40, fy - 6 - pulse * 40, fx + 6 + pulse * 40, fy + 6 + pulse * 40),
+                            outline=1)
+            self.fx(g, dt)
+            self.clip(g, before)
+            g.d.ellipse((BX - BR, BY - BR, BX + BR, BY + BR), outline=1)
+        else:
+            self.fx(g, dt)
+        self.names(g, name, n, label_s)
+
     def enter(self, g: Gfx, t: float):
-        rise = ease_out_back(span(t, 0, 1.2))
-        y0 = lerp(70, self.Y0, rise)
-        fold = span(t, 1.5, 2.6)
-        pose = mix(OPEN, SEALS[0][1], fold)
-        hand(g, CX, y0, pose)
-        if t > 2.6:
-            self.aura(g, 0, t, ease_out(span(t, 2.6, 3.2)))
-        side_text(g, 3, 3, "剑诀", span(t, 2.4, 3.0))
-        side_text(g, 113, 3, nth(1, "遍"), span(t, 2.4, 3.0))
-        self.mx_hand(g, pose)
-        g.mx_level = 4 if 2.55 < t < 2.75 else 1
+        dt = self.clock(t)
+        if t < 2.0:
+            x = lerp(-14, DX, ease_out(span(t, 0, 2.0)))
+            daoshi(g, x, FLOOR, "walk", t)
+            label(g, 3, 3, "掐诀")
+            g.mx[4:8, 2:6] = True
+            return
+        k = span(t, 2.0, 2.5)
+        rise = span(t, 2.5, 3.3)
+        q = span(t, 3.4, 5.2)
+        L, th = blend("open", "jian", q)
+        if crossed(t, dt, 5.2):
+            self.sparks.burst(BX - 6, BY - 16, 14, 30, up=10, life=0.6, gravity=30)
+            self.emit_ring(BX - 6, BY - 6)
+        self.frame(g, t, t, dt, "jian", L, th, 0.0, 0, little="jue" if t > 2.3 else "idle",
+                   dy=(1 - ease_out(rise)) * 40, omen=t > 5.2, bubble_k=k)
+        self.mx(g, "jian" if q > 0.6 else "open", t)
 
     def hold(self, g: Gfx, t: float, e: float):
-        n, k, _ = round_of(e, self.CYCLE)
-        if n > 1 and k < 3.0:
-            self._renew(g, k, e)
+        dt = self.clock(t)
+        n, k, _ = round_of(e, CYCLE)
+        if k >= CYCLE - RENEW:
+            self.renew(g, k - (CYCLE - RENEW), t, e, dt, n)
             return
-        self.scene(g, t, e)
+        name, L, th, prog = self.state(k)
+        u = e % 12.0
+        pulse = u - 6.0 if 6.0 <= u < 6.3 else -1.0
+        if crossed(u, dt, 6.0):
+            self.sparks.burst(BX - 4, BY - 4, 12, 30, life=0.5, gravity=20)
+        trans = int(k // EACH) > 0 and (k % EACH) < TRANS
+        little = "gong" if trans else "jue"
+        bob = round(math.sin(e * 1.6) * 0.8)
+        self.frame(g, e, e, dt, name, L, th, prog, n, pulse=pulse, little=little, dy=0,
+                   omen=not trans, power=1.0 if name != "sanshan" else min(1.0, (k % EACH) / 4.0), bob=bob)
+        if trans and crossed(k % EACH, dt, TRANS - 0.05):
+            self.emit_ring(BX - 4, BY - 6)
+        self.mx(g, name, t, flash=0 <= pulse < 0.1)
 
-    def _renew(self, g: Gfx, k: float, e: float):
-        """四诀走完：甩手散诀（手张开一抖），再结剑诀"""
-        if k < 1.6:
-            p = span(k, 0, 0.5)
-            pose = mix(SEALS[3][1], OPEN, p)
-            shake = math.sin(k * 30) * 3 * (1 - span(k, 0.5, 1.6)) if k > 0.4 else 0
-            hand(g, CX + shake, self.Y0 + 2 * span(k, 0, 0.5), pose)
-            for j in range(6):  # 甩出的余气
-                if 0.4 < k < 1.4:
-                    a = rand(j, self.seed) * math.pi + math.pi
-                    r = 20 + (k - 0.4) * 40
-                    g.px(CX + math.cos(a) * r * 1.3, self.Y0 + 10 + math.sin(a) * r * 0.7)
-            side_text(g, 3, 3, "散诀")
-            side_text(g, 113, 3, nth(int(e // self.CYCLE) + 1, "遍"))
-            self.mx_hand(g, pose)
+    def renew(self, g: Gfx, u: float, t: float, e: float, dt: float, n: int):
+        """甩手散诀：张开一抖，余气散出，再结剑诀"""
+        if u < 1.2:
+            L, th = blend("sanshan", "open", u / 1.2)
+            jit = 0
+        elif u < 2.4:
+            L, th = mudra_lengths("open")
+            jit = int(round(math.sin(u * 40) * 2))
+            if int(u * 20) % 2 == 0:
+                a = rand(int(u * 20), 3) * 2 * math.pi
+                self.sparks.burst(BX + math.cos(a) * 10, BY - 6 + math.sin(a) * 10, 3, 40, life=0.6, gravity=10)
         else:
-            p = span(k, 1.6, 3.0)
-            pose = mix(OPEN, SEALS[0][1], p)
-            hand(g, CX, self.Y0 + 2 * (1 - p), pose)
-            side_text(g, 3, 3, "剑诀", p * 2)
-            side_text(g, 113, 3, nth(int(e // self.CYCLE) + 1, "遍"))
-            self.mx_hand(g, pose)
+            L, th = blend("open", "jian", span(u, 2.4, 3.8))
+            jit = 0
+        self.frame(g, e, e, dt, "jian", L, th, 0.0, n, little="idle" if u < 2.4 else "jue", shake_hand=jit,
+                   omen=False, label_s="散诀" if u < 2.4 else "剑诀")
+        self.mx(g, "open" if u < 2.4 else "jian", t)
 
     def interrupt(self, g: Gfx, t: float, e: float):
-        i, pose, prog = self.pose_at(e)
-        p = span(t, 0, 0.8)
-        y0 = self.Y0 + 8 * ease_in_out(span(t, 0.5, 1.4))
-        if i == 3:
-            self.mountains(g, 1 - p, y0)
-        self.ring(g, prog * (1 - p), t)
-        cur = mix(pose, OPEN, p)
-        hand(g, CX, y0, cur)
-        self.aura(g, i, t, 1 - span(t, 0, 0.4), y0)
-        side_text(g, 3, 3, SEALS[i][0] if t < 0.6 else "松诀")
-        side_text(g, 113, 3, nth(int(e // self.CYCLE) + 1, "遍") if t < 0.6 else "暂歇")
-        self.mx_hand(g, cur)
+        dt = self.clock(t)
+        n, k, _ = round_of(e, CYCLE)
+        name, L0, th0, prog = self.state(k)
+        q = span(t, 0.0, 0.6)
+        name_b = name
+        L, th = blend(name, "open", q) if q < 1 else mudra_lengths("open")
+        dy = ease_out(span(t, 0.6, 1.4)) * 44
+        self.frame(g, t, e, dt, name_b, L, th, prog, n, little="idle" if t > 0.6 else "jue", dy=dy, omen=q < 0.2,
+                   label_s="松诀" if t > 0.5 else None)
+        self.mx(g, "open", t)
 
     def resume(self, g: Gfx, t: float, e: float):
-        i, pose, prog = self.pose_at(e)
-        y0 = self.Y0 + 8 * (1 - ease_out(span(t, 0, 0.7)))
-        p = span(t, 0.5, 1.4)
-        cur = mix(OPEN, pose, p)
-        if i == 3:
-            self.mountains(g, span(t, 1.0, 1.6) * clamp(prog * EACH / 2.0), y0)
-        self.ring(g, prog * span(t, 0.8, 1.6), t)
-        hand(g, CX, y0, cur)
-        self.aura(g, i, t, span(t, 1.3, 1.6) * self.formed(e), y0)
-        self.labels(g, i, e)
-        self.mx_hand(g, cur)
-        g.mx_level = 4 if 1.35 < t < 1.5 else 1
+        dt = self.clock(t)
+        n, k, _ = round_of(e, CYCLE)
+        name, L1, th1, prog = self.state(k)
+        dy = (1 - ease_out(span(t, 0.0, 0.7))) * 44
+        q = span(t, 0.7, 1.6)
+        if q < 1:
+            L, th = blend("open", name, q) if name != "lingguan" or q > 0.5 else blend("open", "jian", q)
+        else:
+            L, th = L1, th1
+        if crossed(t, dt, 1.6):
+            self.emit_ring(BX - 4, BY - 6)
+            self.sparks.burst(BX - 4, BY - 10, 12, 30, life=0.5)
+        self.frame(g, t, e, dt, name, L, th, prog, n, little="jue" if t > 0.3 else "idle", dy=dy, omen=q >= 1)
+        self.mx(g, name if q >= 1 else "open", t)
 
     def complete(self, g: Gfx, t: float, e: float):
-        i, pose, _ = self.pose_at(e)
-        # 0–2.4：四诀快速连掐一遍；2.4–3.2：握诀收于掌中；之后放光
-        if t < 2.4:
-            j = min(3, int(t / 0.6))
-            kk = (t - j * 0.6) / 0.6
-            prev = pose if j == 0 else SEALS[j - 1][1]
-            cur = mix(prev, SEALS[j][1], clamp(kk / 0.4))
-            if j == 3:
-                self.mountains(g, clamp(kk * 2), self.Y0)
-            hand(g, CX, self.Y0, cur)
-            self.aura(g, j, t, clamp((kk - 0.35) * 3))
-            side_text(g, 3, 3, SEALS[j][0])
-            self.mx_hand(g, cur)
-            g.mx_level = 5 if kk > 0.4 and kk < 0.5 else 1
-            if kk > 0.4 and kk < 0.55:  # 每结成一诀闪一下
-                for q in range(8):
-                    a = q / 8 * 2 * math.pi
-                    g.d.line((CX + math.cos(a) * 30, 34 + math.sin(a) * 20, CX + math.cos(a) * 38,
-                              34 + math.sin(a) * 25), fill=1)
+        """四诀快速连掐（每诀 0.7 秒，结成一闪一圈光）→ 握拳收诀 → 光芒放射 → 道法自然"""
+        dt = self.clock(t)
+        n, k, _ = round_of(e, CYCLE)
+        seq = ORDER + ["wulei"]
+        if t < 3.5:
+            i = min(int(t / 0.7), 4)
+            u = t - i * 0.7
+            a = seq[i - 1] if i > 0 else self.state(k)[0]
+            b = seq[i]
+            L, th = blend(a, b, span(u, 0, 0.45))
+            name = b if i < 4 else "wulei"
+            if crossed(u, dt, 0.45):
+                self.emit_ring(BX - 4, BY - 6)
+                self.sparks.burst(BX - 4, BY - 10, 10, 30, life=0.5)
+            lab = NAMES[ORDER.index(name)] if i < 4 else "收诀"
+            self.frame(g, t, e, dt, name, L, th, 1.0, n, little="jue", label_s=lab, omen=u > 0.45 and i < 4)
+            self.mx(g, name, t, flash=0.45 <= u < 0.55)
             return
-        p = span(t, 2.4, 3.0)
-        y0 = self.Y0 + 6 * ease_in_out(span(t, 2.4, 3.2))
-        cur = mix(SEALS[3][1], SEALS[2][1], p)
-        hand(g, CX, y0, cur)
-        if t > 3.0:
-            r = ease_out(span(t, 3.0, 4.2))
-            for q in range(14):
-                a = q / 14 * 2 * math.pi + t * 0.5
-                r0, r1 = 24 + 16 * r, 28 + 22 * r
-                g.d.line((CX + math.cos(a) * r0 * 1.4, 30 + math.sin(a) * r0 * 0.7, CX + math.cos(a) * r1 * 1.4,
-                          30 + math.sin(a) * r1 * 0.7), fill=1)
-            g.d.rectangle((CX - 30, 1, CX + 30, 14), fill=0)
-            typewriter(g, CX, 2, "道法自然", t - 3.1, cps=5, align="center")
-        self.mx_hand(g, cur)
-        if t > 3.0:
-            rr = (t - 3.0) * 4
-            for y in range(8):
-                for x in range(8):
-                    if abs(math.hypot(x - 3.5, y - 5) - rr) < 0.7:
-                        g.mx[y, x] = True
-            g.mx_level = 1 + int(5 * (1 - span(t, 3.0, 4.5)))
+        L, th = mudra_lengths("wulei")
+        self.little(g, t, "gong", face="happy")
+        before = g.array()
+        self.bubble(g, 1.0, 1.0, t)
+        rays(g, BX - 2, BY - 2, 10, 26, 16, rot=t * 0.6, dash=2)
+        self.big_hand(g, L, th)
+        if crossed(t, dt, 3.5):
+            self.sparks.burst(BX - 4, BY - 6, 30, 50, up=10, life=1.0, gravity=30)
+        self.fx(g, dt)
+        self.clip(g, before)
+        g.d.ellipse((BX - BR, BY - BR, BX + BR, BY + BR), outline=1)
+        if 3.5 <= t < 3.58:
+            pix.flash(g)
+        if 3.5 <= t < 3.9:
+            pix.shake(g, t, 1.5)
+        if t > 3.8:
+            banner(g, 28, 4, "道法自然", span(t, 3.8, 4.2))
+            banner_text(g, 28, 4, "道法自然", span(t, 3.8, 4.2))
+        else:
+            label(g, 3, 3, "收诀")
+        self.mx(g, "wulei", t)
+        mx_ring(g, (t - 3.5) * 4)
+        g.mx_level = 1 + int(6 * (1 - span(t, 3.5, 4.9)))

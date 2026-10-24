@@ -1,280 +1,487 @@
-"""三献酒：供桌上三只青铜爵，执壶一献一献斟满（初献、亚献、终献），一巡献毕酹酒于地，再斟一巡。
+"""三献酒：露天醮坛，远山、两杆长幡迎风飘；矮供案上三只青铜爵，小道士提执壶初献、亚献、终献。
 
-依据：祭礼“三献”（初献、亚献、终献），道教斋醮的献供亦行三献；“酹”= 以酒浇地而祭；
-“爵”为三足、双柱、前流后尾的古酒器。
+依据：祭礼三献（初献、亚献、终献），道教斋醮献供亦行三献；“酹”是把酒浇在地上致祭；
+“爵”是三足、双柱、前流后尾、侧有鋬的古酒器。礼毕赞“礼成”。
 
-入场：三只爵依次从上落到供桌，左上“初献”、右上“第一巡”。
-持续：一轮 600 秒，分三献（第 3、200、400 秒）：一只宽袖手提执壶从右上来，悬在爵上倾倒，酒线注入、爵中酒面升起；
-      斟满的爵上有一缕酒香、酒面上一点光游走。一巡结束：三只爵前倾，把酒酹在地上（溅起酒花），再从初献斟起。
-中断：手提执壶来，放在供桌右端（“暂歇”），酒香散去。
-恢复：手把执壶提走，酒香复起。
-圆满：三爵齐酹，地上溅起酒花，“礼成”。
+入场：三只爵依次从天上落到供案上，“当”地一震、弹一下站稳；小道士走来站定，拱手；左上牌子“第一巡 初献”。
+持续：一轮 600 秒分三献（第 10、200、400 秒）：小道士转身从小几上提起执壶，走到爵前，举壶倾倒，
+      酒线注入、溅起酒花，爵口亮起酒面；放回执壶后对着那只爵作揖。斟满的爵口飘一缕酒香。
+      长幡一直飘；隔一阵起一阵风，幡猛地扬起；每隔一阵一只仙鹤扇着翅膀飞过远山；小道士呼吸眨眼、作揖。
+      续：酹酒——小道士捧起中间那只爵走到坛前，把酒浇在地上，溅起一圈酒花；另两爵的酒化作光点升空，
+      “第几巡”加一，再从初献斟起。
+中断：小道士拱手肃立，酒香散尽，牌子“暂歇”。  恢复：作揖，酒香复起。
+圆满：三爵齐亮、放光，小道士跪拜，闪白，大字“礼成”弹出。
 """
 from __future__ import annotations
 
 import math
 
-from ..engine.anim import blink, clamp, ease_in, ease_in_out, ease_out, ease_out_back, ease_out_bounce, lerp, noise, \
-    span
+from ..engine import pix
+from ..engine.anim import ease_in, ease_in_out, ease_out, ease_out_back, ease_out_bounce, lerp, rand, span
+from ..engine.chars import Part, daoshi
 from ..engine.cn import cn_num
-from ..engine.fx import smoke_wisp
 from ..engine.gfx import Gfx
 from ..engine.scene import Ritual, register
-from .r1_common import sleeve, sparkles
+from .r1_common import FLOOR, Clock, badge, floor, hit, hold_at, mx_art, mx_burst, pose_arm, star, title, twinkles
 
-CUPS = (24, 55, 86)
-FLOOR = 57
-POURS = (3.0, 200.0, 400.0)
-POUR_T = 7.0
-NAMES = ("初献", "亚献", "终献")
-POT_REST = (104, 40)   # 执壶放在桌上时的壶嘴尖
-LIB = 2.6              # 酹酒时长
+TABLE = (62, 124, 47)          # 矮供案 x0, x1, 案面 y
+CUPS = (75, 94, 113)           # 三只爵的中心
+DX = 34                        # 小道士站位
+STOOL_X = 14                   # 放执壶的小几
+OFFER_AT = (10.0, 200.0, 400.0)
+STAGES = ("初献", "亚献", "终献")
+POUR = 12.0                    # 一献的表演长度
+RENEW = 8.0
+
+JUE = pix.sprite("""
+       ## ##
+        # #
+##      # #
+.##############.#
+ .#############
+   #.#.#.#.#.#.##
+   ###########  #
+   #.#.#.#.#.#.##
+   ###########
+    #########
+    .#.#.#.#.
+     #######
+     #  #  #
+    #   #   #
+   #    #    #
+""")
+
+CRANE = pix.frames("""
+  ##
+ ####
+#######        .
+   ########  .##
+     ##############
+      ###.  #
+      #     .
+---
+          ##
+         ##
+        ##
+#######..###   .
+   #############.##
+     ##############
+""")
+
+BANNER_TAIL = 4
 
 
-def rot(x, y, a):
-    ca, sa = math.cos(a), math.sin(a)
+EWER_ART = """
+     ##          #
+    ####        ##
+     ..        ##
+    ####      ##
+ #.######.  ##.
+#  ########..#
+#.##########.
+#.###########
+#.#.#.#.#.##.
+ .##########
+  .#.#.#.#.
+   #######
+  #########
+"""
+EWER_GRIP = (0, 7)
+EWER_TIP = (16, 0)
 
-    def P(u, v):
-        return (x + u * ca - v * sa, y + u * sa + v * ca)
-    return P
+# 前倾约 35° 的执壶（逐像素手画）：流口朝右下
+EWER_TILT_ART = """
+       ##
+      ####
+  #    ..#
+ #   #####
+ #.########.
+  .#########.
+  #.##########
+   #.##########.
+    #.#.#.#.##.##
+     .#########.###
+      .#.#.#.#.  ###
+       #######     ##
+        #####       #
+"""
+TILT_GRIP = (1, 4)
+TILT_TIP = (20, 12)
 
 
-def jue(g: Gfx, x: float, wine: float = 0.0, tilt: float = 0.0, t: float = 0.0, seed: int = 0, drop: float = 0.0):
-    """爵：(x, FLOOR) 为三足着地中心；wine 0..1 酒面；tilt 前倾角（弧度，向左倾）"""
-    P = rot(x - 8, FLOOR - drop, -tilt)  # 以前足为支点
-    def Q(u, v):
-        return P(u + 8, v)
-    d = g.d
-    for a, b in (((-4, -12), (-9, 0)), ((4, -12), (9, 0)), ((0, -11), (0, -1))):  # 三足（刀形，外撇）
-        d.line((*Q(*a), *Q(*b)), fill=1)
-        d.line((*Q(a[0] + (1 if a[0] >= 0 else -1) * 0, a[1]), *Q(b[0] + (1 if b[0] > 0 else -1 if b[0] < 0 else 1), b[1])),
-               fill=1)
-    body = [Q(-6, -23), Q(6, -23), Q(7, -19), Q(6, -15), Q(3, -12), Q(-3, -12), Q(-6, -15), Q(-7, -19)]
-    d.polygon(body, fill=0, outline=1)
-    if wine > 0 and tilt < 0.05:
-        top = lerp(-13, -22, clamp(wine))
-        poly = [Q(-6, top), Q(6, top), Q(6, -16), Q(3, -13), Q(-3, -13), Q(-6, -16)]
-        g.shade_poly(poly, 0.45, outline=None)
-        d.line((*Q(-6, top), *Q(6, top)), fill=1)
-        gx = (t * 3 + seed) % 8 - 4  # 酒面上游走的一点光
-        d.point(Q(round(gx), top + 2), fill=0)
-    else:
-        d.line((*Q(-5, -17), *Q(5, -17)), fill=1)  # 腹带（空爵时看得见）
-    d.polygon([Q(-6, -23), Q(-15, -27), Q(-14, -25), Q(-6, -20)], fill=0, outline=1)  # 流
-    d.polygon([Q(6, -23), Q(11, -27), Q(6, -21)], fill=0, outline=1)  # 尾
-    for u in (-4, -1):  # 双柱（立在流口两侧）
-        d.line((*Q(u, -23), *Q(u, -28)), fill=1)
-        d.line((*Q(u - 1, -29), *Q(u + 1, -29)), fill=1)
-    d.line([Q(7, -20), Q(9, -19), Q(9, -15), Q(6, -14)], fill=1)  # 鋬
-    return Q(-15, -27)  # 流口
+def _ewer(ang: int):
+    """执壶：ang=0 立着，其他 = 前倾倒酒。返回 (精灵, 握点)，精灵 .tip = 流口"""
+    if ang == 0:
+        spr = pix.sprite(EWER_ART)
+        spr.tip = EWER_TIP
+        return spr, EWER_GRIP
+    spr = pix.sprite(EWER_TILT_ART)
+    spr.tip = TILT_TIP
+    return spr, TILT_GRIP
 
 
-def ewer(g: Gfx, x: float, y: float, tilt: float):
-    """执壶：(x, y) 为壶嘴尖；tilt 0 = 直立，1 = 倾倒。返回握把处"""
-    P = rot(x, y, -tilt * 0.6)
-    d = g.d
-    body = [P(14 + 7 * math.cos(k / 14 * 2 * math.pi), 13 + 7 * math.sin(k / 14 * 2 * math.pi)) for k in range(14)]
-    neck = [P(11, 7), P(17, 7), P(16, 1), P(12, 1)]
-    d.polygon(body, fill=0, outline=1)
-    d.polygon(neck, fill=0, outline=1)
-    d.line((*P(10, 0), *P(18, 0)), fill=1)
-    d.ellipse((P(14, -2)[0] - 1, P(14, -2)[1] - 1, P(14, -2)[0] + 1, P(14, -2)[1] + 1), fill=1)
-    d.line([P(8, 14), P(3, 6), P(0, 0)], fill=1)       # 壶流
-    d.line([P(9, 11), P(4, 4), P(1, 0)], fill=1)
-    d.line([P(17, 2), P(24, 5), P(23, 13), P(19, 17)], fill=1)  # 把
-    d.line((*P(10, 13), *P(18, 13)), fill=1)
-    for u in (11, 14, 17):
-        g.px(*P(u, 16))
-    return P(24, 9)
+def _stool():
+    """小几 13×8：几面、两条弯腿、横枨"""
+    p = Part(13, 8)
+    p.shape("rectangle", (0, 0, 12, 1), fill=1)
+    p.d.line((1, 1, 11, 1), fill=0)
+    for x in (2, 10):
+        p.shape("line", (x, 2, x - 1 if x < 6 else x + 1, 7), fill=1)
+    p.shape("line", (2, 5, 10, 5), fill=1)
+    return p.sprite()
 
+
+_P: dict = {}
+
+
+def P(name, *a):
+    k = (name,) + a
+    if k not in _P:
+        _P[k] = {"ewer": _ewer, "stool": _stool}[name](*a)
+    return _P[k]
+
+
+# ---------------------------------------------------------------- 背景
+
+def altar(g: Gfx, t: float, gust: float = 0.0):
+    """露天醮坛：远山（虚线山脊）、两杆长幡（飘动）、地面石砖、矮供案（案裙云纹）"""
+    ridge = [(0, 30), (14, 24), (26, 28), (40, 19), (54, 26), (66, 23), (80, 29), (96, 21), (110, 27), (127, 22)]
+    for (x0, y0), (x1, y1) in zip(ridge, ridge[1:]):
+        pix.dotted(g, x0, y0, x1, y1, 2)
+    floor(g)
+    for px in (3, 124):                        # 幡
+        g.d.line((px, 3, px, FLOOR), fill=1)
+        g.d.rectangle((px - 2, 2, px + 2, 3), fill=1)
+        g.px(px, 1)
+        s = 1 if px < 64 else -1
+        for i in range(26):
+            y = 6 + i
+            amp = (0.6 + 2.5 * gust) * (i / 26)
+            off = math.sin(t * (3 + 4 * gust) - i * 0.35) * amp + gust * i * 0.25
+            x = px + s * (2 + off)
+            w = 4 if i < 24 else 2
+            g.d.line((x, y, x + s * w, y), fill=1)
+            if i % 6 == 3:
+                g.d.line((x + s, y, x + s * (w - 1), y), fill=0)
+    x0, x1, ty = TABLE
+    g.d.rectangle((x0, ty, x1, ty + 1), fill=1)
+    g.d.rectangle((x0 + 2, ty + 2, x1 - 2, FLOOR - 1), outline=1, fill=0)
+    for x in range(x0 + 6, x1 - 6, 14):        # 案裙卷云纹
+        g.d.arc((x, ty + 3, x + 6, ty + 9), 180, 90, fill=1)
+        g.d.arc((x + 6, ty + 3, x + 12, ty + 9), 90, 0, fill=1)
+    pix.checker(g, (x0 + 3, FLOOR - 3, x1 - 2, FLOOR - 1), 0.5)
+
+
+def cup_top(i: int):
+    return CUPS[i], TABLE[2] - JUE.h + 3
+
+
+def cups(g: Gfx, full, t: float, drop=None):
+    """三只爵：full[i] 0..1 酒面（爵口亮线）"""
+    for i, cx in enumerate(CUPS):
+        y = TABLE[2] - JUE.h
+        if drop is not None:
+            y = lerp(-20, y, drop[i])
+        pix.blit(g, JUE, cx - 8, y)
+        if full[i] > 0:
+            w = int(round(5 * full[i]))
+            g.d.line((cx - w, y + 4, cx + w, y + 4), fill=0)
+            g.d.line((cx - w + 1, y + 4, cx + w - 1, y + 4), fill=1)
+            if full[i] >= 1 and int(t * 3 + i) % 4 == 0:  # 酒面上一点暗光游走
+                g.px(cx - 3 + int(t * 4 + i * 2) % 7, y + 3, 0)
+
+
+def aroma(g: Gfx, t: float, i: int, k: float = 1.0):
+    """酒香：一缕细细的波浪线往上飘"""
+    cx, cy = cup_top(i)
+    n = int(12 * k)
+    for j in range(n):
+        y = cy - 2 - j
+        x = cx + math.sin(t * 2.5 - j * 0.45 + i) * (0.5 + j * 0.12)
+        if (j + int(t * 6)) % 5 != 0:
+            g.px(x, y)
+
+
+def mx_jue(g: Gfx, n_full: int, pouring: bool, t: float):
+    mx_art(g, """
+..#..#..
+########
+.######.
+.######.
+..####..
+.#.##.#.
+#..#...#
+""", 0, 1)
+    for r in range(min(n_full, 3)):
+        g.mx[4 - r, 2:6] = False
+        g.mx[4 - r, 2:6] = r < n_full
+    if n_full == 0:
+        g.mx[3, 2:6] = False
+        g.mx[4, 2:6] = False
+    if pouring:
+        g.mx[0, 4] = int(t * 8) % 2 == 0
+
+
+# ---------------------------------------------------------------- 场景
 
 @register
-class ThreeLibations(Ritual):
+class ThreeOfferings(Ritual):
     id = "r1.wine"
     name = "三献酒"
-    desc = "三只青铜爵，执壶初献亚献终献一一斟满；一巡献毕前倾酹酒于地，再斟一巡"
-    T = {"enter": 3.5, "interrupt": 1.6, "resume": 1.4, "complete": 5.0}
+    desc = "露天醮坛，长幡飘飘；小道士提执壶初献、亚献、终献，斟满的爵口飘酒香；一轮后捧爵酹酒于地"
+    T = {"enter": 5.5, "interrupt": 1.6, "resume": 1.6, "complete": 5.5}
     CYCLE = 600.0
 
-    # ------------------------------------------------------------ 状态
+    def setup(self):
+        self.clock = Clock()
+        self.sparks = pix.Sparks(self.seed)
 
-    def levels(self, k: float) -> list:
-        out = []
-        for s in POURS:
-            out.append(ease_in_out(span(k, s + 1.8, s + 4.8)))
-        return out
+    def level(self, e: float, i: int) -> float:
+        k = e % self.CYCLE
+        if e >= self.CYCLE and k < RENEW:
+            return 0.0
+        return span(k, OFFER_AT[i] + 5.0, OFFER_AT[i] + 7.0)
 
-    def stage(self, k: float) -> int:
-        return max([i for i, s in enumerate(POURS) if k >= s] + [0])
+    def stage(self, e: float) -> int:
+        k = e % self.CYCLE
+        return 2 if k >= OFFER_AT[2] else (1 if k >= OFFER_AT[1] else 0)
 
-    def pour_pose(self, i: int, u: float):
-        """第 i 献，u = 开始后秒数 → (壶嘴 x, y, 倾角, 出画)"""
-        cx = CUPS[i]
-        tx, ty = cx + 1, 17
-        if u < 1.2:
-            p = ease_out(u / 1.2)
-            return lerp(150, tx, p), lerp(-25, ty, p), 0.0
-        if u < 5.4:
-            return tx, ty, ease_in_out(span(u, 1.2, 1.8)) * (1 - ease_in_out(span(u, 4.8, 5.4)))
-        p = ease_in(span(u, 5.4, POUR_T))
-        return lerp(tx, 150, p), lerp(ty, -25, p), 0.0
-
-    # ------------------------------------------------------------ 零件
-
-    def texts(self, g: Gfx, e: float, k: float, a: float = 1.0, left: str | None = None, right: bool = True):
+    def counter(self, g: Gfx, e: float, label: str | None = None):
         n = int(e // self.CYCLE) + 1
-        s = left if left is not None else NAMES[self.stage(k)]
-        r = f"第{cn_num(n)}巡"
-        g.text(2, 2, s[:int(round(clamp(a) * len(s)))])
-        if right:  # 执壶在右上时不写（被袖子挡住）
-            g.text(126, 2, r[:int(round(clamp(a) * len(r)))], align="right")
+        s = label or ((f"第{cn_num(n)}巡 " if n < 100 else f"{n}巡 ") + STAGES[self.stage(e)])
+        badge(g, 12, 4, s)
 
-    def table(self, g: Gfx):
-        g.d.line((0, FLOOR + 1, 127, FLOOR + 1), fill=1)
-        g.shade((0, FLOOR + 3, 128, 64), 0.15)
+    def stool(self, g: Gfx, ewer: bool = True):
+        pix.blit(g, P("stool"), STOOL_X - 6, FLOOR - 8)
+        if ewer:
+            spr, grip = P("ewer", 0)
+            pix.blit(g, spr, STOOL_X - 7, FLOOR - 9 - spr.h)
 
-    def cups(self, g: Gfx, lv: list, t: float, aroma: float = 1.0):
-        for i, x in enumerate(CUPS):
-            jue(g, x, lv[i], t=t, seed=i * 3)
-            if lv[i] >= 1 and aroma > 0:
-                smoke_wisp(g, x, FLOOR - 24, 9 * aroma, t, self.seed + i, sway=1.5, speed=4)
+    def fx(self, g: Gfx, dt: float):
+        self.sparks.step(dt)
+        self.sparks.draw(g)
 
-    def stream(self, g: Gfx, x0: float, y0: float, y1: float, t: float, dx: float = 0.0):
-        n = int(y1 - y0)
-        for j in range(max(n, 0)):
-            if (j + int(t * 40)) % 5:
-                g.px(x0 + dx * j / max(n, 1), y0 + j)
+    def ambient(self, g: Gfx, e: float, t: float):
+        """仙鹤飞过远山"""
+        k = (e + self.seed * 7) % 45
+        if k < 9:
+            x = lerp(140, -30, k / 9)
+            y = 12 + math.sin(k * 1.3) * 2
+            pix.blit(g, pix.anim(CRANE, t, 3), x, y)
 
-    def splash(self, g: Gfx, x: float, q: float):
-        """地上溅起的酒花：q 0..1"""
-        if not 0 < q < 1:
-            return
-        for j in range(5):
-            a = math.pi * (0.15 + 0.7 * j / 4)
-            r = q * 7
-            g.px(x + math.cos(a) * r * 1.4, FLOOR - math.sin(a) * r * (1 - q) * 1.5)
-        g.d.line((x - q * 9, FLOOR, x + q * 9, FLOOR), fill=1)
+    def gust(self, e: float) -> float:
+        k = (e + self.seed) % 37
+        return span(k, 20, 21) * (1 - span(k, 23, 25))
 
-    def libation(self, g: Gfx, k: float, t: float, full: list):
-        """三爵前倾酹酒于地：k 0..LIB"""
-        tilt = 0.38 * ease_in_out(span(k, 0.0, 0.6)) * (1 - ease_in_out(span(k, 1.9, LIB)))
-        for i, x in enumerate(CUPS):
-            lip = jue(g, x, full[i] if tilt < 0.05 else 0.0, tilt=tilt, t=t, seed=i * 3)
-            if 0.5 < k < 1.9 and full[i] > 0:
-                self.stream(g, lip[0], lip[1] + 1, FLOOR, t, dx=-1)
-                self.splash(g, lip[0] - 1, ((k - 0.6) * 1.6) % 1.0)
-        return tilt
-
-    def mx(self, g: Gfx, lv: list, t: float, pouring: bool = False):
-        g.mx_rows([0b00100100, 0b11111111, 0b01000010, 0b01000010, 0b00111100, 0b00100100, 0b01001010, 0b10000101])
-        filled = sum(1 for v in lv if v >= 1)
-        cur = max(lv) if lv else 0
-        if filled >= 1 or cur > 0.3:
-            g.mx[3, 2:6] = True
-        if filled >= 2 or cur > 0.7:
-            g.mx[2, 2:6] = True
-        if pouring:
-            g.mx[0, 3 + int(t * 8) % 2] = True
-
-    # ------------------------------------------------------------ 阶段
+    # ------------------------------------------------------------ 入场
 
     def enter(self, g: Gfx, t: float):
-        self.table(g)
-        for i, x in enumerate(CUPS):
-            p = ease_out_bounce(span(t, 0.2 + i * 0.35, 1.0 + i * 0.35))
-            if p > 0:
-                jue(g, x, drop=lerp(70, 0, p))
-        self.texts(g, 0, 0, a=span(t, 2.0, 3.0))
-        self.mx(g, [0, 0, 0], t)
-        n = int(span(t, 0.2, 1.9) * 8)  # 爵从上往下“落”进点阵
-        if n < 8:
-            g.mx[:8 - n, :] = False
+        dt = self.clock(t)
+        altar(g, t)
+        self.stool(g)
+        drop = [ease_out_bounce(span(t, 0.2 + i * 0.4, 1.0 + i * 0.4)) for i in range(3)]
+        cups(g, (0, 0, 0), t, drop)
+        for i in range(3):
+            if hit(t, 0.2 + i * 0.4 + 0.29, dt):
+                pix.shake(g, t, 1.0)
+                cx, _ = cup_top(i)
+                self.sparks.burst(cx, TABLE[2] - 1, 8, 22, up=10, life=0.4, gravity=60)
+        x = lerp(-14, DX, ease_out(span(t, 1.6, 3.6)))
+        if t < 3.6:
+            daoshi(g, x, FLOOR, "walk", t)
+        else:
+            daoshi(g, DX, FLOOR, "gongshou" if t < 4.4 else ("bow" if t < 5.1 else "idle"), t)
+        self.fx(g, dt)
+        if t > 3.6:
+            self.counter(g, 0.0)
+        mx_jue(g, 0, False, t)
+
+    # ------------------------------------------------------------ 持续
+
+    def pour(self, g: Gfx, t: float, u: float, i: int, dt: float):
+        """u ∈ [0, POUR]：转身提壶 → 走到爵前 → 举壶倒酒 → 走回放壶 → 对爵作揖"""
+        stand = CUPS[i] - 26
+        spr0, grip = P("ewer", 0)
+        if u < 1.0:
+            h = pose_arm(g, DX, FLOOR, t, 60 if u > 0.3 else 30, flip=True)
+            self.stool(g, ewer=u < 0.6)
+            if u >= 0.6:
+                hold_at(g, spr0, h["hand"], grip, flip=True)
+            return
+        self.stool(g, ewer=u >= 10.0)
+        if u < 2.6:
+            x = lerp(DX, stand, ease_in_out(span(u, 1.0, 2.6)))
+            h = pose_arm(g, x, FLOOR, t, 30, legs="walk")
+            hold_at(g, spr0, h["hand"], grip)
+        elif u < 6.6:
+            tilt = ease_in_out(span(u, 2.8, 3.4)) * (1 - ease_in_out(span(u, 6.0, 6.6)))
+            h = daoshi(g, stand, FLOOR, "raise", t, face="happy" if u > 5.4 else "normal")
+            ang = 1 if tilt > 0.5 else 0
+            spr, gp = P("ewer", ang)
+            hold_at(g, spr, h["hand"], gp)
+            if 3.3 <= u < 6.1:  # 酒线 + 酒花
+                tx = h["hand"][0] - gp[0] + spr.tip[0]
+                ty = h["hand"][1] - gp[1] + spr.tip[1]
+                cx, cy = cup_top(i)
+                g.d.line((tx, ty + 1, tx, cy + 1), fill=1)
+                if int(t * 15) % 3 == 0:
+                    self.sparks.burst(tx, cy + 1, 1, 10, up=12, life=0.3, gravity=60)
+        elif u < 8.4:
+            x = lerp(stand, DX, ease_in_out(span(u, 6.6, 8.4)))
+            h = pose_arm(g, x, FLOOR, t, 30, legs="walk", flip=True)
+            hold_at(g, spr0, h["hand"], grip, flip=True)
+        elif u < 10.0:
+            h = pose_arm(g, DX, FLOOR, t, 60 if u > 9.0 else 30, flip=True)
+            if u < 9.6:
+                hold_at(g, spr0, h["hand"], grip, flip=True)
+        else:
+            daoshi(g, DX, FLOOR, "gongshou" if u < 11.0 else "bow", t)
 
     def hold(self, g: Gfx, t: float, e: float):
+        dt = self.clock(t)
         k = e % self.CYCLE
-        lv = self.levels(k)
-        self.table(g)
-        if e >= self.CYCLE and k < LIB:  # 一巡献毕：酹酒
-            self.libation(g, k, t, [1, 1, 1])
-            self.texts(g, e - k - 1, self.CYCLE - 1, left="酹酒")
-            self.mx(g, [1, 1, 1] if k < 1.2 else [0, 0, 0], t)
+        if e >= self.CYCLE and k < RENEW:
+            self._renew(g, t, k, e, dt)
             return
+        altar(g, t, self.gust(e))
+        self.ambient(g, e, t)
+        full = [self.level(e, i) for i in range(3)]
+        cups(g, full, t)
+        for i in range(3):
+            if full[i] >= 1:
+                aroma(g, t, i)
         pouring = False
-        busy = False
-        for i, s in enumerate(POURS):
-            u = k - s
-            if 0 <= u < POUR_T:
-                self.cups(g, lv, t)
-                x, y, tilt = self.pour_pose(i, u)
-                busy = True
-                self.texts(g, e, k, right=False)
-                hand = ewer(g, x, y, tilt)
-                sleeve(g, hand[0] + 2, hand[1], -0.45)
-                if tilt > 0.9:
-                    top = FLOOR - lerp(12, 21, lv[i]) - 1
-                    self.stream(g, x, y + 1, top, t)
-                    pouring = True
+        for i, a in enumerate(OFFER_AT):
+            if a <= k < a + POUR:
+                self.pour(g, t, k - a, i, dt)
+                pouring = 3.3 <= k - a < 6.1
                 break
         else:
-            self.cups(g, lv, t)
-        if not busy:
-            self.texts(g, e, k)
-        self.mx(g, lv, t, pouring)
+            self.stool(g)
+            c = (k + self.seed * 3) % 30
+            if 22 <= c < 24.4:
+                daoshi(g, DX, FLOOR, "gongshou" if c < 23.2 else "bow", t)
+            else:
+                daoshi(g, DX, FLOOR, "idle", t, face="happy" if self.gust(e) > 0.5 else "normal")
+        self.fx(g, dt)
+        self.counter(g, e)
+        mx_jue(g, sum(1 for f in full if f >= 1), pouring, t)
 
-    def _rest_pot(self, g: Gfx, p: float, hand: bool):
-        """把执壶从画外送到桌右端（p 1 = 放稳）"""
-        rx, ry = POT_REST
-        x, y = lerp(150, rx, ease_out(p)), lerp(-30, ry, ease_out(p))
-        h = ewer(g, x, y, 0.0)
-        if hand:
-            sleeve(g, h[0] + 2, h[1], -0.45)
+    def _renew(self, g: Gfx, t: float, k: float, e: float, dt: float):
+        """酹酒：捧起中间那只爵走到坛前，把酒浇在地上；另两爵的酒化作光点升起"""
+        altar(g, t)
+        self.stool(g)
+        f = [1 - span(k, 1.0, 3.0), 1.0 if k < 2.2 else 0.0, 1 - span(k, 1.0, 3.0)]
+        lifted = 1.4 <= k < 6.4
+        for i, cx in enumerate(CUPS):
+            if i == 1 and lifted:
+                continue
+            pix.blit(g, JUE, cx - 8, TABLE[2] - JUE.h)
+            if f[i] > 0:
+                g.d.line((cx - 4, TABLE[2] - JUE.h + 4, cx + 4, TABLE[2] - JUE.h + 4), fill=1)
+        for i in (0, 2):    # 光点升起
+            q = span(k, 1.0, 3.6)
+            if 0 < q < 1:
+                cx, cy = cup_top(i)
+                for j in range(3):
+                    star(g, cx + math.sin(q * 8 + j * 2) * 3, cy - q * 30 - j * 5, 1 if j == 0 else 0)
+        stand = CUPS[1] - 17
+        if k < 1.4:
+            x = lerp(DX, stand, ease_in_out(span(k, 0.0, 1.4)))
+            daoshi(g, x, FLOOR, "walk", t)
+        elif k < 2.2:
+            h = daoshi(g, stand, FLOOR, "raise", t)
+            pix.blit(g, JUE, h["hand"][0] - 7, h["hand"][1] - 6)
+        elif k < 3.4:
+            x = lerp(stand, 44, ease_in_out(span(k, 2.2, 3.4)))
+            h = pose_arm(g, x, FLOOR, t, 0, legs="walk", flip=True)
+            pix.blit(g, JUE, h["hand"][0] - 7, h["hand"][1] - 9, flip=True)
+        elif k < 5.2:   # 酹：爵口朝下，酒浇到地上
+            h = pose_arm(g, 44, FLOOR, t, 30, flip=True)
+            hx, hy = h["hand"]
+            pix.blit(g, JUE.rot90(1) if k > 3.7 else JUE, hx - 7, hy - 9, flip=True)
+            if 3.8 <= k < 5.0:
+                sx = hx - 8
+                g.d.line((sx, hy + 2, sx - 2, FLOOR - 1), fill=1)
+                if int(t * 15) % 2 == 0:
+                    self.sparks.burst(sx - 2, FLOOR - 1, 2, 18, up=14, life=0.35, gravity=70)
+            if k > 4.2:   # 地上一摊酒
+                w = int(span(k, 4.2, 5.0) * 6)
+                g.d.line((hx - 10 - w, FLOOR + 1, hx - 6 + w, FLOOR + 1), fill=1)
+        elif k < 6.4:
+            x = lerp(44, stand, ease_in_out(span(k, 5.2, 6.4)))
+            h = pose_arm(g, x, FLOOR, t, 0, legs="walk")
+            pix.blit(g, JUE, h["hand"][0] - 7, h["hand"][1] - 9)
+        elif k < 7.0:
+            daoshi(g, stand, FLOOR, "bow", t)
+        else:
+            x = lerp(stand, DX, ease_in_out(span(k, 7.0, 8.0)))
+            daoshi(g, x, FLOOR, "walk", t, flip=True)
+        self.fx(g, dt)
+        self.counter(g, e if k >= 5.0 else e - k - 1)
+        mx_jue(g, 0 if k > 3.0 else 3, 3.8 <= k < 5.0, t)
+
+    # ------------------------------------------------------------ 中断 / 恢复 / 圆满
 
     def interrupt(self, g: Gfx, t: float, e: float):
-        k = e % self.CYCLE
-        lv = self.levels(k)
-        self.table(g)
-        self.cups(g, lv, t, aroma=1 - ease_out(span(t, 0, 1.0)))
-        if t < 1.0:
-            self._rest_pot(g, span(t, 0, 0.9), True)
-        else:
-            rx, ry = POT_REST
-            ewer(g, rx, ry, 0.0)
-            if t < 1.6:
-                p = ease_in(span(t, 1.0, 1.6))
-                h = (rx + 24, ry + 9)
-                sleeve(g, lerp(h[0] + 2, 160, p), lerp(h[1], -30, p), -0.45)
-        self.texts(g, e, k, left="暂歇" if t > 0.8 else None)
-        self.mx(g, lv, t)
+        dt = self.clock(t)
+        altar(g, t)
+        self.stool(g)
+        full = [self.level(e, i) for i in range(3)]
+        cups(g, full, t)
+        for i in range(3):
+            if full[i] >= 1:
+                aroma(g, t, i, 1 - span(t, 0.2, 1.2))
+        daoshi(g, DX, FLOOR, "gongshou" if t > 0.3 else "idle", t)
+        self.fx(g, dt)
+        self.counter(g, e, "暂歇" if t > 0.6 else None)
+        mx_jue(g, sum(1 for f in full if f >= 1), False, t)
 
     def resume(self, g: Gfx, t: float, e: float):
-        k = e % self.CYCLE
-        lv = self.levels(k)
-        self.table(g)
-        self.cups(g, lv, t, aroma=ease_out(span(t, 0.6, 1.4)))
-        if t < 0.5:
-            rx, ry = POT_REST
-            ewer(g, rx, ry, 0.0)
-            p = ease_out(span(t, 0, 0.5))
-            sleeve(g, lerp(160, rx + 26, p), lerp(-30, ry + 9, p), -0.45)
-        else:
-            self._rest_pot(g, 1 - span(t, 0.5, 1.3), True)
-        self.texts(g, e, k, left="暂歇" if t < 0.5 else None)
-        self.mx(g, lv, t)
+        dt = self.clock(t)
+        altar(g, t)
+        self.stool(g)
+        full = [self.level(e, i) for i in range(3)]
+        cups(g, full, t)
+        for i in range(3):
+            if full[i] >= 1:
+                aroma(g, t, i, span(t, 0.4, 1.4))
+        daoshi(g, DX, FLOOR, "gongshou" if t < 0.6 else ("bow" if t < 1.3 else "idle"), t)
+        if hit(t, 0.6, dt):
+            for i in range(3):
+                if full[i] >= 1:
+                    cx, cy = cup_top(i)
+                    self.sparks.burst(cx, cy, 6, 14, up=8, life=0.4, gravity=20)
+        self.fx(g, dt)
+        self.counter(g, e)
+        mx_jue(g, sum(1 for f in full if f >= 1), False, t)
 
     def complete(self, g: Gfx, t: float, e: float):
-        k = e % self.CYCLE
-        lv = self.levels(k)
-        self.table(g)
-        if t < LIB:
-            self.libation(g, t, t, [1 if v > 0.3 else 0 for v in lv])
-            self.texts(g, e, k, a=1 - span(t, 0.2, 1.2))
-        else:
-            for x in CUPS:
-                jue(g, x, 0)
-            p = ease_out_back(span(t, LIB, LIB + 0.6))
-            if p > 0:
-                g.text(64, 4 + (1 - p) * 8, "礼成", scale=2, align="center")
-            sparkles(g, 64, 14, 52, 12, t, n=10, seed=self.seed)
-        self.mx(g, lv if t < 1.2 else [0, 0, 0], t)
-        if t > LIB:
-            g.mx_level = 1 + int(4 * (1 - span(t, LIB, LIB + 1.5)))
+        dt = self.clock(t)
+        altar(g, t)
+        self.stool(g)
+        full = [max(self.level(e, i), span(t, 0.2 + i * 0.3, 0.6 + i * 0.3)) for i in range(3)]
+        cups(g, full, t)
+        for i in range(3):
+            aroma(g, t, i)
+        pose = "gongshou" if t < 1.4 else ("kneel" if t < 4.6 else "idle")
+        daoshi(g, DX, FLOOR, pose, t, face="happy" if t > 4.6 else "normal")
+        if t > 1.6:    # 三爵放光
+            for i, cx in enumerate(CUPS):
+                cy = TABLE[2] - JUE.h // 2
+                for j in range(8):
+                    a = -math.pi * (j + 0.5) / 8
+                    r0, r1 = 9, 11 + 2 * ((int(t * 6) + j) % 2)
+                    g.d.line((cx + math.cos(a) * r0, cy + math.sin(a) * r0 - 3,
+                              cx + math.cos(a) * r1, cy + math.sin(a) * r1 - 3), fill=1)
+        if hit(t, 1.6, dt):
+            pix.flash(g)
+            for cx in CUPS:
+                self.sparks.burst(cx, TABLE[2] - 12, 12, 34, up=16, life=1.0, gravity=40)
+        if 1.6 < t < 1.9:
+            pix.shake(g, t, 1.5)
+        self.fx(g, dt)
+        if t > 2.0:
+            title(g, 46, 5, "礼成", t, 2.0, scale=2)
+        mx_jue(g, 3, False, t)
+        mx_burst(g, t, 1.6)

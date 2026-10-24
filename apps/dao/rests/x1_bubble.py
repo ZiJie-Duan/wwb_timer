@@ -1,270 +1,321 @@
-"""打盹冒泡：看炉的小道童抱着拂尘打瞌睡，头一点一点，鼻涕泡随呼吸一大一小；
-泡泡吹太大“啪”地破了，惊醒左右看看又睡；偶尔一声“咳！”——师父来了，赶紧坐直装样子。
+"""打盹冒泡：丹房里，小道士坐在蒲团上守着丹炉、手里一把团扇，扇着扇着就打起盹来，鼻涕泡一大一小。
 
-依据：道观里道童（小道士）看守丹炉、手执拂尘的日常；拂尘为道士常用法器，有“拂去尘缘”之意。
-打盹冒鼻涕泡是漫画里的通用笑点（非典籍）。
+依据：道观里看守丹炉的小道童（炼丹须昼夜看火，“文武火候”），团扇扇炉火；打盹冒鼻涕泡是漫画通用笑点（非典籍）。
+
+入场：小道士扇着火，眨眨眼，打个大哈欠“哈”，眼皮一沉，鼻涕泡冒出来。
+持续：右边三足丹炉（炉腹八卦纹、双耳、炉盖宝顶），炉下火苗跳、炉顶冒烟；后墙挂一幅太极挂轴，地上蒲团。
+      他合着眼，鼻涕泡随呼吸一大一小（3.6 秒一口气）；头慢慢往下垂、垂到底猛地一点抬回来（9 秒一次）；
+      团扇偶尔有气无力地扇一下。每第六口气泡泡越吹越大——“啪”破掉，他瞪眼一愣，又睡。
+      小事件：一只小飞虫绕着头转，落到泡泡上，泡破（71s）；画外师父一声“咳！”——惊醒坐直、拼命扇火装认真，
+      “……”，眼皮越来越重又睡过去（113s）。
+退场：泡泡一破，瞪眼“！”，画面收拢。
 """
 from __future__ import annotations
 
 import math
 
-from ..engine.anim import ease_in, ease_in_out, ease_out, ease_out_back, lerp, noise, rand, span
-from ..engine.fx import flame, smoke_wisp
+from ..engine import pix
+from ..engine.anim import ease_in_out, ease_out, lerp, span
+from ..engine.chars import Part, figure
 from ..engine.gfx import Gfx, Sprite
 from ..engine.scene import Rest, register
-from .x1_common import Pen, backdrop, ev, iris
+from .x1_common import bang, cached, ev, iris, plate, pop, say
 
-HC = (58, 30)       # 头心
-BREATH = 3.6        # 一呼一吸
-BIG_EVERY = 6       # 第几口气吹出大泡
-
-
-def _bg():
-    p = Pen()
-    # 右：丹炉（三足、炉盖、火口）
-    p.poly([(100, 40), (124, 40), (122, 56), (102, 56)], fill=0.3)
-    p.rect((98, 37, 126, 40), fill=0)
-    p.chord((104, 26, 120, 40), 180, 360, fill=0)
-    p.rect((110, 23, 114, 27), fill=1)
-    p.rect((108, 47, 116, 53), fill=0)
-    for x in (103, 112, 121):
-        p.rect((x - 1, 56, x + 1, 62), fill=1)
-    # 身子：肩、交领道袍
-    body = [(22, 64), (30, 52), (42, 47), (74, 47), (86, 52), (94, 64)]
-    p.poly(body, fill=0.25)
-    p.line([(46, 47), (62, 64)])
-    p.line([(70, 47), (56, 58)])
-    p.line([(47, 47), (63, 64)], 0)
-    # 抱在怀里的拂尘：柄斜靠左肩，尘尾垂在左边
-    p.line([(40, 64), (24, 30)], 1, 2)
-    p.rect((22, 27, 26, 31), fill=1)
-    for i in range(9):
-        a = math.radians(200 + i * 9)
-        x1, y1 = 24 + math.cos(a) * 22, 29 + math.sin(a) * 4 + i * 2.6
-        p.line([(24, 29), ((24 + x1) / 2 - 2, (29 + y1) / 2 + 3), (x1, y1 + 8)])
-    return p.image()
+FLOOR = 56
+MAN_X = 34
+BREATH = 3.6
+NOD = 9.0
+EV = 160.0
+FURN_X = 78
 
 
-def _head() -> Sprite:
-    p = Pen(44, 44)
-    cx, cy = 22, 24
-    # 双丫髻 + 发带
-    for bx in (7, 37):
-        p.ellipse((bx - 6, 0, bx + 6, 12), fill=1)
-        p.line([(bx - 4, 10), (bx - 7, 16)])
-        p.line([(bx + 4, 10), (bx + 7, 16)])
-    p.ellipse((cx - 18, cy - 17, cx + 18, cy + 17), fill=0)
-    p.chord((cx - 18, cy - 17, cx + 18, cy + 17), 180, 360, fill=1)    # 头发
-    p.poly([(cx - 14, cy - 2), (cx - 9, cy - 7), (cx - 3, cy - 3), (cx + 3, cy - 8), (cx + 9, cy - 3),
-            (cx + 15, cy - 6), (cx + 17, cy), (cx - 17, cy)], fill=0, outline=None)   # 刘海的下沿
-    p.line([(cx - 14, cy - 2), (cx - 9, cy - 7), (cx - 3, cy - 3), (cx + 3, cy - 8), (cx + 9, cy - 3), (cx + 15, cy - 6)])
-    for s in (-1, 1):  # 腮红
-        for k in range(3):
-            p.line([(cx + s * 11 + k * 2 - 2, cy + 9), (cx + s * 11 + k * 2, cy + 7)])
-    p.px(cx, cy + 6)   # 鼻
+def _furnace():
+    """三足丹炉 38×38：宝顶炉盖（盖上一圈镂孔）、立耳、鼓腹（中间太极、四周八卦短线）、三足兽面"""
+    p = Part(38, 38)
+    p.shape("rectangle", (17, 0, 20, 2), fill=1)                       # 宝顶
+    p.px(18, 0, 0)
+    p.shape("chord", (8, 2, 29, 14), 180, 360, fill=1)                 # 炉盖
+    p.d.line((9, 8, 28, 8), fill=0)
+    for x in range(12, 27, 4):                                         # 镂孔
+        p.px(x, 6, 0), p.px(x + 1, 6, 0)
+    p.shape("rectangle", (6, 9, 31, 10), fill=1)                       # 口沿
+    p.shape("rectangle", (2, 6, 5, 13), fill=1), p.shape("rectangle", (32, 6, 35, 13), fill=1)   # 立耳
+    p.px(3, 8, 0), p.px(3, 9, 0), p.px(34, 8, 0), p.px(34, 9, 0)
+    p.shape("ellipse", (3, 9, 34, 32), fill=1)                         # 鼓腹
+    p.d.line((5, 12, 32, 12), fill=0)
+    cx, cy = 18, 21
+    p.d.ellipse((cx - 6, cy - 6, cx + 6, cy + 6), fill=0)              # 太极
+    p.d.ellipse((cx - 5, cy - 5, cx + 5, cy + 5), outline=1)
+    p.d.pieslice((cx - 5, cy - 5, cx + 5, cy + 5), 90, 270, fill=1)
+    p.d.ellipse((cx - 2, cy - 5, cx + 2, cy), fill=1)
+    p.d.ellipse((cx - 2, cy, cx + 2, cy + 5), fill=0)
+    p.px(cx, cy - 3, 0), p.px(cx, cy + 3, 1)
+    for a in range(8):                                                 # 八卦短线
+        ang = a * math.pi / 4
+        x0, y0 = cx + math.cos(ang) * 9, cy + math.sin(ang) * 8
+        x1, y1 = cx + math.cos(ang) * 11, cy + math.sin(ang) * 9.5
+        p.d.line((x0, y0, x1, y1), fill=0)
+    p.dither([(28, 14), (33, 20), (31, 28), (26, 31)], 0.5, 0)
+    for x in (7, 17, 27):                                              # 三足（兽面足）
+        p.shape("polygon", [(x, 30), (x + 4, 30), (x + 3, 37), (x + 1, 37)], fill=1)
+        p.px(x + 2, 32, 0)
+        p.shape("rectangle", (x - 1, 36, x + 5, 37), fill=1)
     return p.sprite()
 
 
-_A = {}
+def _scroll():
+    """挂轴 14×26：天杆、挂绳、画心里一个太极、地杆两头轴"""
+    p = Part(14, 26)
+    p.d.line((4, 0, 7, -1), fill=1)
+    p.shape("line", (3, 2, 7, 0), fill=1), p.shape("line", (10, 2, 7, 0), fill=1)
+    p.shape("rectangle", (1, 2, 12, 23), fill=0)
+    p.d.rectangle((1, 2, 12, 23), outline=1)
+    p.d.rectangle((3, 5, 10, 20), outline=1)
+    p.d.ellipse((4, 9, 9, 14), outline=1)
+    p.d.pieslice((4, 9, 9, 14), 270, 450, fill=1)
+    p.d.line((4, 17, 9, 17), fill=1)
+    p.shape("rectangle", (0, 23, 13, 25), fill=1)
+    return p.sprite()
 
 
-def _assets():
-    if not _A:
-        _A.update(bg=_bg(), head=_head())
+def _cushion():
+    """蒲团 26×5：扁圆，草编纹"""
+    p = Part(26, 5)
+    p.shape("ellipse", (0, 0, 25, 6), fill=1)
+    for x in range(3, 23, 3):
+        p.d.line((x, 2, x + 1, 4), fill=0)
+    p.d.line((2, 4, 23, 4), fill=0)
+    return p.sprite()
+
+
+def _fan_arm(lift: int) -> Sprite:
+    """拿团扇的手 20×16：宽袖往前，手握扇柄，圆扇面（亮边、暗面、一道扇骨、扇面上一朵云纹）。
+    lift：0 扇子垂着 / 2、3 扇子扬起（扇一下）"""
+    p = Part(20, 16)
+    p.shape("polygon", [(0, 2), (4, 2), (9, 6), (9, 10), (2, 10), (0, 7)], fill=1)    # 袖
+    p.d.line((8, 6, 8, 10), fill=0)
+    p.dither([(2, 8), (8, 8), (8, 10), (2, 10)], 0.5, 0)
+    p.shape("rectangle", (9, 7, 11, 9), fill=1)                                      # 手
+    p.px(11, 7, 0)
+    if lift:
+        p.shape("line", (11, 7, 13, 4), fill=1)                                      # 扇柄
+        cx, cy = 15, 1 + (3 - lift)
+    else:
+        p.shape("line", (11, 9, 13, 11), fill=1)
+        cx, cy = 15, 11
+    p.shape("ellipse", (cx - 4, cy - 4 + 3, cx + 4, cy + 4 + 3), fill=0)
+    p.d.ellipse((cx - 4, cy - 1, cx + 4, cy + 7), outline=1)
+    p.d.arc((cx - 2, cy + 1, cx + 2, cy + 5), 180, 360, fill=1)                      # 扇面云纹
+    p.px(cx, cy + 3, 1)
+    spr = p.sprite()
+    spr.hand = (10, 8)
+    return spr
+
+
+FLAME = pix.frames("""
+  #
+ ##
+####
+#.##
+---
+ #
+ ##
+###
+##.#
+---
+  #
+ # #
+ ###
+#.##
+""")
+
+FLY = pix.frames("""
+#.#
+ #
+---
+. .
+ #
+""")
 
 
 @register
-class Bubble(Rest):
+class BubbleRest(Rest):
     id = "x1.bubble"
     name = "打盹冒泡"
-    desc = "看炉的小道童抱着拂尘打瞌睡，头一点一点、鼻涕泡一大一小；泡破惊醒，师父一咳赶紧坐直"
+    desc = "丹房里小道士守着丹炉打盹，鼻涕泡随呼吸一大一小，头一点一点；泡破惊醒、师父一声咳，又装认真"
     T = {"enter": 2.6, "exit": 1.2}
 
-    def setup(self):
-        _assets()
-        self._ht = 0.0
+    # ------------------------------------------------------------ 背景
 
-    # ------------------------------------------------------------ 零件
+    def room(self, g: Gfx, t: float):
+        g.d.line((0, FLOOR, 127, FLOOR), fill=1)
+        for x in range(0, 140, 14):
+            g.d.line((x, FLOOR + 1, x - 6, 63), fill=1)
+        pix.checker(g, (0, FLOOR + 1, 128, 64), 0.125)
+        pix.blit(g, cached("scroll", _scroll), 6, 4)
+        pix.blit(g, cached("cush", _cushion), MAN_X - 13, FLOOR - 4)
+        fx = FURN_X
+        pix.blit(g, pix.anim(FLAME, t, 8), fx + 13, FLOOR - 7, outline=False)
+        pix.blit(g, pix.anim(FLAME, t + 0.21, 7), fx + 22, FLOOR - 7, outline=False)
+        pix.blit(g, cached("furn", _furnace), fx, FLOOR - 38)
+        for i in range(3):                                      # 炉顶的烟
+            k = ((t * 0.3 + i / 3) % 1)
+            x = fx + 19 + math.sin(t * 0.9 + k * 6) * (1 + k * 4)
+            y = FLOOR - 40 - k * 16
+            r = 0.5 + math.sin(k * math.pi) * 1.4
+            if k < 0.6:
+                g.d.ellipse((x - r, y - r, x + r, y + r), fill=1)
+            elif k < 0.85:
+                g.d.ellipse((x - r, y - r, x + r, y + r), outline=1)
+            else:
+                g.px(x, y)
 
-    def droop(self, t: float) -> float:
-        """头慢慢往下垂，垂到底猛地一点抬回来（周期 9 秒）"""
-        u = t % 9.0
-        if u < 8.4:
-            return ease_in(u / 8.4) * 5
-        return lerp(5, 0, ease_out((u - 8.4) / 0.6))
+    # ------------------------------------------------------------ 状态（只依赖 t）
 
-    def bubble_r(self, t: float) -> tuple[float, bool]:
-        """鼻涕泡半径；第 BIG_EVERY 口气越吹越大，最后破掉（返回 (半径, 正在破)）"""
-        n, u = divmod(t, BREATH)
-        k = u / BREATH
-        big = int(n) % BIG_EVERY == BIG_EVERY - 1
-        if big:
-            if k < 0.85:
-                return 2 + ease_in_out(k / 0.85) * 11, False
-            return 13, True
-        return 1.5 + math.sin(k * math.pi) ** 2 * 4.5, False
+    def state(self, t: float):
+        """返回 (面相, 头, 泡半径, 泡破的进度, 扇子抬起, 文字)"""
+        cough = ev(t, EV, 113.0, 12.0)
+        fly = ev(t, EV, 71.0, 9.0)
+        b = t / BREATH
+        n, ph = int(b), b % 1
+        nod = t % NOD
+        head, face, r, popk, lift, words = "up", "sleep", 0.0, None, 0, None
+        r = 1.5 + math.sin(ph * math.pi) * 2.5
+        if n % 6 == 5:   # 第六口气：越吹越大，啪
+            r = 1.5 + ph * 7.0
+            if ph > 0.82:
+                popk = (ph - 0.82) / 0.18
+                r = 0
+                face = "wow"
+        elif n % 6 == 0 and ph < 0.15 and n > 0:
+            face, r = "wow", 0
+        if nod > NOD - 1.6:
+            head = "bow" if nod < NOD - 0.25 else "up"
+            if head == "bow":
+                r = 0
+            else:
+                face = "wow" if face == "sleep" else face
+        if int(t * 0.7) % 4 == 0 and (t * 0.7) % 1 < 0.2:
+            lift = 2
+        if fly is not None and 5.0 <= fly < 5.6:   # 飞虫落到泡上：啪
+            r, popk, face = 0, (fly - 5.0) / 0.6, "wow"
+        elif fly is not None and 5.6 <= fly < 7.0:
+            r, face = 0, "normal"
+        if cough is not None:
+            if cough < 0.5:
+                popk, r, face = cough / 0.5, 0, "wow"
+            elif cough < 7.0:
+                r, face, head = 0, "normal" if cough < 4.5 else ("sleep" if (cough * 2) % 1 < 0.3 else "normal"), "up"
+                lift = 3 if int(cough * 7) % 2 else 0
+                if cough > 3.5:
+                    words = "……"
+            elif cough < 9.0:
+                r, face, head = 0, "sleep" if (cough * 1.4) % 1 < 0.6 else "normal", "up"
+                lift = 2 if int(cough * 2) % 2 else 0
+            else:
+                r = min(r, (cough - 9.0) * 1.5)
+        return head, face, r, popk, lift, words, cough, fly
 
-    def furnace(self, g: Gfx, t: float):
-        flame(g, 112, 52, 5, 5, t, self.seed)
-        smoke_wisp(g, 112, 21, 18, t, self.seed, sway=2, speed=4, drift=4)
+    def man(self, g: Gfx, t: float, head: str, face: str, lift: int):
+        arm = cached(("fan", lift), lambda: _fan_arm(lift))
+        return figure(g, MAN_X, FLOOR - 2, t, legs="sit", arm=arm, arm_at=(-2, -18), head=head, face=face)
 
-    def face(self, g: Gfx, t: float, dy: float, eyes: str = "shut", mouth: str = "o", look: float = 0.0):
-        hx, hy = HC[0] - 22, HC[1] - 24 + dy
-        g.blit(_A["head"], hx, hy)
-        cx, cy = HC[0], HC[1] + dy
-        for s in (-1, 1):
-            ex, ey = cx + s * 8, cy + 3
-            if eyes == "shut":   # ︶ 合眼
-                g.d.arc((ex - 4, ey - 3, ex + 4, ey + 2), 20, 160, fill=1)
-            elif eyes == "wide":  # 瞪圆
-                g.d.ellipse((ex - 3, ey - 3, ex + 3, ey + 3), fill=1)
-                g.d.rectangle((ex - 1 + look, ey - 1, ex + look, ey + 1), fill=0)
-            else:                # 睁着（装认真）
-                g.d.line((ex - 3, ey - 1, ex + 3, ey - 1), fill=1)
-                g.d.rectangle((ex - 1 + look, ey, ex + look, ey + 1), fill=1)
-        mx, my = cx, cy + 11
-        if mouth == "o":
-            g.d.ellipse((mx - 1, my - 1, mx + 1, my + 1), outline=1)
-        elif mouth == "yawn":
-            g.d.ellipse((mx - 3, my - 3, mx + 3, my + 3), fill=1)
-            g.d.ellipse((mx - 2, my - 1, mx + 2, my + 2), fill=0)
+    def nose(self):
+        return MAN_X + 7, FLOOR - 2 - 34 + 13
+
+    def hold(self, g: Gfx, t: float):
+        self.draw(g, t)
+
+    def draw(self, g: Gfx, t: float):
+        self.room(g, t)
+        head, face, r, popk, lift, words, cough, fly = self.state(t)
+        self.man(g, t, head, face, lift)
+        nx, ny = self.nose()
+        if r >= 1 and head == "up":
+            rr = int(round(r))
+            g.d.ellipse((nx, ny - rr + 1, nx + 2 * rr, ny + rr + 1), fill=0, outline=1)
+            if rr >= 3:
+                g.px(nx + rr - 1, ny - rr + 3)
+                g.px(nx + rr, ny - rr + 3)
+        if popk is not None and popk < 1:
+            pop(g, nx + 4, ny + 1, popk, 2)
+        if face == "wow" and popk is not None:
+            bang(g, MAN_X + 9, FLOOR - 50)
+        if fly is not None:
+            self.fly(g, t, fly, nx, ny)
+        if cough is not None and cough < 2.0:      # 画外师父一声“咳！”
+            if cough < 0.3:
+                pix.shake(g, t, 1.0)
+            plate(g, 3, 4, "咳！", k=span(cough, 0, 0.2))
+        if words:
+            say(g, MAN_X - 6, FLOOR - 54, words, 1.0)
+        self.matrix(g, t, r, popk, face)
+
+    def fly(self, g: Gfx, t: float, f: float, nx: float, ny: float):
+        """小飞虫绕头转三圈，落在泡上（泡破），再飞走"""
+        if f < 5.0:
+            a = f * 3.2
+            x = MAN_X + 2 + math.cos(a) * 14
+            y = FLOOR - 42 + math.sin(a) * 6
+            if f > 4.0:
+                q = f - 4.0
+                x, y = lerp(x, nx + 6, q), lerp(y, ny - 4, q)
+        elif f < 5.6:
+            x, y = nx + 6, ny - 3
         else:
-            g.d.line((mx - 2, my, mx + 2, my), fill=1)
+            q = (f - 5.6) / 3.4
+            x, y = nx + 6 + q * 70, ny - 3 - q * 30 + math.sin(q * 20) * 2
+        pix.blit(g, FLY[int(t * 14) % 2], x - 1, y - 1, outline=False)
 
-    def snot(self, g: Gfx, r: float, dy: float, pop: float = -1):
-        """鼻涕泡：从鼻孔往右下鼓出去；pop>=0 时画破掉的水花"""
-        nx, ny = HC[0] + 1, HC[1] + 7 + dy
-        cx, cy = nx + 1 + r * 0.95, ny + 1 + r * 0.3
-        if pop < 0:
-            g.d.ellipse((cx - r, cy - r, cx + r, cy + r), outline=1, fill=0)
-            if r > 3:  # 高光
-                g.d.arc((cx - r + 2, cy - r + 2, cx + r - 2, cy + r - 2), 200, 250, fill=1)
+    def matrix(self, g: Gfx, t: float, r: float, popk, face: str):
+        if popk is not None and popk < 1:
+            rr = 2 + popk * 3
+            for y in range(8):
+                for x in range(8):
+                    if abs(math.hypot(x - 3.5, y - 3.5) - rr) < 0.6:
+                        g.mx[y, x] = True
+            g.mx_level = 4
             return
-        for j in range(10):
-            a = j / 10 * 2 * math.pi
-            d = r * 0.6 + pop * 12
-            g.px(cx + math.cos(a) * d, cy + math.sin(a) * d * 0.8)
-        if pop < 0.4:
-            g.text(cx + 6, cy - 14, "啪", size=8)
-
-    def mx_bubble(self, g: Gfx, r: float, pop: float = -1):
-        if pop >= 0:
-            d = 1 + pop * 4
-            for j in range(8):
-                a = j / 8 * 2 * math.pi
-                g.mx_set(round(3.5 + math.cos(a) * d), round(3.5 + math.sin(a) * d))
+        if face in ("wow", "normal"):
+            g.mx_rows([0x3C, 0x42, 0xA5, 0xA5, 0x81, 0x99, 0x42, 0x3C])
             return
-        rr = 0.6 + r / 13 * 3.4
+        rr = max(0.6, r / 7 * 3.5)
         for y in range(8):
             for x in range(8):
                 if abs(math.hypot(x - 3.5, y - 3.5) - rr) < 0.55:
                     g.mx[y, x] = True
+        if rr < 1.2:
+            g.mx[3:5, 3:5] = True
 
-    # ------------------------------------------------------------ 阶段
+    # ------------------------------------------------------------ 入场 / 退场
 
     def enter(self, g: Gfx, t: float):
-        backdrop(g, _A["bg"])
-        self.furnace(g, t)
-        if t < 0.6:
-            self.face(g, t, 0, "shut" if 0.35 < t < 0.45 else "open", "-", look=0)
-        elif t < 1.5:     # 打个大哈欠
-            self.face(g, t, -1, "shut", "yawn")
-            g.text(HC[0] + 21, HC[1] + 4, "哈~", size=8)
-        else:             # 眼皮一沉，泡泡冒出来
-            self.face(g, t, 0, "shut", "o")
-            r = 1.5 * ease_out_back(span(t, 1.9, 2.6))
-            if r > 0.3:
-                self.snot(g, r, 0)
-        g.mx_rows([0, 0, 0x24, 0, 0, 0x18, 0, 0] if t < 1.5 else [0, 0, 0, 0x18, 0x18, 0, 0, 0])
-        if t < 0.6:  # 画面从脸上展开
-            iris(g, HC[0], HC[1] + 2, ease_out(t / 0.6) * 110, 0.8)
-
-    def hold(self, g: Gfx, t: float):
-        self._ht = t
-        backdrop(g, _A["bg"])
-        self.furnace(g, t)
-        shifu = ev(t, 113.0, 9.0, 40.0)      # 咳！师父来了
-        if shifu:
-            self.caught(g, t, shifu[1])
-            return
-        r, popping = self.bubble_r(t)
-        dy = self.droop(t)
-        u = (t % BREATH) / BREATH
-        n = int(t // BREATH)
-        just_popped = n % BIG_EVERY == 0 and n > 0 and u < 0.6    # 上一口气刚破：瞪眼左右看
-        if popping:
-            pk = (u - 0.85) / 0.15
-            self.face(g, t, dy, "wide", "-")
-            self.snot(g, 13, dy, pk)
-            self.mx_bubble(g, 13, pk)
-            g.mx_level = 4
-        elif just_popped:
-            look = -2 if u < 0.25 else 2 if u < 0.45 else 0
-            self.face(g, t, dy, "wide", "-", look=look)
-            g.mx_rows([0, 0x66, 0x66, 0, 0, 0x3C, 0, 0])
+        """扇着火 → 眨眼 → 大哈欠“哈” → 眼皮一沉 → 冒泡"""
+        self.room(g, t)
+        if t < 0.8:
+            face, lift = ("sleep" if 0.35 < t < 0.5 else "normal"), (3 if int(t * 8) % 2 else 0)
+        elif t < 1.7:
+            face, lift = "wow", 0
         else:
-            self.face(g, t, dy, "shut", "o")
-            self.snot(g, r, dy)
-            self.mx_bubble(g, r)
-        fly = ev(t, 71.0, 6.0, 15.0)         # 一只小飞虫绕着头转
-        if fly and not popping:
-            k = fly[1]
-            a = k * 3.2
-            fx = HC[0] + math.cos(a) * (26 - k * 2)
-            fy = HC[1] - 4 + math.sin(a) * 14 + dy
-            g.px(fx, fy)
-            g.px(fx + 1, fy)
-            w = int(t * 20) % 2
-            g.px(fx - 1 + w, fy - 1)
-            g.px(fx + 2 - w, fy - 1)
-
-    def say(self, g: Gfx, s: str):
-        """画外师父的声音（右上角，压住炉烟）"""
-        g.d.rectangle((100, 0, 127, 15), fill=0)
-        g.text(126, 3, s, align="right")
-
-    def caught(self, g: Gfx, t: float, u: float):
-        """师父一声咳：惊醒、坐直、睁眼装认真，慢慢又困了"""
-        if u < 0.8:
-            self.face(g, t, self.droop(t - u), "shut", "o")
-            self.snot(g, self.bubble_r(t - u)[0], self.droop(t - u))
-            self.say(g, "咳！")
-            self.mx_bubble(g, 3)
-            return
-        if u < 1.2:
-            self.face(g, t, -3, "wide", "-")
-            self.snot(g, 6, -3, (u - 0.8) / 0.4)
-            self.say(g, "咳！")
-            g.mx_rows([0x18, 0x18, 0x18, 0x18, 0x18, 0, 0x18, 0x18])
-            g.mx_level = 5
-            return
-        # 坐得笔直，眼珠左右瞟；然后眼皮越来越重
-        heavy = span(u, 5.5, 8.6)
-        dy = -2 + heavy * 2
-        if heavy < 0.5:
-            look = round(math.sin((u - 1.2) * 2.5) * 2)
-            self.face(g, t, dy, "open", "-", look=look)
-            g.mx_rows([0, 0x66, 0x66, 0, 0, 0x3C, 0, 0])
-        else:
-            self.face(g, t, dy, "shut", "o")
-            self.snot(g, lerp(0.5, 1.5, heavy), dy)
-            self.mx_bubble(g, 1.5)
-        if u < 3.2:
-            self.say(g, "……")
+            face, lift = "sleep", 0
+        self.man(g, t, "up", face, lift)
+        if 0.8 <= t < 1.7:
+            plate(g, MAN_X + 14, 6, "哈", k=span(t, 0.8, 1.0))
+        if t > 1.9:
+            nx, ny = self.nose()
+            rr = int(round(span(t, 1.9, 2.6) * 3)) + 1
+            g.d.ellipse((nx, ny - rr + 1, nx + 2 * rr, ny + rr + 1), fill=0, outline=1)
+        self.matrix(g, t, 1.0, None, face if t < 1.7 else "sleep")
+        iris(g, MAN_X + 2, FLOOR - 26, lerp(6, 150, ease_out(span(t, 0, 1.0))))
 
     def exit(self, g: Gfx, t: float):
-        """醒了：泡泡一破，瞪眼，画面收拢"""
-        h = self._ht
-        backdrop(g, _A["bg"])
-        self.furnace(g, h + t)
-        dy = self.droop(h) * (1 - span(t, 0, 0.3))
-        r = max(self.bubble_r(h)[0], 3)
+        h0 = self.hold_t
+        self.room(g, h0 + t)
+        self.man(g, h0 + t, "up", "wow" if t > 0.2 else "sleep", 0)
+        nx, ny = self.nose()
         if t < 0.35:
-            self.face(g, h, dy, "wide", "-")
-            self.snot(g, r, dy, t / 0.35)
-            self.mx_bubble(g, r, t / 0.35)
+            pop(g, nx + 4, ny + 1, t / 0.35, 2)
         else:
-            self.face(g, h, dy, "wide", "-", look=0)
-            g.text(HC[0] + 22, HC[1] - 20, "!", size=12)
-            g.mx_rows([0, 0x66, 0x66, 0, 0, 0x3C, 0, 0])
-        iris(g, HC[0], HC[1] + 2, lerp(110, 0, ease_in_out(span(t, 0.3, self.T["exit"] - 0.05))), 0.8)
+            bang(g, MAN_X + 9, FLOOR - 50)
+        self.matrix(g, t, 0, t / 0.35 if t < 0.35 else None, "wow")
+        iris(g, MAN_X + 2, FLOOR - 24, lerp(140, 0, ease_in_out(span(t, 0.35, self.T["exit"] - 0.05))))

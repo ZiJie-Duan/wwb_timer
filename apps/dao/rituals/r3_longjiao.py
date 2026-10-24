@@ -1,252 +1,391 @@
-"""吹龙角：法师吹响龙角（牛角号），角声一阵阵传出，天兵乘云一个个降到云头列阵，一轮满则开拔。
+"""吹龙角：山崖上，小道士双手捧起弯弯的牛角号鼓腮一吹，角声一圈圈荡上天；
+天兵驾着小云一名名从天而降，在右边三排云头上列阵。
 
-龙角（牛角、号角）是闾山、正一等派常用法器，开坛召营时吹角，以号令兵马、通达三界。
+龙角（牛角号）是闾山、正一等派常用的法器，开坛召营时吹角，以号令兵马、通达三界。
+
+入场：小道士走上山崖，捧起龙角，深吸一口气（身子一缩），鼓腮吹响第一声，角声的弧线从号口荡上天，三排云头浮现。
+持续：每 10 秒吹一声：举角 → 吸气 → 鼓腮长吹（角身微颤、声弧一道道荡出、已列阵的天兵跟着一颠）→ 放下喘口气。
+      一轮 540 秒，每 30 秒有一名天兵驾小云从天而降（弹跳落定、闪光），先站满前排再站后排，共 18 名。
+      续：满阵天兵连云带人往上开拔出画（写“开拔”），再一名一名重新降下。
+中断：号角放低，写“歇角”。  恢复：号角举回，再吹一声。
+圆满：一声长角，余下的天兵一齐降下，举枪，全阵开拔升天，题“兵马齐至”。
 """
 from __future__ import annotations
 
 import math
 
-from ..engine.anim import blink, clamp, ease_in, ease_in_out, ease_out, ease_out_back, ease_out_bounce, lerp, noise, rand, span
+import numpy as np
+
+from ..engine import pix
+from ..engine.anim import ease_in, ease_out, ease_out_bounce, lerp, rand, span
+from ..engine.chars import Part, daoshi
 from ..engine.cn import cn_num
-from ..engine.fx import typewriter
 from ..engine.gfx import Gfx, Sprite
 from ..engine.scene import Ritual, register
-from .r3_kit import round_of, side_text, sleeve, sparkle
+from .r3_kit import FLOOR, Clock, art, banner, banner_text, crossed, label, mx_ring, pose_arm, put, sparkle
 
-P0, P1, P2 = (-3, 40), (30, 66), (46, 20)    # 号角中线（贝塞尔）：吹口 → 喇叭口
-HOLD_S = 0.3                                 # 手握的位置
-BLAST = 10.0                                  # 吹一声的周期
-BLOW = 3.2                                    # 每声吹多久
-ROWS = [(31, 64), (45, 66), (59, 62)]         # 列阵：每排 (脚底 y, 起始 x)
-PER_ROW = 6
-N = len(ROWS) * PER_ROW
-RENEW = 4.0
-
-SOLDIER = Sprite("""
-#.....
-#.##..
-#.##..
-######
-#.##.#
-#.##..
-#.#.#.
-#.#.#.
-""")
+DX = 24
+CYCLE = 540.0
+EACH = 30.0
+BLOW = 10.0
+RENEW = 5.0
+ROWS = [52, 37, 22]                       # 三排云头的顶面 y（前排在下）
+COLS = [68 + j * 10 for j in range(6)]
 
 
-def bez(s: float):
-    a = (1 - s) ** 2
-    b = 2 * (1 - s) * s
-    c = s * s
-    x = a * P0[0] + b * P1[0] + c * P2[0]
-    y = a * P0[1] + b * P1[1] + c * P2[1]
-    dx = 2 * (1 - s) * (P1[0] - P0[0]) + 2 * s * (P2[0] - P1[0])
-    dy = 2 * (1 - s) * (P1[1] - P0[1]) + 2 * s * (P2[1] - P1[1])
-    ln = math.hypot(dx, dy) or 1
-    return x, y, dx / ln, dy / ln
-
-
-def _rot(x: float, y: float, a: float, ox: float, oy: float):
-    c, s_ = math.cos(a), math.sin(a)
-    return ox + (x - ox) * c - (y - oy) * s_, oy + (x - ox) * s_ + (y - oy) * c
-
-
-def horn(g: Gfx, ang: float = 0.0, shake: float = 0.0, dy: float = 0.0):
-    """牛角号：绕握处转 ang、整体下移 dy；shake 吹响时的微颤"""
-    hx, hy, _, _ = bez(HOLD_S)
+def _horn() -> Sprite:
+    """牛角号：沿一条弯弧（先往前、再往上）由细到粗的干净轮廓；两道金箍；号口朝上（口沿一道暗线）"""
+    p = Part(24, 20)
+    P0, P1, P2 = (1, 16), (16, 18), (19, 3)
+    cen, rad = [], []
+    for i in range(31):
+        s = i / 30
+        cen.append(((1 - s) ** 2 * P0[0] + 2 * (1 - s) * s * P1[0] + s * s * P2[0],
+                    (1 - s) ** 2 * P0[1] + 2 * (1 - s) * s * P1[1] + s * s * P2[1]))
+        rad.append(0.8 + 3.2 * s ** 1.3)
     left, right = [], []
-    for i in range(15):
-        s = i / 14
-        x, y, tx, ty = bez(s)
-        w = 1.5 + 7 * s ** 2
-        nx, ny = -ty, tx
-        y += shake * math.sin(i * 1.3)
-        lx_, ly_ = _rot(x + nx * w, y + ny * w, ang, hx, hy)
-        rx_, ry_ = _rot(x - nx * w, y - ny * w, ang, hx, hy)
-        left.append((lx_, ly_ + dy))
-        right.append((rx_, ry_ + dy))
-    hy += dy
-    g.d.polygon(left + right[::-1], fill=0, outline=1)
-    for s in (0.22, 0.5, 0.72, 0.9):  # 角上的箍
-        i = int(s * 14)
-        g.d.line((left[i], right[i]), fill=1)
-    # 喇叭口：椭圆
-    (lx, ly), (rx, ry) = left[-1], right[-1]
-    cx, cy = (lx + rx) / 2, (ly + ry) / 2
-    g.d.line((lx, ly, rx, ry), fill=1)
-    g.d.line(((lx + cx) / 2 + 1, (ly + cy) / 2, (rx + cx) / 2 + 1, (ry + cy) / 2), fill=1)
-    # 握角的手 + 袖
-    sleeve(g, hx - 2, hy + 5, 2.2, length=40, w0=12, w1=28, shade=0.25)
-    g.d.rounded_rectangle((hx - 4, hy - 4, hx + 5, hy + 6), radius=3, fill=0, outline=1)
-    g.d.line((hx - 3, hy - 1, hx + 3, hy - 2), fill=1)
-    g.d.line((hx - 3, hy + 2, hx + 3, hy + 1), fill=1)
-    return cx, cy
+    for i, (x, y) in enumerate(cen):
+        a = cen[min(i + 1, 30)]
+        b = cen[max(i - 1, 0)]
+        tx, ty = a[0] - b[0], a[1] - b[1]
+        n = math.hypot(tx, ty) or 1
+        nx, ny = -ty / n, tx / n
+        left.append((x + nx * rad[i], y + ny * rad[i]))
+        right.append((x - nx * rad[i], y - ny * rad[i]))
+    p.shape("polygon", left + right[::-1], fill=1)
+    for i in (12, 19, 21):   # 金箍
+        x, y = cen[i]
+        a, b = cen[i + 1], cen[i - 1]
+        tx, ty = a[0] - b[0], a[1] - b[1]
+        n = math.hypot(tx, ty) or 1
+        nx, ny = -ty / n, tx / n
+        r = rad[i] - 0.5
+        p.d.line((x + nx * r, y + ny * r, x - nx * r, y - ny * r), fill=0)
+    x, y = cen[-1]
+    r = rad[-1]
+    p.d.line((x - r + 1, y + 1, x + r - 1, y + 1), fill=0)     # 号口
+    p.shape("line", (x - r, y, x + r, y), fill=1)
+    p.shape("rectangle", (0, 15, 1, 17), fill=1)               # 吹口
+    for i in ():                                                 # （不加暗点）
+        cx, cy = cen[i]
+        lx, ly = right[i]
+        p.px(int(round((cx + 2 * lx) / 3)), int(round((cy + 2 * ly) / 3)), 0)
+    s = Sprite(on=np.array(p.on, bool), mask=np.array(p.mk, bool))
+    s.anchor = (0, 16)
+    s.pts = {"bell": (int(round(x)), int(round(y)) - 2), "mid": (12, 16)}
+    return s
 
 
-def mouth_dir(ang: float):
-    x, y, tx, ty = bez(1.0)
-    c, s_ = math.cos(ang), math.sin(ang)
-    return math.atan2(tx * s_ + ty * c, tx * c - ty * s_)
+HORN = _horn()
+
+SOLDIER = [art("""
+   #   #
+   #  ###
+  ###  #
+ ##### #
+ #.#.# #
+  ###  #
+#######
+#.###.##
+ #####  #
+ ## ##  #
+ ## ##  #
+""", anchor=(3, 10)), art("""
+   #  ###
+   #   #
+  ###  #
+ ##### #
+ #.#.# #
+  ### ##
+######
+#.####
+ #####
+ ## ##
+ ## ##
+""", anchor=(3, 10))]
+
+CLOUD = art("""
+ .##..##.
+##########
+.#.####.#.
+ ........
+""", anchor=(5, 0))
+
+ROW_CLOUD = art("""
+   .##.      .##.      .##.      .##.      .##.      .##.
+ .######.  .######.  .######.  .######.  .######.  .######.
+############################################################
+#.###.####.###.####.###.####.###.####.###.####.###.####.###.
+ ..........................................................
+""", anchor=(0, 0))
+
+MX_HORN = """
+......#.
+......##
+.....##.
+....##..
+#..##...
+####....
+"""
 
 
-def cloud_row(g: Gfx, y: float, x0: float, x1: float, t: float, seed: int = 0):
-    """一排云头（脚下）"""
-    x = x0
-    i = 0
-    while x < x1:
-        r = 3 + rand(i, seed) * 2
-        dx = math.sin(t * 0.8 + i) * 0.6
-        g.d.arc((x + dx - r, y - r + 1, x + dx + r, y + r + 1), 180, 360, fill=1)
-        x += r * 1.5
-        i += 1
-    g.d.line((x0 - 2, y + 2, x1 + 2, y + 2), fill=1)
+def slot(i: int):
+    r, c = divmod(i, 6)
+    return COLS[c] + (2 if r == 1 else 0), ROWS[r]
 
 
 @register
-class DragonHorn(Ritual):
+class LongjiaoRitual(Ritual):
     id = "r3.longjiao"
     name = "吹龙角"
-    desc = "吹响龙角，角声一阵阵荡出，天兵乘云一个个降到云头列阵；三排列满则齐齐开拔"
-    T = {"enter": 3.5, "interrupt": 1.4, "resume": 1.8, "complete": 5.5}
-    CYCLE = 540.0
+    desc = "小道士在山崖上鼓腮吹龙角，角声荡上天；天兵驾小云一名名降下，在右边三排云头上列阵"
+    T = {"enter": 6.0, "interrupt": 1.5, "resume": 1.8, "complete": 6.0}
+    CYCLE = CYCLE
 
-    # ------------------------------------------------------------ 零件
+    def setup(self):
+        self.sparks = pix.Sparks(self.seed)
+        self.clock = Clock()
+        self.arcs: list[list] = []      # [x, y, age]
 
-    def arrive(self, k: float) -> list[float]:
-        """各天兵的到达进度 0..1（每 30 秒一位，吹角之后降下）"""
-        per = self.CYCLE / N
-        return [clamp((k - (i * per + BLOW + 0.5)) / 1.6) for i in range(N)]
+    # ------------------------------------------------------------ 公用
 
-    def slot(self, i: int):
-        row = i // PER_ROW
-        col = i % PER_ROW
-        y, x0 = ROWS[2 - row]  # 先站前排（下），再往后排
-        return x0 + col * 10, y
+    def ground(self, g: Gfx, t: float):
+        """山崖：崖顶平台、崖壁斜下、几簇草；远处一道山脊"""
+        g.d.polygon([(0, FLOOR), (46, FLOOR), (49, FLOOR + 2), (48, 61), (52, 63), (0, 63)], fill=0, outline=1)
+        for a, b in (((8, FLOOR + 2), (14, 63)), ((26, FLOOR + 3), (22, 63)), ((40, FLOOR + 2), (44, 63))):
+            g.d.line((a, b), fill=1)                 # 石缝
+        pix.checker(g, (30, FLOOR + 3, 46, 64), 0.125)
+        for x in (6, 18, 38):
+            g.px(x, FLOOR - 1), g.px(x + 2, FLOOR - 1), g.px(x + 1, FLOOR - 2)
+        ridge = [(54, 63), (62, 58), (72, 61), (86, 56), (100, 60), (114, 55), (128, 59)]
+        for a, b in zip(ridge, ridge[1:]):
+            g.d.line((a, b), fill=1)
 
-    def army(self, g: Gfx, arr: list[float], t: float, lift: float = 0.0, raise_: float = 0.0):
-        for r, (y, x0) in enumerate(ROWS):
-            row = 2 - r
-            if any(arr[row * PER_ROW + c] > 0 for c in range(PER_ROW)) or lift > 0:
-                cloud_row(g, y + 1 - lift * (70 + r * 8), x0 - 3, x0 + PER_ROW * 10 - 2, t, r)
-        for i, p in enumerate(arr):
-            if p <= 0:
-                continue
-            x, y = self.slot(i)
-            row = 2 - i // PER_ROW
-            q = ease_out_bounce(p)
-            yy = lerp(-12, y - 8, q) - lift * (70 + row * 8)
-            g.blit(SOLDIER, x, yy)
-            spear = 4 + int(raise_ * 2)
-            g.d.line((x, yy - 1, x, yy - spear), fill=1)
-            g.px(x - 1, yy - spear + 1)
-            g.px(x + 1, yy - spear + 1)
-            if p < 1:  # 驾一小朵云降下
-                g.d.arc((x - 2, yy + 6, x + 8, yy + 12), 180, 360, fill=1)
-                if p > 0.55:
-                    sparkle(g, x + 3, y - 4, 2)
+    def rows(self, g: Gfx, t: float, show: float = 1.0, lift: float = 0.0, bump: float = 0.0):
+        for r, y in enumerate(ROWS):
+            if show * 3 > r:
+                bob = int(round(math.sin(t * 1.1 + r) * 0.7))
+                put(g, ROW_CLOUD, 62 + (2 if r == 1 else 0), y + 1 + bob - lift * (70 + r * 4))
 
-    def waves(self, g: Gfx, u: float, ang: float, cx: float, cy: float, amp: float = 1.0, dur: float = BLOW):
-        """角声：从喇叭口往外荡的弧"""
-        d = mouth_dir(ang)
-        for j in range(8):
-            age = u - j * 0.38
-            if age < 0 or u - age > dur:  # 只在吹的那几秒里发出
-                continue
-            r = 4 + age * 30
-            if r > 64 * amp + 4:
-                continue
-            spread = 0.75
-            n = int(r * spread * 2 / 2) + 3
-            for i in range(n):
-                a = d - spread + i / (n - 1) * spread * 2
-                if (i + j) % 2 and age > 0.8:
-                    continue
-                g.px(cx + math.cos(a) * r, cy + math.sin(a) * r)
+    def soldiers(self, g: Gfx, n: int, t: float, lift: float = 0.0, bump: float = 0.0, new: int = -1,
+                 newk: float = 1.0, raise_spear: bool = False):
+        for i in range(n):
+            x, y = slot(i)
+            r = i // 6
+            bob = int(round(math.sin(t * 1.1 + r) * 0.7))
+            yy = y + bob - lift * (70 + r * 4) - int(round(bump * math.sin(i * 1.3 + t * 20) ** 2 * 2))
+            if i == new:   # 驾小云从天而降，弹跳落定
+                q = ease_out_bounce(newk)
+                yy = lerp(-14, y, q)
+                if newk < 1:
+                    put(g, CLOUD, x, yy + 1)
+            fr = SOLDIER[1 if raise_spear or (i == new and 0.6 < newk < 1) else 0]
+            put(g, fr, x, yy)
 
-    def mx(self, g: Gfx, arr: list[float], blowing: bool, t: float):
-        for i, p in enumerate(arr):
-            if p >= 1:
-                row = i // PER_ROW
-                g.mx_set(1 + i % PER_ROW, 7 - row * 2)
+    def blower(self, g: Gfx, t: float, phase: str, face: str = "normal", jitter: bool = False):
+        """小道士 + 龙角。phase：rest 放在胸前 / lift 举到嘴边 / blow 鼓腮吹"""
+        out = {}
+        if phase == "rest":
+            def prop(g2, h):
+                out.update(put(g2, HORN, h[0] - 6, h[1] + 4))
+            pose_arm(g, DX, "low", t, "fist", face=face, prop=prop)
+            return out
+        dy = 1 if phase == "lift" else 0
+        j = (int(t * 30) % 2) if jitter else 0
+
+        def prop(g2, h):
+            mx, my = DX + 6, FLOOR - 19 + dy
+            out.update(put(g2, HORN, mx + j, my))
+            if phase == "blow":   # 鼓起的腮帮子
+                g2.d.ellipse((DX + 3, FLOOR - 22 + dy, DX + 7, FLOOR - 17 + dy), fill=1, outline=0)
+                g2.px(DX + 5, FLOOR - 20 + dy, 0)
+        pose_arm(g, DX, "fwd", t, "fist", face=face, prop=prop, dy=dy)
+        return out
+
+    def emit(self, x, y):
+        self.arcs.append([x, y, 0.0])
+
+    def fx(self, g: Gfx, dt: float):
+        keep = []
+        for a in self.arcs:
+            a[2] += dt
+            if a[2] < 1.2:
+                r = 3 + a[2] * 34
+                box = (a[0] - r, a[1] - r, a[0] + r, a[1] + r)
+                if a[2] > 0.8:
+                    for d in range(-80, 1, 12):
+                        g.px(a[0] + math.cos(math.radians(d)) * r, a[1] + math.sin(math.radians(d)) * r)
+                else:
+                    g.d.arc(box, -85, -5, fill=1)
+                keep.append(a)
+        self.arcs = keep
+        self.sparks.step(dt)
+        self.sparks.draw(g)
+
+    def blow_cycle(self, g: Gfx, u: float, t: float, dt: float, face_rest="normal"):
+        """一声（u = 本声已过秒数）：举角 0–0.6、吸气 0.6–1.0、长吹 1.0–4.0、放下"""
+        if u < 0.6:
+            return self.blower(g, t, "lift")
+        if u < 1.0:
+            return self.blower(g, t, "lift", face="sleep")
+        if u < 4.0:
+            pts = self.blower(g, t, "blow", jitter=True)
+            if int((u - 1.0) * 3.2) != int((u - 1.0 - dt) * 3.2) or crossed(u, dt, 1.0):
+                bx, by = pts["bell"]
+                self.emit(bx, by)
+                if crossed(u, dt, 1.0):
+                    self.sparks.burst(bx, by, 8, 24, up=14, life=0.5, gravity=30)
+            return pts
+        return self.blower(g, t, "rest", face=face_rest)
+
+    def mx(self, g: Gfx, n: int, blowing: bool, t: float):
+        for i in range(n):
+            r, c = divmod(i, 6)
+            g.mx[7 - r * 2 - 1, 2 + c] = True
         if blowing:
-            k = int(t * 6) % 4
             for x in range(8):
-                g.mx_set(x, 1 if (x + k) % 4 < 2 else 0)
-        else:
-            g.mx[0, 0:2] = True
-
-    def texts(self, g: Gfx, a: float = 1.0, s: str = "鸣角"):
-        side_text(g, 2, 2, s, a)
+                g.mx[0, x] = (x + int(t * 10)) % 4 == 0
+        g.mx[7, 0] = g.mx[6, 0] = g.mx[6, 1] = True
 
     # ------------------------------------------------------------ 阶段
 
     def enter(self, g: Gfx, t: float):
-        up = ease_out_back(span(t, 0, 1.2))
-        ang = lerp(0.3, 0, up)
-        u = t - 1.4
-        shake = 0.5 if 0 < u < BLOW else 0
-        cx, cy = horn(g, ang, shake * math.sin(t * 40), dy=lerp(40, 0, up))
-        if u > 0:
-            self.waves(g, u, ang, cx, cy)
-        self.texts(g, span(t, 2.4, 3.3))
-        self.mx(g, [0.0] * N, 0 < u < BLOW, t)
+        dt = self.clock(t)
+        self.ground(g, t)
+        self.rows(g, t, show=span(t, 3.0, 4.8))
+        if t < 2.0:
+            x = lerp(-14, DX, ease_out(span(t, 0, 2.0)))
+            h = daoshi(g, x, FLOOR, "walk", t)["hand"]
+            put(g, HORN, h[0] - 6, h[1] + 2)
+        else:
+            self.blow_cycle(g, t - 2.0, t, dt)
+        self.fx(g, dt)
+        label(g, 3, 3, "龙角")
+        self.mx(g, 0, 3.0 < t < 6.0, t)
 
     def hold(self, g: Gfx, t: float, e: float):
-        n, k, _ = round_of(e, self.CYCLE)
-        if n > 1 and k < RENEW:
-            # 续：满阵天兵举枪，连云带人往上开拔出画
-            lift = ease_in(span(k, 0.8, 3.4))
-            self.army(g, [1.0] * N, t, lift=lift, raise_=1)
-            cx, cy = horn(g)
-            self.texts(g, s="开拔")
-            self.mx(g, [1.0 if k < 2 else 0.0] * N, False, t)
+        dt = self.clock(t)
+        n, k, _ = round_of_k(e)
+        if e >= CYCLE and k < RENEW:
+            self.renew(g, k, t, e, dt)
             return
-        u = (k + 2.1) % BLAST  # 与入场的那一声接上
-        blowing = u < BLOW
-        shake = 0.5 * math.sin(t * 40) if blowing else 0
-        self.army(g, self.arrive(k), t)
-        cx, cy = horn(g, -0.05 * math.sin(min(u, BLOW) / BLOW * math.pi) if blowing else 0, shake)
-        self.waves(g, u, 0, cx, cy)
-        self.texts(g)
-        self.mx(g, self.arrive(k), blowing, t)
-        g.mx_level = 2 if blowing and u < 0.3 else 1
+        cnt = count_at(k)
+        new, newk = -1, 1.0
+        since = k - (5 + EACH * (cnt - 1)) if cnt else 99
+        if since < 1.6:
+            new, newk = cnt - 1, span(since, 0, 1.2)
+        u = e % BLOW
+        blowing = 1.0 < u < 4.0
+        self.ground(g, t)
+        self.rows(g, t)
+        self.soldiers(g, cnt, e, bump=1.0 if blowing else 0.0, new=new, newk=newk)
+        if new >= 0 and crossed(since, dt, 1.2):
+            x, y = slot(new)
+            self.sparks.burst(x, y - 6, 10, 20, life=0.5)
+        if new >= 0 and 1.2 <= since < 1.4:
+            x, y = slot(new)
+            sparkle(g, x + 4, y - 12, 3)
+        self.blow_cycle(g, u, e, dt)
+        self.fx(g, dt)
+        label(g, 3, 3, f"天兵{cn_num(cnt)}名" if cnt else "龙角")
+        self.mx(g, cnt, blowing, t)
+
+    def renew(self, g: Gfx, k: float, t: float, e: float, dt: float):
+        """满阵开拔：连云带人往上飞出画外"""
+        lift = ease_in(span(k, 0.6, 3.0))
+        self.ground(g, t)
+        self.rows(g, t, lift=lift)
+        self.soldiers(g, 18 if k < 3.0 else 0, e, lift=lift, raise_spear=True)
+        if k < 3.0 and int(k * 15) % 2 == 0:
+            self.sparks.burst(rand(int(k * 15), 2) * 60 + 64, 60 - lift * 40, 1, 10, life=0.5, gravity=-20)
+        self.blower(g, t, "rest", face="happy")
+        self.fx(g, dt)
+        label(g, 3, 3, "开拔" if k < 3.4 else "龙角")
+        self.mx(g, 18 if k < 3.0 else 0, False, t)
 
     def interrupt(self, g: Gfx, t: float, e: float):
-        _, k, _ = round_of(e, self.CYCLE)
-        p = ease_in_out(span(t, 0.1, 1.1))
-        self.army(g, self.arrive(k), t)
-        horn(g, 0.3 * p, dy=22 * p)
-        self.texts(g, s="歇角" if t > 0.5 else "鸣角")
-        self.mx(g, self.arrive(k), False, t)
+        dt = self.clock(t)
+        k = e % CYCLE
+        cnt = count_at(k)
+        self.ground(g, t)
+        self.rows(g, t)
+        self.soldiers(g, cnt, e)
+        self.blower(g, t, "rest" if t > 0.4 else "lift")
+        self.fx(g, dt)
+        label(g, 3, 3, "歇角" if t > 0.4 else f"天兵{cn_num(cnt)}名")
+        self.mx(g, cnt, False, t)
 
     def resume(self, g: Gfx, t: float, e: float):
-        _, k, _ = round_of(e, self.CYCLE)
-        p = ease_out_back(span(t, 0, 0.9))
-        ang = lerp(0.3, 0, p)
-        u = t - 0.9
-        self.army(g, self.arrive(k), t)
-        cx, cy = horn(g, ang, 0.5 * math.sin(t * 40) if u > 0 else 0, dy=lerp(22, 0, p))
-        if u > 0:
-            self.waves(g, u, ang, cx, cy)
-        self.texts(g)
-        self.mx(g, self.arrive(k), u > 0, t)
+        """号角举回，“呜”地一声；最后一帧接上持续阶段同一时刻的动作"""
+        dt = self.clock(t)
+        k = e % CYCLE
+        cnt = count_at(k)
+        self.ground(g, t)
+        self.rows(g, t)
+        u = (e % BLOW) - self.T["resume"] + t
+        self.soldiers(g, cnt, e, bump=1.0 if 0.5 < t < 1.2 or 1.0 < u < 4.0 else 0.0)
+        if t < 0.5:
+            self.blower(g, t, "lift")
+        elif u < 0 or u >= 4.0:
+            pts = self.blower(g, t, "blow" if t < 1.2 else "rest", jitter=t < 1.2)
+            if crossed(t, dt, 0.5) or crossed(t, dt, 0.85):
+                self.emit(*pts["bell"])
+        else:
+            self.blow_cycle(g, u, e, dt)
+        self.fx(g, dt)
+        label(g, 3, 3, f"天兵{cn_num(cnt)}名" if cnt else "龙角")
+        self.mx(g, cnt, 0.5 < t < 1.2, t)
 
     def complete(self, g: Gfx, t: float, e: float):
-        _, k, _ = round_of(e, self.CYCLE)
-        base = self.arrive(k)
-        # 一声长角：余下的天兵一齐降下；然后举枪、开拔
-        arr = [max(b, clamp((t - 0.6 - (i % PER_ROW) * 0.08) / 1.2)) for i, b in enumerate(base)]
-        raise_ = span(t, 2.4, 2.7)
-        lift = ease_in(span(t, 3.0, 4.3))
-        self.army(g, arr, t, lift=lift, raise_=raise_)
-        blowing = t < 3.0
-        cx, cy = horn(g, 0, 0.6 * math.sin(t * 40) if blowing else 0)
-        if blowing:
-            self.waves(g, t, 0, cx, cy, dur=3.0)
-        if t > 3.9:
-            typewriter(g, 89, 44, "兵马齐至", t - 3.9, cps=6, align="center")
-            self.texts(g)
+        """一声长角 → 余下天兵一齐降下 → 举枪 → 全阵开拔升天 → 兵马齐至"""
+        dt = self.clock(t)
+        k = e % CYCLE
+        cnt0 = count_at(k)
+        self.ground(g, t)
+        lift = ease_in(span(t, 3.4, 5.2))
+        self.rows(g, t, lift=lift)
+        down = span(t, 1.0, 2.2)
+        for i in range(18):
+            if i < cnt0 or down >= 1:
+                continue
+        n = cnt0 if down <= 0 else 18
+        if 0 < down < 1:
+            self.soldiers(g, cnt0, t, bump=1.0)
+            for i in range(cnt0, 18):
+                x, y = slot(i)
+                q = ease_out_bounce(span(down, (i - cnt0) * 0.02, 1.0))
+                yy = lerp(-14, y, q)
+                put(g, CLOUD, x, yy + 1)
+                put(g, SOLDIER[0], x, yy)
         else:
-            self.texts(g)
-        self.mx(g, arr, blowing, t)
-        g.mx_level = 1 + int(4 * span(t, 2.0, 2.4) * (1 - span(t, 2.6, 4.0)))
+            self.soldiers(g, n, t, lift=lift, raise_spear=t > 2.4)
+        if crossed(t, dt, 2.2):
+            self.sparks.burst(94, 36, 30, 50, life=0.8, gravity=30)
+        if 2.2 <= t < 2.28:
+            pix.flash(g)
+        if 2.2 <= t < 2.5:
+            pix.shake(g, t, 1.5)
+        if t < 3.4:
+            self.blow_cycle(g, 1.0 + t, t, dt)
+        else:
+            self.blower(g, t, "rest", face="happy")
+        self.fx(g, dt)
+        if t > 3.0:
+            banner(g, 36, 6, "兵马齐至", span(t, 3.0, 3.4))
+            banner_text(g, 36, 6, "兵马齐至", span(t, 3.0, 3.4))
+        else:
+            label(g, 3, 3, f"天兵{cn_num(n)}名" if n else "龙角")
+        self.mx(g, n if lift < 0.5 else 0, t < 3.4, t)
+        if t > 2.2:
+            mx_ring(g, (t - 2.2) * 4)
+            g.mx_level = 1 + int(5 * (1 - span(t, 2.2, 3.6)))
+
+
+def count_at(k: float) -> int:
+    """本轮第 k 秒已到几名天兵（第 i 名在 5 + 30i 秒降下）"""
+    return max(0, min(18, int((k - 5) // EACH) + 1)) if k >= 5 else 0
+
+
+def round_of_k(e: float):
+    n = int(e // CYCLE)
+    return n + 1, e - n * CYCLE, (e - n * CYCLE) / CYCLE

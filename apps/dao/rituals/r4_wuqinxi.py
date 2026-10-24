@@ -1,441 +1,432 @@
-"""五禽戏：华佗五禽戏，虎、鹿、熊、猿、鸟依次上场，小人学着它的样子做两式。
+"""五禽戏：林间空地上，小道士学虎、鹿、熊、猿、鸟（鹤）练五禽戏，每戏那只禽兽跑来蹲在右边跟着做。
 
-入场：五只禽兽从右往左奔过林间空地，小人现身，“五禽戏”。
-持续：一遍五戏（每戏 100 秒，两式各 50 秒）：虎举/虎扑、鹿抵/鹿奔、熊运/熊晃、猿提/猿摘、鸟伸/鸟飞。
-      每戏开头那只动物从右边跑进来蹲在一旁，跟着小人一起起伏；猿摘时树上有桃，鸟飞时白鹤扇翅。
-      五戏练完：动物们一齐跑过，“第几遍”加一。
-中断：小人收势、动物趴下打盹（冒 z）。
-恢复：动物抬头，小人接着练。
-圆满：五只动物围成一圈，小人当中收势放光，“五禽戏毕”。
+依据：华佗五禽戏（《三国志·华佗传》“吾有一术，名五禽之戏：一曰虎，二曰鹿，三曰熊，四曰猿，五曰鸟”；
+陶弘景《养性延命录》载其动作）；按健身气功五禽戏十式：虎举、虎扑、鹿抵、鹿奔、熊运、熊晃、猿提、猿摘、鸟伸、鸟飞。
+入场：虎、鹿、熊、猿、鹤从右往左奔过空地，小道士走来站定，“五禽戏”。
+持续：一遍十式，每式 60 秒（按 e）。每戏开头那只禽兽跑进来蹲在右边，跟着节拍做动作帧，两式练完跑出去。
+      虎举虎爪上托下拉、虎扑弓步前扑（震屏扬尘、虎张口）；鹿抵鹿角手转腰后瞧、鹿奔弓步弓背；熊运揉腹画圈、
+      熊晃沉步晃身（一步一震）；猿提踮脚缩肩转头、猿摘手搭凉棚摘头顶枝上的桃（桃到手里，下一轮又长出来）；
+      鸟伸举臂后撩腿、鸟飞提膝展翅（白鹤跟着扇翅）。式名在右上角出现；桃枝上不时飘下花瓣，飞鸟掠过。
+      续：五禽一齐跑过，左上“第几遍”加一。
+中断：小道士收势，禽兽趴下打盹冒 z，“收势”。  恢复：禽兽一跳醒来，小道士起势接着练。
+圆满：虎熊从左、鹿猿从右围上来，白鹤从天上落下，周身放光，闪白，“五禽戏毕”。
+点阵：当前禽兽的头像（虎王字纹、鹿角、熊圆耳、猿脸、鹤顶）。
 """
 from __future__ import annotations
 
 import math
 
-from ..engine.anim import blink, clamp, ease_in, ease_in_out, ease_out, ease_out_back, ease_out_bounce, lerp, rand, span
+from ..engine import pix
+from ..engine.anim import ease_in, ease_out, ease_out_back, lerp, span
+from ..engine.chars import Part, daoshi
 from ..engine.cn import cn_num
-from ..engine.fx import typewriter
-from ..engine.gfx import Gfx, Sprite
+from ..engine.gfx import Gfx
 from ..engine.scene import Ritual, register
-from .r4_kit import blend, figure, mirror, mx_icon, pose, seq
+from .r4_beasts import BEASTS
+from .r4_kit import (P, Clock, bird, cached, counter, dao, grass, label, mix, mx_art, mx_ring, pop_title, ring,
+                     seq, star)
 
-GROUND = 60
-FX = 46            # 小人
-AX = 100           # 动物蹲的位置（中心）
-PART = 100.0       # 一戏
-INTRO = 4.0
-RENEW = 4.0
+FLOOR = 58
+DX = 42
+AX = 104                 # 禽兽蹲的位置（中心）
+MOVE = 60.0
+PEACH = (55, 19)         # 枝上的桃
 
-TIGER = Sprite("""
- #   #
- #####                  ##
-##.#.##                #  #
-#######                   #
-#.###.##################  #
- #####.#..#..#...#..#..####
-  ###.#..#..#...#..#..###
-   ######################
-    ##  ##         ##  ##
-    ##  ##         ##  ##
-   ###  ##        ###  ##
-""")
-DEER = Sprite("""
-  # #  # #
-   # ## #
-    ####
-    ##.#
-   ######
-  ##   ##
-       ###########  #
-       #############
-       ############
-       ###     ###
-       # #     # #
-       # #     # #
-       # #     # #
-      ## #    ## #
-""")
-BEAR = Sprite("""
-         ########
-  ##   ############
- #####################
-#.####################
-######################
- ##.#################
-  ###################
-    ####  #####  ####
-    ####  ####   ####
-   #####  ####  #####
-""")
-MONKEY = Sprite("""
-  ####
- #....#
- #.#.#.#
- #....#
-  ####   #
-  ######  #
- ## #####  #
-#   ######  #
-    ######  #
-     ####  #
-    ##  ###
-   ##    ##
-  ###   ###
-""")
-CRANE = Sprite("""
-   ##
-#####
-   ##
-    #
-    #
-     #
-     ##
-      #######
-     #########
-     ##########
-       #######.#
-         #  #
-         #  #
-         #  #
-        ## ##
-""")
-PEACH = Sprite("""
-  ##
- #.
-###
-####
- ##
-""")
+N = P()
+HOLD_DT = P(b=(120, 20, "palm"), f=(60, 160, "palm"))
+DOWN = P(b=(110, 100, "palm"), f=(70, 80, "palm"))
 
-CLAW = dict(lh=2, rh=2)
-LUNGE = dict(lth=30, lsh=5, rth=-25, rsh=-25)
-SIDE = dict(shw=2.5, hipw=0.6, face=1, lth=2, lsh=0, rth=-2, rsh=0)
-NN = pose(lua=-12, lfa=-8, rua=12, rfa=8)
-BELLYF = pose(lua=-22, lfa=85, rua=22, rfa=-85, lh=1, rh=1)
+UPCLAW = P(legs="tiptoe", rise=2, b=(-125, -105, "claw"), f=(-55, -75, "claw"), face="angry")
+POUNCE = P(legs="bow", lean=28, b=(30, 40, "claw"), f=(15, 25, "claw"), face="angry")
+DEER_T = P(legs="bow", lean=-8, b=(160, 170, "horn"), f=(-150, -170, "horn"), flip_head=True)
+WINGUP = P(legs="knee", b=(200, 210, "wing"), f=(-20, -30, "wing"))
+WINGDN = P(b=(130, 140, "wing"), f=(50, 40, "wing"))
 
-# 动物：精灵、名、两式（关键帧、周期、式名）、点阵图标
-ANIMALS = [
-    (TIGER, "虎", [
-        ([pose(CLAW), pose(lua=-32, lfa=160, rua=32, rfa=-160, lh=2, rh=2),
-          pose(lua=-172, lfa=-178, rua=172, rfa=178, lift=1, lh=2, rh=2),
-          pose(lua=-172, lfa=-178, rua=172, rfa=178, lift=1, lh=2, rh=2),
-          pose(lua=-35, lfa=150, rua=35, rfa=-150, lh=1, rh=1)], 8.0, "虎举"),
-        ([pose(SIDE, CLAW, lua=178, lfa=178, rua=176, rfa=176),
-          pose(SIDE, CLAW, tor=55, lth=35, lsh=-15, rth=30, rsh=-18, lua=95, lfa=100, rua=92, rfa=98),
-          pose(SIDE, CLAW, tor=55, lth=35, lsh=-15, rth=30, rsh=-18, lua=95, lfa=100, rua=92, rfa=98),
-          pose(SIDE, CLAW, tor=10, lua=20, lfa=60, rua=15, rfa=60)], 7.0, "虎扑"),
-    ], """
-        #....#..
-        ########
-        #.#..#.#
-        ########
-        #.####.#
-        ##.##.##
-        .#....#.
-        ..####..
-    """),
-    (DEER, "鹿", [
-        ([pose(lth=-25, lsh=-6, rth=20, rsh=5),
-          pose(tor=-15, tilt=-6, face=-1, lth=-25, lsh=-6, rth=20, rsh=5, lua=-120, lfa=150, rua=120, rfa=-150,
-               lh=4, rh=4),
-          pose(tor=-15, tilt=-6, face=-1, lth=-25, lsh=-6, rth=20, rsh=5, lua=-120, lfa=150, rua=120, rfa=-150,
-               lh=4, rh=4),
-          pose(lth=-20, lsh=-5, rth=25, rsh=6),
-          pose(tor=15, tilt=6, face=1, lth=-20, lsh=-5, rth=25, rsh=6, lua=-120, lfa=150, rua=120, rfa=-150,
-               lh=4, rh=4),
-          pose(tor=15, tilt=6, face=1, lth=-20, lsh=-5, rth=25, rsh=6, lua=-120, lfa=150, rua=120, rfa=-150,
-               lh=4, rh=4)], 9.0, "鹿抵"),
-        ([pose(SIDE),
-          pose(SIDE, LUNGE, tor=-8, lua=70, lfa=95, rua=75, rfa=100, lh=4, rh=4),
-          pose(SIDE, LUNGE, tor=25, tilt=15, lua=80, lfa=90, rua=85, rfa=95, lh=4, rh=4),
-          pose(SIDE, LUNGE, tor=25, tilt=15, lua=80, lfa=90, rua=85, rfa=95, lh=4, rh=4)], 7.0,
-         "鹿奔"),
-    ], """
-        #.#..#.#
-        .#....#.
-        ..####..
-        ..#..#..
-        ..####..
-        ...##...
-        ..#..#..
-        ........
-    """),
-    (BEAR, "熊", [
-        ([BELLYF, pose(tor=-12, tilt=-6, lua=-30, lfa=80, rua=15, rfa=-90, lh=1, rh=1), BELLYF,
-          pose(tor=12, tilt=6, lua=-15, lfa=90, rua=30, rfa=-80, lh=1, rh=1)], 6.0, "熊运"),
-        ([pose(tor=-8, lth=-15, lsh=15, rth=6, rsh=2, lua=-15, lfa=-20, rua=20, rfa=10, lh=1, rh=1),
-          pose(tor=0, lua=-10, lfa=-8, rua=10, rfa=8, lh=1, rh=1),
-          pose(tor=8, rth=15, rsh=-15, lth=-6, lsh=-2, lua=-20, lfa=-10, rua=15, rfa=20, lh=1, rh=1),
-          pose(tor=0, lua=-10, lfa=-8, rua=10, rfa=8, lh=1, rh=1)], 5.0, "熊晃"),
-    ], """
-        ##....##
-        ########
-        ########
-        #.####.#
-        ########
-        ##.##.##
-        .######.
-        ..####..
-    """),
-    (MONKEY, "猿", [
-        ([NN, pose(lua=-30, lfa=155, rua=30, rfa=-155, lh=3, rh=3, lift=3, face=-1),
-          pose(lua=-30, lfa=155, rua=30, rfa=-155, lh=3, rh=3, lift=3, face=1), NN], 6.0, "猿提"),
-        ([pose(lth=-10, lsh=-4, rth=20, rsh=6, lua=-120, lfa=55, rua=40, rfa=20, face=1),
-          pose(lth=-10, lsh=-4, rth=20, rsh=6, lua=-120, lfa=55, rua=150, rfa=165, rh=2, face=1, lift=2),
-          pose(lth=-10, lsh=-4, rth=20, rsh=6, lua=-120, lfa=55, rua=150, rfa=165, rh=1, face=1, lift=2),
-          pose(lth=-6, lsh=-2, rth=8, rsh=3, lua=-25, lfa=60, rua=30, rfa=-120, rh=1, face=0)], 8.0, "猿摘"),
-    ], """
-        ..####..
-        .#....#.
-        #.#..#.#
-        #......#
-        .#.##.#.
-        ..#..#..
-        ...##...
-        ........
-    """),
-    (CRANE, "鸟", [
-        ([NN, pose(lua=-176, lfa=176, rua=176, rfa=-176, lift=1),
-          pose(lua=-125, lfa=-120, rua=60, rfa=50, wing=1, lth=-40, lsh=-40, rth=0, rsh=0),
-          NN,
-          pose(lua=-176, lfa=176, rua=176, rfa=-176, lift=1),
-          pose(lua=-60, lfa=-50, rua=125, rfa=120, wing=1, rth=40, rsh=40, lth=0, lsh=0)], 10.0, "鸟伸"),
-        ([pose(lua=-30, lfa=-25, rua=30, rfa=25, wing=1),
-          pose(lua=-120, lfa=-140, rua=120, rfa=140, wing=1, lth=-55, lsh=5, rth=0, rsh=0),
-          pose(lua=-30, lfa=-25, rua=30, rfa=25, wing=1),
-          pose(lua=-120, lfa=-140, rua=120, rfa=140, wing=1, rth=55, rsh=-5, lth=0, lsh=0)], 5.0, "鸟飞"),
-    ], """
-        ...##...
-        ..#..#..
-        ...##...
-        ....#...
-        .######.
-        ########
-        ..#..#..
-        ..#..#..
-    """),
+MOVES = [
+    ("虎举", [(0, N), (1.0, HOLD_DT), (2.4, UPCLAW), (3.4, UPCLAW),
+             (4.4, P(b=(130, -40, "fist"), f=(50, -140, "fist"), face="angry")), (5.4, DOWN), (6.0, N)],
+     [(2.4, 3.6)]),
+    ("虎扑", [(0, N), (1.0, P(b=(-125, -105, "claw"), f=(-55, -75, "claw"))), (2.0, POUNCE), (3.0, POUNCE),
+             (3.6, P(legs="horse", b=(130, -40, "claw"), f=(50, -140, "claw"))), (4.6, POUNCE), (5.4, POUNCE),
+             (6.0, N)], [(2.0, 3.0), (4.6, 5.4)]),
+    ("鹿抵", [(0, N), (1.2, DEER_T), (2.6, DEER_T), (4.0, N)], [(1.2, 2.6)]),
+    ("鹿奔", [(0, N), (1.2, P(legs="bow", lean=10, b=(10, 0, "horn"), f=(0, -10, "horn"))),
+             (2.4, P(legs="bowl", lean=22, b=(20, 10, "horn"), f=(10, 0, "horn"), head="bow")),
+             (3.6, P(legs="bowl", lean=22, b=(20, 10, "horn"), f=(10, 0, "horn"), head="bow")),
+             (4.6, P(legs="bow", lean=10, b=(10, 0, "horn"), f=(0, -10, "horn"))), (6.0, N)], [(1.2, 2.2), (4.6, 5.6)]),
+    ("熊运", [(0, P(b=(120, 40, "fist"), f=(60, 140, "fist"))),
+             (1.5, P(lean=15, b=(110, 20, "fist"), f=(50, 120, "fist"), face="sleep")),
+             (3.0, P(lean=-5, b=(130, 60, "fist"), f=(70, 160, "fist"))),
+             (4.5, P(lean=15, b=(110, 20, "fist"), f=(50, 120, "fist"), face="sleep")),
+             (6.0, P(b=(120, 40, "fist"), f=(60, 140, "fist")))], [(1.0, 2.0), (4.0, 5.0)]),
+    ("熊晃", [(0, P(legs="bow", lean=8, b=(150, 120, "fist"), f=(40, 60, "fist"))),
+             (1.0, P(b=(110, 90, "fist"), f=(70, 90, "fist"))),
+             (2.0, P(legs="bowl", lean=-8, b=(140, 110, "fist"), f=(30, 50, "fist"))),
+             (3.0, P(b=(110, 90, "fist"), f=(70, 90, "fist"))),
+             (4.0, P(legs="bow", lean=8, b=(150, 120, "fist"), f=(40, 60, "fist")))], [(0, 0.5), (2.0, 2.5)]),
+    ("猿提", [(0, N), (0.6, P(legs="tiptoe", rise=3, b=(140, -60, "hook"), f=(40, -120, "hook"), face="wow")),
+             (1.4, P(legs="tiptoe", rise=3, b=(140, -60, "hook"), f=(40, -120, "hook"), flip_head=True)),
+             (2.6, P(legs="tiptoe", rise=3, b=(140, -60, "hook"), f=(40, -120, "hook"), flip_head=True)),
+             (3.4, DOWN), (5.0, N)], [(0.6, 2.8)]),
+    ("猿摘", [(0, N), (1.2, P(legs="bowl", f=(-30, -170, "palm"), b=(120, 100, "hook"))),
+             (2.6, P(legs="tiptoe", rise=3, f=(-50, -60, "hook"), b=(120, 100, "palm"))),
+             (3.6, P(legs="tiptoe", rise=3, f=(-50, -60, "hook"), b=(120, 100, "palm"))),
+             (4.6, P(f=(30, -40, "palm"), b=(110, 100, "palm"), face="happy")),
+             (6.0, P(f=(30, -40, "palm"), b=(110, 100, "palm"), face="happy")), (7.0, N)], [(2.6, 4.2)]),
+    ("鸟伸", [(0, N), (1.2, P(b=(-120, -100, "palm"), f=(-60, -80, "palm"))),
+             (2.4, P(legs="back", lean=14, b=(170, 165, "wing"), f=(155, 150, "wing"))),
+             (3.6, P(legs="back", lean=14, b=(170, 165, "wing"), f=(155, 150, "wing"))), (4.6, DOWN), (6.0, N)],
+     [(2.4, 3.8)]),
+    ("鸟飞", [(0, WINGDN), (0.75, WINGUP), (1.5, WINGDN), (2.25, WINGUP), (3.0, WINGDN)], [(0.4, 1.1), (1.9, 2.6)]),
 ]
-ROUND = PART * len(ANIMALS)
+ORDER = ["tiger", "deer", "bear", "monkey", "crane"]
+HEADS = {
+    "tiger": """
+#......#
+########
+#.#..#.#
+########
+#.#..#.#
+.######.
+.#.##.#.
+..####..
+""", "deer": """
+#.#..#.#
+.##..##.
+..#..#..
+.######.
+.#.##.#.
+.######.
+..####..
+...##...
+""", "bear": """
+##....##
+########
+########
+#.#..#.#
+########
+##.##.##
+.######.
+..####..
+""", "monkey": """
+..####..
+.#....#.
+##.##.##
+#.#..#.#
+#......#
+.#.##.#.
+..#..#..
+...##...
+""", "crane": """
+....##..
+...#.#..
+...####.
+....#...
+....#...
+.####...
+######..
+.#..#...
+"""}
+
+
+def _branch():
+    """头顶伸进来的桃枝 56×14：枝条、叶子（叶脉一道暗线）、两朵桃花"""
+    p = Part(56, 14)
+    p.shape("line", (0, 2, 20, 5), fill=1, width=2)
+    p.shape("line", (20, 5, 40, 4), fill=1, width=2)
+    p.shape("line", (40, 4, 55, 1), fill=1, width=1)
+    p.shape("line", (24, 5, 25, 10), fill=1)
+    for x, y, d in ((8, 5, 1), (15, 6, -1), (30, 6, 1), (36, 2, -1), (46, 4, 1), (51, 1, -1)):
+        p.shape("ellipse", (x - 2, y - 1 + d, x + 2, y + 1 + d), fill=1)
+        p.px(x - 1, y + d, 0), p.px(x, y + d, 0)
+    for x, y in ((12, 1), (43, 7)):  # 桃花
+        for dx, dy in ((0, -1), (-1, 0), (1, 0), (0, 1)):
+            p.px(x + dx, y + dy)
+        p.px(x, y, 0)
+    return p.sprite()
+
+
+PEACH_SPR = pix.frames("""
+ .#.
+#####
+##.##
+#####
+ ###
+""")
+
+ZZZ = pix.frames("""
+###
+ #
+###
+""")
+
+
+def glade(g: Gfx, t: float, e: float):
+    """林间空地：远山、地面、草丛、几块石头、头顶桃枝"""
+    for x in range(0, 128, 2):
+        y = 34 - 6 * math.sin(x * 0.05 + 0.4) - 2 * math.sin(x * 0.17)
+        g.px(x, y)
+    g.d.line((0, FLOOR, 127, FLOOR), fill=1)
+    pix.checker(g, (0, FLOOR + 1, 128, 64), 0.125)
+    for x in range(-10, 140, 26):
+        g.d.line((x, FLOOR + 2, x + 8, FLOOR + 2), fill=1)
+    for x in (6, 24, 74, 120):
+        grass(g, x, FLOOR - 1, t)
+    g.d.ellipse((12, FLOOR - 4, 20, FLOOR + 1), fill=1)       # 石头
+    g.d.line((14, FLOOR - 3, 17, FLOOR - 3), fill=0)
+    pix.blit(g, cached(("wq", "branch"), _branch), 30, 0)
+    g.d.line((PEACH[0], 9, PEACH[0], PEACH[1]), fill=1)       # 桃柄
+    # 花瓣飘落（按 e）
+    ph = (e % 17) / 5.0
+    if ph < 1:
+        x = 44 + math.sin(ph * 8) * 5 + ph * 10
+        g.px(x, 6 + ph * (FLOOR - 8))
 
 
 @register
 class Wuqinxi(Ritual):
     id = "r4.wuqinxi"
     name = "五禽戏"
-    desc = "林间空地上，虎鹿熊猿鸟依次上场，小人照着禽兽的样子做虎举虎扑、鹿抵鹿奔、熊运熊晃、猿提猿摘、鸟伸鸟飞"
-    T = {"enter": 4.5, "interrupt": 1.6, "resume": 1.8, "complete": 5.5}
-    CYCLE = ROUND + RENEW
+    desc = "林间空地上小道士练五禽戏，虎鹿熊猿鹤轮流跑来蹲在旁边跟着做；虎扑震地、猿摘摘桃、鸟飞展翅"
+    T = {"enter": 6.5, "interrupt": 1.6, "resume": 1.8, "complete": 6.0}
+    CYCLE = 600.0
 
-    # ------------------------------------------------------------ 进度
+    def setup(self):
+        self.puffs = pix.Puffs(self.seed)
+        self.sparks = pix.Sparks(self.seed + 1)
+        self.clock = Clock()
 
-    def where(self, e: float):
-        """→ (遍数, 是否在“续”, 第几戏 a, 第几式 m, 本式内秒数 u, 本戏内秒数 w)"""
+    # ------------------------------------------------------------ 零件
+
+    def at(self, k: float):
+        i = min(int(k // MOVE), 9)
+        u = k - i * MOVE
+        name, keys, peaks = MOVES[i]
+        L = keys[-1][0]
+        flip = False
+        if i == 2:  # 鹿抵左右交替
+            flip = int(u // L) % 2 == 1
+        uu = u % L
+        pose = seq(keys, uu) if u > 0.8 else seq(keys, 0.0)
+        peak = any(a <= uu <= b for a, b in peaks)
+        return i, u, uu, pose, flip, peak
+
+    def beast(self, g: Gfx, t: float, i: int, u: float, peak: bool, sleep: float = 0.0):
+        """当前禽兽：跑进来 → 蹲在右边跟着做 → 跑出去"""
+        name = ORDER[i // 2]
+        fr = BEASTS[name]
+        s = u + (MOVE if i % 2 else 0)      # 本戏第几秒（两式 120 秒）
+        x = AX
+        running = False
+        if s < 3.0:
+            x = lerp(150, AX, ease_out(s / 3.0))
+            running = True
+        elif s > 117.0:
+            x = lerp(AX, 150, ease_in((s - 117.0) / 3.0))
+            running = True
+        if running:
+            spr = fr[2] if len(fr) > 2 else fr[int(t * 6) % 2]
+            hop = abs(math.sin(t * 10)) * 2
+        else:
+            spr = fr[1] if peak and sleep == 0 else fr[0]
+            hop = 0
+            if name == "monkey" and peak:
+                hop = abs(math.sin(t * 8)) * 3
+        if sleep > 0:  # 趴下打盹
+            spr = fr[0]
+            hop = -1
+        pix.blit(g, spr, x - spr.w // 2, FLOOR - spr.h - hop, flip=True)
+        if sleep > 0:
+            for j in range(2):
+                q = ((t * 0.6 + j * 0.5) % 1)
+                pix.blit(g, ZZZ[0], x - 6 - q * 4 + j * 2, FLOOR - spr.h - 4 - q * 10, outline=False)
+        return x, spr
+
+    def peach_hand(self, i, uu):
+        """猿摘：桃在枝上（None）还是在手里（True）"""
+        return i == 7 and 3.4 <= uu < 6.6
+
+    def draw(self, g: Gfx, t: float, e: float, dt: float, k: float, pose=None, sleep: float = 0.0, flip=None):
+        i, u, uu, p, fl, peak = self.at(k)
+        if pose is not None:
+            p = pose
+        if flip is not None:
+            fl = flip
+        self.beast(g, t, i, u, peak, sleep)
+        h = dao(g, DX, FLOOR, p, t, flip=fl)
+        in_hand = self.peach_hand(i, uu) and pose is None
+        if not in_hand:
+            pix.blit(g, PEACH_SPR[0], PEACH[0] - 2, PEACH[1])
+        else:
+            hx, hy = h["hf"]
+            pix.blit(g, PEACH_SPR[0], hx - 2, hy - 5)
+            if abs(uu - 3.4) < dt:
+                self.sparks.burst(PEACH[0], PEACH[1] + 2, 8, 16, life=0.5, gravity=30)
+        if pose is None and sleep == 0:
+            self.effects(g, t, dt, i, uu, p, h, fl)
+        self.puffs.step(dt)
+        self.puffs.draw(g)
+        self.sparks.step(dt)
+        self.sparks.draw(g)
+        return i, u, h
+
+    def effects(self, g, t, dt, i, uu, p, h, fl):
+        s = -1 if fl else 1
+        if i == 1 and (abs(uu - 2.0) < dt or abs(uu - 4.6) < dt):     # 虎扑落地
+            for d in (-1, 1):
+                self.puffs.emit(DX + d * 10, FLOOR - 1, vx=d * 12, vy=-3, life=0.6, rmax=1.8)
+            self.sparks.burst(h["hf"][0] + 3, h["hf"][1], 8, 20, life=0.4, gravity=10)
+        if i == 1 and (2.0 < uu < 2.15 or 4.6 < uu < 4.75):
+            pix.shake(g, t, 1.2)
+        if i in (0, 1) and p["face"] == "angry":                      # 虎爪划痕
+            hx, hy = h["hf"]
+            if i == 1 and (2.0 < uu < 2.6 or 4.6 < uu < 5.2):
+                for j in range(3):
+                    g.d.line((hx + 4 + j * 2, hy - 3 + j, hx + 7 + j * 2, hy + 3 + j), fill=1)
+        if i == 4:                                                    # 熊运：腹前画圈
+            a = uu / 6.0 * 2 * math.pi * 2
+            cx, cy = DX + 1, FLOOR - 11
+            for j in range(6):
+                aa = a - j * 0.35
+                if j % 2 == 0:
+                    g.px(cx + math.cos(aa) * 8, cy + math.sin(aa) * 4)
+        if i == 5 and (abs(uu - 0.0) < dt or abs(uu - 2.0) < dt):     # 熊晃：一步一震
+            self.puffs.emit(DX + (8 if uu < 1 else -8), FLOOR - 1, vx=0, vy=-4, life=0.6, rmax=1.8)
+        if i == 5 and (uu < 0.15 or 2.0 < uu < 2.15):
+            pix.shake(g, t, 0.8)
+        if i == 9:                                                    # 鸟飞：翅下的风
+            if WINGUP["legs"] == p["legs"]:
+                hx, hy = h["hf"]
+                pix.dotted(g, hx - 2, hy + 6, hx + 4, hy + 10, 2, int(t * 10))
+        if i == 3 and p["head"] == "bow":
+            g.d.arc((DX - 10, FLOOR - 36, DX + 4, FLOOR - 16), 200, 280, fill=1)
+
+    def mx(self, g: Gfx, t: float, i: int):
+        mx_art(g, HEADS[ORDER[i // 2]])
+        if ORDER[i // 2] == "tiger" and (t * 2) % 1 < 0.1:
+            g.mx[2, 2] = g.mx[2, 5] = True
+
+    def texts(self, g: Gfx, e: float, i: int, u: float):
         n = int(e // self.CYCLE) + 1
-        k = e % self.CYCLE
-        if e >= self.CYCLE and k < RENEW:
-            return n, True, 0, 0, k, k
-        if e >= self.CYCLE:
-            k -= RENEW
-        a = min(len(ANIMALS) - 1, int(k // PART))
-        w = k - a * PART
-        m = 0 if w < PART / 2 else 1
-        return n, False, a, m, w - m * PART / 2, w
+        counter(g, f"第{cn_num(n)}遍" if n < 100 else f"{n}遍")
+        if u < 10.0:
+            label(g, 124, 3, MOVES[i][0], 12, "right", box=True)
+        else:
+            counter(g, MOVES[i][0], right=True)
 
-    def pose_at(self, e: float) -> dict:
-        n, renew, a, m, u, w = self.where(e)
-        if renew:
-            return NN
-        keys, per, _ = ANIMALS[a][2][m]
-        if u < INTRO:
-            return blend(NN, keys[0], ease_in_out(span(u, 0.8, INTRO)))
-        p = seq(keys, u - INTRO, per)
-        return blend(p, NN, ease_in_out(span(u, PART / 2 - 1.8, PART / 2 - 0.3)))
-
-    # ------------------------------------------------------------ 画面零件
-
-    def glade(self, g: Gfx, e: float):
-        d = g.d
-        d.line((0, GROUND, 127, GROUND), fill=1)
-        for i in range(9):  # 草
-            x = 8 + i * 14 + int(rand(i, self.seed) * 6)
-            d.line((x, GROUND - 1, x - 1, GROUND - 3), fill=1)
-            d.line((x + 1, GROUND - 1, x + 2, GROUND - 4), fill=1)
-        for x in range(2, 128, 6):
-            g.px(x, GROUND + 2 + (x // 6) % 2)
-
-    def animal(self, g: Gfx, a: int, x: float, t: float, bob: float = 0.0, sleep: float = 0.0, run: bool = False):
-        spr = ANIMALS[a][0]
-        y = GROUND - spr.h + 1 + bob
-        if run:
-            y -= abs(math.sin(t * 14)) * 2
-        g.blit(spr, x - spr.w / 2, y)
-        if sleep > 0:  # 打盹：冒 z
-            for j in range(3):
-                k = ((t * 0.7 + j / 3) % 1)
-                if k < sleep:
-                    g.text(x - spr.w / 2 + 2 + j * 4 + k * 6, y - 6 - k * 10, "z", size=8)
-
-    def animal_x(self, w: float) -> float:
-        """每戏开头动物跑进来；最后几秒跑出去"""
-        if w < 3.0:
-            return lerp(150, AX, ease_out(span(w, 0, 3.0)))
-        if w > PART - 2.5:
-            return lerp(AX, -40, ease_in(span(w, PART - 2.5, PART)))
-        return AX
-
-    def texts(self, g: Gfx, e: float, a: float = 1.0, right: str | None = None):
-        n, renew, ai, m, u, w = self.where(e)
-        left = "五禽" if renew else ANIMALS[ai][2][m][2]
-        g.vtext(2, 3, left[:int(round(len(left) * a))])
-        r = right if right is not None else f"第{cn_num(n)}遍"
-        if a > 0:
-            g.text(126, 1, r[:int(round(len(r) * a))], align="right")
-
-    def extras(self, g: Gfx, b, p: dict, e: float, t: float):
-        n, renew, a, m, u, w = self.where(e)
-        if renew:
-            return
-        if a == 3 and m == 1:  # 猿摘：树枝上挂个桃，摘下来就在手里
-            d = g.d
-            d.line((22, 8, 86, 13), fill=1)
-            d.line((40, 9, 46, 5), fill=1)
-            d.line((70, 12, 76, 16), fill=1)
-            hx, hy = b.rhand
-            took = int(((u - INTRO) % 8.0) // 2) in (2, 3) and u > INTRO
-            if not took:
-                g.blit(PEACH, 56, 11)
-            else:
-                g.blit(PEACH, hx - 1, hy - 4)
-        if a == 0 and m == 1 and abs(p["tor"]) > 40:  # 虎扑：扑出的风
-            hx, hy = b.rhand
-            for j in range(3):
-                g.d.line((hx + 4 + j * 2, hy - 3 + j * 3, hx + 9 + j * 3, hy - 3 + j * 3), fill=1)
-
-    def mx(self, g: Gfx, e: float, t: float):
-        n, renew, a, m, u, w = self.where(e)
-        if renew:
-            a = int(t * 3) % 5
-        mx_icon(g, ANIMALS[a][3])
-        if not renew and int(t * 2) % 6 == 0:  # 偶尔眨眼
-            g.mx[2, 2] = g.mx[2, 5] = True if a != 3 else g.mx[2, 2]
-
-    def bob(self, e: float) -> float:
-        n, renew, a, m, u, w = self.where(e)
-        if renew or u < INTRO:
-            return 0.0
-        per = ANIMALS[a][2][m][1]
-        return round(math.sin((u - INTRO) / per * 4 * math.pi))
+    def parade(self, g: Gfx, t: float, q: float):
+        """五禽一齐从右往左跑过（q ∈ [0,1]）"""
+        for j, name in enumerate(ORDER):
+            fr = BEASTS[name]
+            spr = fr[2] if len(fr) > 2 else fr[int(t * 6 + j) % 2]
+            x = lerp(140 + j * 26, -40 + j * 26, q) - 40
+            hop = abs(math.sin(t * 10 + j)) * 2
+            y = FLOOR - spr.h - hop if name != "crane" else FLOOR - 30 - spr.h + math.sin(t * 6) * 2
+            pix.blit(g, spr, x, y, flip=True)
 
     # ------------------------------------------------------------ 阶段
 
-    def hold(self, g: Gfx, t: float, e: float):
-        n, renew, a, m, u, w = self.where(e)
-        self.glade(g, e)
-        p = self.pose_at(e)
-        if renew:  # 五只禽兽一齐跑过
-            for j in range(5):
-                x = lerp(150 + j * 34, -40 - (4 - j) * 0, ease_in_out(span(u, 0, RENEW))) - j * 0
-                x = 150 + j * 34 - span(u, 0, RENEW) * (190 + 34 * 4)
-                self.animal(g, j, x, t + j, run=True)
-        else:
-            self.animal(g, a, self.animal_x(w), t + a, bob=self.bob(e), run=w < 3.0 or w > PART - 2.5)
-            if a == 4 and m == 1 and u > INTRO:  # 白鹤跟着扇翅
-                fl = math.sin((u - INTRO) / ANIMALS[4][2][1][1] * 2 * math.pi)
-                x0 = self.animal_x(w) - 1
-                g.d.line((x0, GROUND - 7, x0 - 4, GROUND - 10 - fl * 5), fill=1)
-                g.d.line((x0 + 2, GROUND - 7, x0 + 1, GROUND - 11 - fl * 6), fill=1)
-        b = figure(g, p, FX, GROUND)
-        self.extras(g, b, p, e, t)
-        self.texts(g, e)
-        self.mx(g, e, t)
-
     def enter(self, g: Gfx, t: float):
-        self.glade(g, 0)
-        for j in range(5):  # 五禽奔过
-            x = 150 + j * 30 - t * 95
-            if -40 < x < 160:
-                self.animal(g, j, x, t + j, run=True)
-        k = span(t, 2.4, 3.6)
-        if k > 0:
-            figure(g, NN, FX, GROUND)
-            if k < 1:
-                g.fade(ease_in_out(k), (FX - 14, 0, FX + 14, 64))
-        if t > 2.4:
-            typewriter(g, 74, 18, "五禽戏", t - 2.4, cps=4, align="center")
-            if t > 3.8:
-                g.fade(1 - span(t, 3.8, 4.5), (50, 16, 100, 31))
-        self.texts(g, 0, a=span(t, 3.6, 4.5))
-        mx_icon(g, ANIMALS[min(4, int(t / 0.5))][3] if t < 2.5 else ANIMALS[0][3])
+        dt = self.clock(t)
+        glade(g, t, 3.0)
+        if t < 3.0:
+            self.parade(g, t, t / 3.0)
+        if 2.0 < t < 4.5:
+            daoshi(g, lerp(-12, DX, ease_out(span(t, 2.0, 4.5))), FLOOR, "walk", t)
+        elif t >= 4.5:
+            daoshi(g, DX, FLOOR, "gongshou" if t < 5.6 else "idle", t)
+        if abs(t - 4.5) < dt:
+            self.sparks.burst(DX, FLOOR - 20, 10, 18, life=0.5, gravity=0)
+        pix.blit(g, PEACH_SPR[0], PEACH[0] - 2, PEACH[1])
+        self.sparks.step(dt)
+        self.sparks.draw(g)
+        self.mx(g, t, int(t / 0.6) % 5 * 2 if t < 5.5 else 0)
+        if 4.5 < t < 5.6:
+            pop_title(g, 64, 3, "五禽戏", span(t, 4.5, 4.9), t)
+        elif t >= 5.6:
+            self.texts(g, 0.0, 0, 0.0)
+
+    def hold(self, g: Gfx, t: float, e: float):
+        dt = self.clock(t)
+        k = e % self.CYCLE
+        glade(g, t, e)
+        if e >= self.CYCLE and k < 5.0:  # 续：五禽一齐跑过
+            daoshi(g, DX, FLOOR, "gongshou" if k < 3.5 else "idle", t)
+            pix.blit(g, PEACH_SPR[0], PEACH[0] - 2, PEACH[1])
+            self.parade(g, t, k / 5.0)
+            self.mx(g, t, int(k / 1.0) % 5 * 2)
+            n = int(e // self.CYCLE) + 1
+            pop_title(g, 64, 3, f"第{cn_num(n)}遍" if n < 100 else f"{n}遍", span(k, 0.3, 0.7), t)
+            return
+        # 小事件：飞鸟
+        ph = (e % 29) / 7.0
+        if ph < 1 and int(e // 29) % 2 == 0:
+            bird(g, lerp(-6, 134, ph), 22 + math.sin(ph * 7) * 3, t)
+        i, u, h = self.draw(g, t, e, dt, k)
+        self.mx(g, t, i)
+        self.texts(g, e, i, u)
 
     def interrupt(self, g: Gfx, t: float, e: float):
-        n, renew, a, m, u, w = self.where(e)
-        self.glade(g, e)
-        k = ease_in_out(span(t, 0, 1.2))
-        p = blend(self.pose_at(e), BELLYF, k)
-        ai = a if not renew else 0
-        self.animal(g, ai, AX, t, bob=round(k * 2), sleep=span(t, 0.8, 1.6))
-        figure(g, p, FX, GROUND)
-        self.texts(g, e, right="收势")
-        self.mx(g, e, 0)
+        dt = self.clock(t)
+        k = e % self.CYCLE
+        glade(g, t, e)
+        i, u, uu, p, fl, peak = self.at(k)
+        q = ease_out(span(t, 0, 1.0))
+        self.draw(g, t, e, dt, k, pose=mix(p, HOLD_DT, q), sleep=1.0 if t > 0.6 else 0.0, flip=fl and q < 0.5)
+        self.mx(g, t, i)
+        n = int(e // self.CYCLE) + 1
+        counter(g, f"第{cn_num(n)}遍" if n < 100 else f"{n}遍")
+        if t > 0.5:
+            label(g, 124, 3, "收势", 12, "right", box=True)
 
     def resume(self, g: Gfx, t: float, e: float):
-        n, renew, a, m, u, w = self.where(e)
-        self.glade(g, e)
-        k = ease_in_out(span(t, 0.4, 1.8))
-        p = blend(BELLYF, self.pose_at(e), k)
-        if renew:
-            self.hold(g, t, e)
-            return
-        x = self.animal_x(w)
-        self.animal(g, a, x, t, bob=round((1 - span(t, 0, 0.6)) * 2) if x == AX else self.bob(e),
-                    sleep=1 - span(t, 0, 0.5))
-        b = figure(g, p, FX, GROUND)
-        if k >= 1:
-            self.extras(g, b, p, e, t)
-        self.texts(g, e, right="收势" if t < 0.6 else None)
-        self.mx(g, e, t)
+        dt = self.clock(t)
+        k = e % self.CYCLE
+        glade(g, t, e)
+        i, u, uu, p, fl, peak = self.at(k)
+        q = ease_out(span(t, 0.6, 1.6))
+        sleep = 1.0 if t < 0.5 else 0.0
+        if 0.5 <= t < 0.8:  # 一跳醒来
+            pass
+        self.draw(g, t, e, dt, k, pose=mix(HOLD_DT, p, q), sleep=sleep, flip=fl and q > 0.5)
+        if abs(t - 0.5) < dt:
+            self.sparks.burst(AX, FLOOR - 16, 10, 20, up=10, life=0.5, gravity=40)
+        self.mx(g, t, i)
+        self.texts(g, e, i, 99)
 
     def complete(self, g: Gfx, t: float, e: float):
-        self.glade(g, e)
-        k = ease_in_out(span(t, 0, 1.2))
-        p = blend(self.pose_at(e), BELLYF, k)
-        n, renew, a, m, u, w = self.where(e)
-        # 当前的动物退下，五禽从两边围上来
-        if t < 1.2 and not renew:
-            self.animal(g, a, lerp(self.animal_x(w), 150, ease_in(span(t, 0, 1.2))), t, run=True)
-        slots = [16, 116, 41, 97, 82]  # 虎 鹿 熊 猿 鹤
-        cx = 64
-        for j in range(5):
-            kk = ease_out(span(t, 1.0 + j * 0.3, 1.9 + j * 0.3))
-            if kk <= 0:
-                continue
-            sx = slots[j]
-            if j == 4:  # 白鹤从天上落下来
-                spr = ANIMALS[4][0]
-                x = lerp(140, sx, ease_out(span(t, 2.2, 3.2)))
-                y = lerp(-20, GROUND - spr.h + 1, ease_out_bounce(span(t, 2.2, 3.2)))
-                g.blit(spr, x - spr.w / 2, y)
-                if t < 3.0:
-                    fl = math.sin(t * 18) * 5
-                    g.d.line((x, y + 8, x + 5, y + 4 - fl), fill=1)
-                    g.d.line((x + 2, y + 8, x + 8, y + 5 - fl), fill=1)
-                continue
-            start = -30 if sx < 64 else 160
-            self.animal(g, j, lerp(start, sx, kk), t + j, run=kk < 1)
-        b = figure(g, p, cx if False else FX + (cx - FX) * ease_in_out(span(t, 0.6, 1.6)), GROUND)
-        if t > 2.8:
-            for j in range(12):
-                aa = j / 12 * 2 * math.pi + t * 0.8
-                r0 = 22
-                r1 = 22 + 5 * (0.6 + 0.4 * math.sin(t * 6 + j))
-                hx, hy = b.hip[0], b.hip[1] - 6
-                if blink(t + j * 0.1, 0.5, 0.7):
-                    g.d.line((hx + math.cos(aa) * r0, hy + math.sin(aa) * r0 * 0.8, hx + math.cos(aa) * r1,
-                              hy + math.sin(aa) * r1 * 0.8), fill=1)
-        if t < 1.2:
-            self.texts(g, e, a=1 - span(t, 0.2, 1.2))
-        else:
-            typewriter(g, 64, 1, "五禽戏毕", t - 3.0, cps=5, align="center")
-        i = int(t * 2.5) % 5
-        mx_icon(g, ANIMALS[i][3])
-        g.mx_level = 4 if t > 3.0 and t < 3.4 else 1
+        dt = self.clock(t)
+        glade(g, t, e)
+        cx = 60
+        spots = {"tiger": (0, 1, False), "bear": (24, 1, False), "deer": (75, -1, True), "monkey": (93, -1, True)}
+        for name, (x1, d, fl) in spots.items():
+            fr = BEASTS[name]
+            q = ease_out(span(t, 0.3 + (0.3 if name in ("bear", "monkey") else 0), 2.0))
+            x0 = -40 if d > 0 else 160
+            x = lerp(x0, x1, q)
+            spr = fr[2] if (q < 1 and len(fr) > 2) else fr[1 if (q >= 1 and int(t * 3) % 2) else 0]
+            pix.blit(g, spr, x, FLOOR - spr.h - (abs(math.sin(t * 10)) * 2 if q < 1 else 0), flip=fl)
+        # 白鹤从天上落下
+        cq = ease_out(span(t, 1.0, 2.6))
+        cr = BEASTS["crane"]
+        pix.blit(g, cr[1] if cq < 1 or int(t * 4) % 2 else cr[0], 107, lerp(-24, FLOOR - cr[0].h, cq), flip=True)
+        dao(g, cx, FLOOR, HOLD_DT if t < 2.6 else P(b=(120, 20, "palm"), f=(60, 160, "palm"), face="happy"), t)
+        if t > 2.6:
+            for j in range(3):
+                r = ((t - 2.6) * 14 + j * 9) % 28
+                ring(g, cx, FLOOR - 18, r + 4, dotted=2)
+        if abs(t - 2.6) < dt:
+            pix.flash(g)
+            self.sparks.burst(cx, FLOOR - 20, 24, 38, up=10, life=1.0, gravity=20)
+        if 2.6 < t < 2.9:
+            pix.shake(g, t, 1.2)
+        self.sparks.step(dt)
+        self.sparks.draw(g)
+        self.mx(g, t, int(t / 0.5) % 5 * 2)
+        if t > 2.6:
+            g.mx[:] = False
+            mx_ring(g, (t - 2.6) * 4 % 5)
+            g.mx[3:5, 3:5] = True
+            g.mx_level = 1 + int(6 * (1 - span(t, 2.6, 4.0)))
+        if t > 3.0:
+            pop_title(g, 64, 3, "五禽戏毕", span(t, 3.0, 3.4), t)

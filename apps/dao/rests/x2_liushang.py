@@ -1,281 +1,384 @@
-"""曲水流觞：王羲之《兰亭集序》“引以为流觞曲水，列坐其次……一觞一咏，亦足以畅叙幽情”。
+"""曲水流觞：王羲之《兰亭集序》“引以为流觞曲水，列坐其次……一觞一咏，亦足以畅叙幽情”；
+赋诗句取王羲之《兰亭诗》“仰视碧天际，俯瞰渌水滨……寓目理自陈”；“罚酒三觥”为兰亭修禊诗不成者罚酒的旧说。
 
-入场：一道清溪从右上方蜿蜒流进画面，三位雅士在溪边依次坐定。
-持续：羽觞（两耳的椭圆酒杯）每 8 秒放下一只，随水漂流、轻轻打转。每三只里有一只停在某位雅士面前：
-      他伸手取觞、仰头饮尽，然后——多半提笔赋诗（左上角写出一句王羲之《兰亭诗》），
-      偶尔作不出来，“罚酒三觥”，连饮三杯、脑袋晃晃。左下修竹摇曳，水纹一直流。
-退场：画面收拢成一个圆。
+暮春山阴：一条清溪从远处山脚弯弯曲曲流到眼前，小道士跽坐在近岸，对岸、弯里远远还坐着两位雅士；右边修竹摇曳。
+入场：溪水从远处一路流进画面，小道士与两位雅士依次弹出坐定。
+持续：羽觞（两耳椭圆杯）每 8 秒放下一只，顺水漂流打转；每第三只停在小道士面前的回水里：
+      他伸手取觞、举杯仰饮，然后多半提笔在膝前纸上赋诗（左上角逐字写出一句），
+      约三成作不出——“罚酒三觥”，连饮三杯、晕乎乎摇晃。放回空杯，杯子接着漂走。
+      远处雅士也不时举杯；水纹一直流，竹叶沙沙，偶尔一对燕子掠过。
+退场：收圆。
+点阵：S 形溪流（流动的点）上漂着觞。
 """
 from __future__ import annotations
 
 import math
 
-from ..engine.anim import blink, clamp, ease_in, ease_in_out, ease_out, ease_out_back, lerp, noise, rand, span
-from ..engine.fx import typewriter
+from ..engine import pix
+from ..engine.anim import ease_in_out, ease_out, ease_out_back, lerp, rand, span
+from ..engine.chars import Part, figure
 from ..engine.gfx import Gfx, Sprite
 from ..engine.scene import Rest, register
-from .x2_common import iris
+from .x2_common import TUFT, Clock, iris, label, put_arm, typed
 
-# 溪流中线（Catmull-Rom 控制点），从右上流到左下
-CTRL = [(150, 14), (134, 13), (106, 12), (84, 18), (74, 30), (80, 41), (70, 52), (44, 56), (20, 50), (-10, 48),
-        (-24, 48)]
-HALF = 5.0                       # 溪宽一半
-LAUNCH = 8.0                     # 每只觞相隔秒数
-TRAVEL = 26.0                    # 一只觞流完全程的秒数
+DX, DF = 31, 47               # 小道士（跽坐，朝右）
+SCH = (118, 41)               # 雅士（跽坐，朝左）
+# 溪水中心线（略俯视的地面上一道 S 形）：从远处右上流进来，弯到左边，再折回右下，从画面下沿流出
+PATH = [(134, 17), (110, 19), (84, 23), (62, 28), (48, 33), (46, 38), (56, 42), (76, 45), (94, 49), (100, 54),
+        (92, 59), (74, 63), (64, 70)]
+WIDTH = (4, 10)
+BANK = 48
+SPEED = 9.0                   # 杯子顺水的速度（像素/秒）
+SPAWN = 8.0
+STOP_X = 47                   # 回水处（小道士面前，弯里）
 POEMS = ["仰视碧天际", "俯瞰渌水滨", "寓目理自陈", "一觞一咏", "畅叙幽情"]
+EV_DRINK, EV_FINE = 9.5, 11.5
+T0 = 18.0                     # 时间偏移：一开场水里就有杯子
 
 
-def _catmull(pts, n=10):
-    out = []
-    for i in range(1, len(pts) - 2):
-        p0, p1, p2, p3 = pts[i - 1], pts[i], pts[i + 1], pts[i + 2]
-        for k in range(n):
-            u = k / n
-            u2, u3 = u * u, u * u * u
-            out.append(tuple(0.5 * (2 * p1[j] + (-p0[j] + p2[j]) * u + (2 * p0[j] - 5 * p1[j] + 4 * p2[j] - p3[j]) * u2
-                                    + (-p0[j] + 3 * p1[j] - 3 * p2[j] + p3[j]) * u3) for j in range(2)))
-    out.append(pts[-2])
+def _arc():
+    out, s = [0.0], 0.0
+    for (x0, y0), (x1, y1) in zip(PATH, PATH[1:]):
+        s += math.hypot(x1 - x0, y1 - y0)
+        out.append(s)
     return out
 
 
-PATH = _catmull(CTRL)
-_LEN = [0.0]
-for _a, _b in zip(PATH, PATH[1:]):
-    _LEN.append(_LEN[-1] + math.hypot(_b[0] - _a[0], _b[1] - _a[1]))
-TOTAL = _LEN[-1]
+ARC = _arc()
+LEN = ARC[-1]
 
 
-def at(u: float):
-    """溪中线上弧长比例 u（0..1）处的点与法向"""
-    d = clamp(u) * TOTAL
-    lo, hi = 0, len(_LEN) - 1
-    while hi - lo > 1:
-        mid = (lo + hi) // 2
-        if _LEN[mid] <= d:
-            lo = mid
-        else:
-            hi = mid
-    seg = _LEN[hi] - _LEN[lo] or 1
-    k = (d - _LEN[lo]) / seg
-    (ax, ay), (bx, by) = PATH[lo], PATH[hi]
-    tx, ty = bx - ax, by - ay
-    ln = math.hypot(tx, ty) or 1
-    return ax + tx * k, ay + ty * k, -ty / ln, tx / ln
+def at(s: float):
+    """溪中心线上弧长 s 处 → (x, y, 宽度比例 0..1)"""
+    s = max(0.0, min(s, LEN))
+    for i in range(len(PATH) - 1):
+        if s <= ARC[i + 1]:
+            k = (s - ARC[i]) / max(ARC[i + 1] - ARC[i], 1e-6)
+            x = lerp(PATH[i][0], PATH[i + 1][0], k)
+            y = lerp(PATH[i][1], PATH[i + 1][1], k)
+            return x, y, s / LEN
+    return PATH[-1][0], PATH[-1][1], 1.0
 
 
-BANK_L = [(x + nx * HALF, y + ny * HALF) for x, y, nx, ny in (at(i / 120) for i in range(121))]
-BANK_R = [(x - nx * HALF, y - ny * HALF) for x, y, nx, ny in (at(i / 120) for i in range(121))]
+def _stop_s():
+    best, bs = 1e9, 0.0
+    s = 0.0
+    while s < LEN:
+        x, y, _ = at(s)
+        if abs(x - STOP_X) < best and 34 < y < 40:
+            best, bs = abs(x - STOP_X), s
+        s += 0.5
+    return bs
 
-SCHOLAR = Sprite("""
-     .##.
-    .####.
-   .######.
-    #....#
-    #...#.#
-    #.....#
-     #...#
-   .##...##.
-  #.........#
- #..#........#
- #..#.....#..#
- #...#...#...#
- #....###....#
-#.............#
-###############
+
+S_STOP = _stop_s()
+
+
+def band(s_max: float = LEN):
+    """溪水的两岸折线（左岸 = 远岸，右岸 = 近岸）与水面多边形"""
+    left, right = [], []
+    s = 0.0
+    while s <= s_max:
+        x, y, k = at(s)
+        x2, y2, _ = at(min(s + 1.5, LEN))
+        x1, y1, _ = at(max(s - 1.5, 0))
+        tx, ty = x2 - x1, y2 - y1
+        n = math.hypot(tx, ty) or 1
+        nx, ny = -ty / n, tx / n
+        w = lerp(WIDTH[0], WIDTH[1], k) / 2
+        left.append((x + nx * w, y + ny * w * 0.8))
+        right.append((x - nx * w, y - ny * w * 0.8))
+        s += 3.0
+    return left, right
+
+
+BAND = band()
+
+LEAVES = pix.frames("""
+  #
+ ##  #
+###.##
+ # ###
+---
+  #  #
+ ## ##
+###.##
+#   #
 """)
-SCHOLAR_L = SCHOLAR.flip()
-# 雅士：坐处（脚下中点）、取觞点（溪上 u）、朝向
-SEATS = [((96, 40), 0.44, -1), ((60, 30), 0.40, 1), ((27, 45), 0.76, 1)]
+
+CUP = pix.frames("""
+#.###.#
+ #####
+---
+ .###.
+##.#.##
+ .###.
+""")
 
 
-def cup(g: Gfx, x: float, y: float, a: float = 0.0, full: bool = True):
-    """羽觞：椭圆杯 + 两侧耳（羽），a 为打转角度"""
-    ca, sa = math.cos(a), math.sin(a)
-    g.d.ellipse((x - 3, y - 2, x + 3, y + 2), fill=1 if full else 0, outline=1)
-    for s in (-1, 1):
-        ex, ey = x + ca * 4.5 * s, y + sa * 2 * s
-        g.d.line((ex - 1, ey, ex + 1, ey), fill=1)
-    if full:
-        g.px(x, y, 0)
+def _paper():
+    p = Part(10, 3)
+    p.shape("polygon", [(1, 0), (9, 0), (8, 2), (0, 2)], fill=1)
+    p.px(3, 1, 0), p.px(5, 1, 0), p.px(6, 1, 0)
+    return p.sprite()
 
 
-def bamboo(g: Gfx, t: float, seed: int):
-    """右下角几竿修竹（“茂林修竹”），竹叶随风摇"""
-    for i, (x0, h) in enumerate(((119, 46), (126, 34))):
-        sw = (noise(t * 0.5 + i, seed) - 0.5) * 3
-        top = 63 - h
-        g.d.line((x0, 63, x0 + sw, top), fill=1, width=2 if i == 0 else 1)
-        for j in range(1, h // 8):  # 竹节
-            y = 63 - j * 8
-            xx = x0 + sw * (63 - y) / h
-            g.d.line((xx - 1, y, xx + 2, y), fill=0)
-        for j in range(2):  # 竹叶：小枝上一组“个”字形的叶
-            y = top + 2 + j * 9
-            xx = x0 + sw * (63 - y) / h
-            d = -1 if (i + j) % 3 else 1
-            g.d.line((xx, y, xx + d * 4, y - 2), fill=1)
-            for k, (lx, ly) in enumerate(((7, 1), (6, 4), (4, 6))):
-                ex = xx + d * 4 + d * lx + sw * 0.5
-                g.d.line((xx + d * 4, y - 2, ex, y - 2 + ly), fill=1)
+def _cap():
+    """雅士的纶巾 14×8（朝左）：暗色头巾裹住发髻，白边，两根巾带往后飘"""
+    p = Part(16, 8)
+    p.shape("ellipse", (2, 0, 12, 8), fill=1)
+    p.d.ellipse((3, 1, 11, 7), fill=0)
+    p.d.line((4, 4, 10, 4), fill=1)
+    p.shape("rectangle", (1, 6, 13, 7), fill=1)
+    return p.sprite()
+
+
+def _beard():
+    p = Part(5, 6)
+    p.shape("polygon", [(0, 0), (4, 0), (3, 3), (2, 5), (1, 3)], fill=1)
+    p.px(2, 1, 0), p.px(2, 2, 0)
+    return p.sprite()
+
+
+_P: dict = {}
+
+
+def prop(name, *a):
+    key = (name,) + a
+    if key not in _P:
+        _P[key] = {"paper": _paper, "cap": _cap, "beard": _beard}[name](*a)
+    return _P[key]
 
 
 @register
 class Liushang(Rest):
     id = "x2.liushang"
     name = "曲水流觞"
-    desc = "清溪蜿蜒，羽觞随水漂流，停在谁面前谁就饮酒赋诗，赋不出罚酒三觥"
+    desc = "清溪蜿蜒，羽觞顺水漂流打转，停在小道士面前他就取觞饮酒、提笔赋诗，作不出就罚酒三觥"
     T = {"enter": 3.0, "exit": 1.2}
 
     def setup(self):
         self.ht = 0.0
+        self.clock = Clock()
+        self.sparks = pix.Sparks(self.seed)
 
-    # ------------------------------------------------------------ 觞
+    # ------------------------------------------------------------ 杯子与事件（全由 t 决定）
 
     def cups(self, t: float):
-        """当前在水里的觞：[(k, u, 是否停下)]；以及正在饮酒的雅士 (k, seat, 已过秒数)"""
-        out = []
-        drinker = None
-        k1 = int(t // LAUNCH)
-        for k in range(max(0, k1 - 4), k1 + 1):
-            age = t - k * LAUNCH
-            if age < 0:
-                continue
-            u = age / TRAVEL
-            if k % 3 == 1:  # 这只要停在某位雅士面前
-                seat = (k // 3) % 3
-                us = SEATS[seat][1]
-                ta = us * TRAVEL  # 到达用时
-                if age < ta:
-                    out.append((k, u, False))
-                elif age < ta + 1.6:
-                    out.append((k, us, True))
-                elif age < ta + 16:
-                    drinker = (k, seat, age - ta - 1.6)
-                continue
-            if u < 1:
-                out.append((k, u, False))
-        return out, drinker
+        """→ [(x, y, frame)] 正在漂的杯子；以及当前事件 (k, i, penalty) 或 None"""
+        out, ev = [], None
+        i0 = max(0, int((t - LEN / SPEED - 20) // SPAWN))
+        for i in range(i0, int(t // SPAWN) + 1):
+            age = t - i * SPAWN
+            s = age * SPEED
+            if i % 3 == 2:
+                t_stop = S_STOP / SPEED
+                pen = rand(i, self.seed) < 0.3
+                dur = EV_FINE if pen else EV_DRINK
+                if age >= t_stop:
+                    k = age - t_stop
+                    if k < dur:
+                        ev = (k, i, pen)
+                        if k < 0.9 or k > dur - 0.6:      # 停在回水里打转 / 放回去
+                            x, y, _ = at(S_STOP)
+                            out.append((x, y, int(t * 2) % 2))
+                        continue
+                    s = S_STOP + (k - dur) * SPEED
+            if 0 <= s < LEN:
+                x, y, _ = at(s)
+                out.append((x, y + (1 if int(age * 1.5) % 2 else 0) * 0, int(age * 1.2 + i) % 2))
+        return out, ev
 
     # ------------------------------------------------------------ 画面
 
-    def stream(self, g: Gfx, t: float, front: float = 1.0):
-        n = int(120 * front)
-        if n < 2:
-            return
-        g.d.line(BANK_L[:n + 1], fill=1)
-        g.d.line(BANK_R[:n + 1], fill=1)
-        for i in range(0, n, 9):  # 岸边小石
-            x, y = BANK_L[i]
-            if rand(i, 3) < 0.5:
-                g.d.ellipse((x - 1, y - 1, x + 2, y + 1), fill=1)
-        for j in range(16):  # 水纹：沿流向移动的短划
-            u = ((t * 0.05 + j / 16) % 1.0)
-            if u > front:
+    def land(self, g: Gfx, t: float, grow: float = 1.0):
+        """远山、地面（零星草点）、S 形溪水（暗水面 + 亮岸线 + 顺流的水纹）、岸边卵石"""
+        ridge = [(64, 14), (72, 8), (78, 11), (90, 3), (100, 9), (110, 5), (120, 10), (128, 8)]
+        g.d.line(ridge, fill=1)
+        g.d.line((90, 5, 87, 10), fill=1), g.d.line((110, 7, 108, 11), fill=1)
+        g.d.line((0, 14, 127, 14), fill=1)                       # 地平
+        for i in range(60):                                      # 地上的草点
+            x = int(rand(i, 31) * 127)
+            y = 16 + int(rand(i, 32) * 47)
+            g.px(x, y)
+            if i % 3 == 0:
+                g.px(x + 1, y - 1)
+        left, right = BAND if grow >= 1 else band(LEN * grow)
+        if len(left) > 1:
+            g.d.polygon(left + right[::-1], fill=0)
+            g.d.line(left, fill=1)
+            g.d.line(right, fill=1)
+        # 水纹：顺水流动的短划
+        smax = LEN * grow
+        for j in range(26):
+            ss = (j * 8.3 + t * SPEED * 0.9) % LEN
+            if ss > smax - 2:
                 continue
-            x, y, nx, ny = at(u)
-            off = (rand(j, 7) - 0.5) * HALF * 1.2
-            x, y = x + nx * off, y + ny * off
-            x2, y2, _, _ = at(u + 0.012)
-            g.d.line((x, y, x2 + nx * off, y2 + ny * off), fill=1)
+            x, y, k = at(ss)
+            x2, y2, _ = at(min(ss + 2, LEN))
+            off = (rand(j, 4) - 0.5) * lerp(WIDTH[0], WIDTH[1], k) * 0.5
+            g.d.line((x, y + off, x2, y2 + off), fill=1)
+        for x, y, w in ((40, 30, 4), (62, 50, 5), (104, 44, 3), (82, 56, 4)):   # 岸边卵石
+            g.d.ellipse((x, y, x + w, y + 2), fill=1)
+            g.d.line((x + 1, y + 2, x + w - 1, y + 2), fill=0)
+        for x, y in ((24, 52), (66, 36), (114, 56), (8, 60)):
+            pix.blit(g, TUFT[(x // 5) % 3], x, y, outline=False)
+        self.bamboo(g, t)
 
-    def scholar(self, g: Gfx, seat: int, drink: float | None, t: float, dy: float = 0.0):
-        """雅士；drink 为取觞饮酒后的秒数（None = 闲坐）"""
-        (sx, sy), us, face = SEATS[seat]
-        spr = SCHOLAR if face > 0 else SCHOLAR_L
-        x, y = sx - SCHOLAR.w // 2, sy - SCHOLAR.h + 1 + dy
-        g.d.line((sx - 7, sy + 1, sx + 7, sy + 1), fill=1)   # 席
-        nod = 0
-        if drink is not None:
-            fail = self.fails(seat, drink)
-            if fail and 6.0 < drink < 11.0:
-                nod = int(math.sin(drink * 8) * 1.5)  # 罚酒后摇头晃脑
-        g.blit(spr, x + nod, y)
-        hx, hy = sx + face * 4, y + 9  # 手
-        if drink is None:
-            return
-        cx, cy, _, _ = at(us)
-        if drink < 1.0:  # 伸手取觞
-            p = ease_out(drink)
-            ex, ey = lerp(hx, cx, p), lerp(hy, cy, p)
-            g.d.line((hx, hy, ex, ey), fill=1)
-            cup(g, ex, ey)
-        elif drink < 3.0:  # 举觞仰饮
-            p = ease_in_out(span(drink, 1.0, 1.8))
-            ex, ey = lerp(cx, sx + face * 5, p), lerp(cy, y + 4, p)
-            g.d.line((hx, hy, ex, ey), fill=1)
-            cup(g, ex, ey, a=p * 1.2 * face, full=drink < 2.4)
-        elif self.fails(seat, drink):  # 罚酒三觥：连饮三杯
-            if drink < 10.5:
-                q = ((drink - 3.0) / 2.5) % 1
-                up = math.sin(q * math.pi)
-                ex, ey = sx + face * lerp(9, 5, up), lerp(y + 10, y + 4, up)
-                g.d.line((hx, hy, ex, ey), fill=1)
-                cup(g, ex, ey, a=up * face, full=up < 0.7)
-        else:  # 提笔赋诗：膝前一张纸，笔尖移动
-            if drink < 12.0:
-                px0 = sx + face * 9 - 4
-                g.d.rectangle((px0, sy - 3, px0 + 8, sy), fill=0, outline=1)
-                bx = px0 + 1 + ((drink * 3) % 1) * 6
-                g.d.line((hx, hy, bx, sy - 2), fill=1)
-                g.d.line((bx, sy - 2, bx + 2, sy - 7), fill=1)
-                for i in range(int(clamp((drink - 3) / 6) * 4)):
-                    g.d.line((px0 + 2 + i * 2, sy - 2, px0 + 2 + i * 2, sy - 1), fill=1)
+    def bamboo(self, g: Gfx, t: float):
+        """修竹：左边三竿（两像素粗，竹节一圈），竹叶一簇簇随风摆"""
+        sway = math.sin(t * 0.8)
+        for i, (x, top) in enumerate(((5, 2), (11, 9), (17, 16))):
+            for y in range(top, BANK + 6):
+                k = (BANK + 6 - y) / BANK
+                xx = round(x + sway * 2 * k * k + i * 0.3)
+                g.px(xx, y), g.px(xx + 1, y)
+                if (y - top) % 7 == 3:
+                    g.px(xx - 1, y), g.px(xx + 2, y), g.px(xx + 1, y + 1, 0)
+            for j in range(3):
+                ly = top + 3 + j * 9
+                k = (BANK - ly) / BANK
+                lx = x + sway * 2 * k * k
+                spr = pix.anim(LEAVES, t * 0.5 + i * 0.7 + j * 0.3, 1.2)
+                pix.blit(g, spr, lx + (1 if j % 2 else -6), ly, flip=j % 2 == 1, outline=False)
 
-    def fails(self, seat: int, drink: float) -> bool:
-        return False if drink is None else rand(int(self._k), self.seed + 17) < 0.3
+    def drink_pose(self, k: float, pen: bool):
+        """事件 k 秒时手的位置（相对肩）、拿着什么、脸"""
+        # 0–0.9 伸手取觞；0.9–1.6 举到嘴边；1.6–3.0 仰饮；3.0–3.5 放下
+        cup_x, cup_y = STOP_X - (DX + 2), (at(S_STOP)[1] - 1) - (DF - 13)
+        mouth = (4, -3)
+        knee = (8, 8)
+        if k < 0.9:
+            q = ease_in_out(span(k, 0, 0.9))
+            return lerp(knee[0], cup_x, q), lerp(knee[1], cup_y, q), None, "normal"
+        if k < 1.6:
+            q = ease_in_out(span(k, 0.9, 1.6))
+            return lerp(cup_x, mouth[0], q), lerp(cup_y, mouth[1], q), "cup", "normal"
+        if k < 3.0:
+            return mouth[0], mouth[1] - (1 if k > 2 else 0), "cup", "sleep"
+        if k < 3.5:
+            q = ease_in_out(span(k, 3.0, 3.5))
+            return lerp(mouth[0], 9, q), lerp(mouth[1], 9, q), "cup", "happy"
+        end = EV_FINE if pen else EV_DRINK
+        if not pen:       # 提笔赋诗（3.5–8.5），再把空杯放回水里
+            if k < end - 1.0:
+                wob = math.sin(k * 9) * 1.5
+                return 10 + wob, 10 + (1 if int(k * 6) % 2 else 0), "brush", "normal"
+        else:             # 作不出：罚酒三觥（3.5–10），一杯一仰头
+            if k < end - 1.0:
+                kk = (k - 3.5) % 2.2
+                q = ease_in_out(span(kk, 0, 0.6)) * (1 - ease_in_out(span(kk, 1.5, 2.1)))
+                return lerp(9, mouth[0], q), lerp(9, mouth[1], q), "horn", ("sleep" if q > 0.8 else "wow")
+        q = ease_in_out(span(k, end - 1.0, end - 0.5))
+        return lerp(9, cup_x, q), lerp(9, cup_y, q), "cup" if k < end - 0.6 else None, "happy"
 
-    def frame(self, g: Gfx, t: float, front: float = 1.0, pop=(1.0, 1.0, 1.0)):
-        cups, drinker = self.cups(t)
-        self._k = drinker[0] if drinker else 0
-        bamboo(g, t, self.seed)
-        self.stream(g, t, front)
-        for k, u, stopped in cups:
-            x, y, nx, ny = at(u)
-            bob = math.sin(t * 3 + k) * 0.6
-            cup(g, x + nx * bob, y + ny * bob, a=0 if stopped else t * 1.2 + k)
-        for i in range(3):
-            if pop[i] <= 0.02:
-                continue
-            d = drinker[2] if drinker and drinker[1] == i else None
-            self.scholar(g, i, d, t, dy=(1 - pop[i]) * 10)
-        if drinker:  # 左上角的字
-            k, seat, d = drinker
-            if 3.0 < d < 14.5:
-                if self.fails(seat, d):
-                    typewriter(g, 2, 1, "罚酒三觥", d - 3.0, cps=3)
-                else:
-                    line = POEMS[(k // 3 + self.seed) % len(POEMS)]
-                    typewriter(g, 2, 1, line, d - 3.5, cps=2)
-        self.mx(g, t, cups)
+    def scene(self, g: Gfx, t: float, enter: float = 1.0):
+        dt = self.clock.dt(t)
+        on = enter >= 1
+        e3 = enter * self.T["enter"]
+        self.land(g, t, 1.0 if on else span(e3, 0, 1.6) + 0.001)
+        cups, ev = self.cups(t + T0) if on else ([], None)
+        for x, y, fr in cups:
+            pix.blit(g, CUP[fr], x - 3, y - 2)
+        # 对面的雅士（纶巾、长须），隔一阵举杯自饮
+        pop = ease_out_back(span(e3, 1.5, 1.9)) if not on else 1.0
+        if pop > 0.05:
+            q = (t + 5.0) % 19.0
+            lift = ease_in_out(span(q, 0, 0.6)) * (1 - ease_in_out(span(q, 2.2, 2.8)))
+            spr, at_ = put_arm(lerp(7, 4, lift), lerp(8, -3, lift), "fist", over=lift > 0.5)
+            sx, sy = SCH
+
+            def deco(gg, a):
+                pix.blit(gg, prop("cap"), sx - 8, sy + (1 - pop) * 10 - 33, flip=True)
+                pix.blit(gg, prop("beard"), sx - 6, sy + (1 - pop) * 10 - 16)
+
+            h = figure(g, sx, sy + (1 - pop) * 10, t + 1.3, legs="kneel", arm=spr, arm_at=at_, flip=True,
+                       face="sleep" if 0.8 < q < 2.2 else "normal", front=deco)
+            hx, hy = h["hand"]
+            pix.blit(g, CUP[0], hx - 3, hy - 2)
+        # 燕子（偶尔一对掠过）
+        bk = (t % 37) / 4.0
+        if bk < 1:
+            for j in range(2):
+                bx = lerp(135, -10, bk) + j * 9
+                by = 10 + j * 3 + math.sin(bk * 9 + j) * 2
+                wing = int(t * 8 + j) % 2
+                g.d.line((bx - 2, by - wing, bx, by), fill=1)
+                g.d.line((bx, by, bx + 2, by - wing), fill=1)
+        # 小道士
+        face, tool = "normal", None
+        dx, dy = 8, 8
+        if ev:
+            dx, dy, tool, face = self.drink_pose(ev[0], ev[2])
+        sway_x = 0
+        if ev and ev[2] and 4.0 < ev[0] < EV_FINE - 0.5:      # 罚酒：晕乎乎摇晃
+            sway_x = round(math.sin(ev[0] * 4) * 1.4)
+        pop = ease_out_back(span(e3, 0.9, 1.3)) if not on else 1.0
+        if pop > 0.05:
+            spr, at_ = put_arm(dx, dy, "pinch" if tool == "brush" else "fist", over=tool in ("cup", "horn") and dy < 2)
+
+            def front(gg, a):
+                if tool == "brush" or (ev and not ev[2] and 3.5 <= ev[0] < EV_DRINK):
+                    pix.blit(gg, prop("paper"), DX + 7 + sway_x, DF - 3)
+
+            h = figure(g, DX + sway_x, DF + (1 - pop) * 10, t, legs="kneel", arm=spr, arm_at=at_, face=face,
+                       behind=front)
+            hx, hy = h["hand"]
+            if tool == "cup":
+                pix.blit(g, CUP[0], hx - 3, hy - 2)
+            elif tool == "horn":     # 觥：牛角形的大酒器
+                g.d.line((hx - 1, hy - 2, hx + 4, hy - 4), fill=1, width=2)
+                g.d.line((hx + 4, hy - 4, hx + 6, hy - 7), fill=1)
+                g.px(hx - 2, hy - 2)
+            elif tool == "brush":    # 笔
+                g.d.line((hx + 1, hy - 4, hx + 1, hy + 2), fill=1)
+                g.px(hx + 1, hy + 3)
+        # 醉了：头上转小星
+        if ev and ev[2] and 5.5 < ev[0] < EV_FINE - 0.6:
+            for j in range(3):
+                a = t * 4 + j * 2.1
+                g.px(DX + math.cos(a) * 7, DF - 36 + math.sin(a) * 2)
+        self.sparks.step(dt)
+        self.sparks.draw(g)
+        # 字
+        if ev:
+            k, i, pen = ev
+            if not pen and 3.6 <= k < EV_DRINK - 0.2:
+                label(g, 30, 1, typed(POEMS[(i // 3) % len(POEMS)], k - 3.8, 1.6))
+            elif pen and 3.6 <= k < EV_FINE - 0.4:
+                label(g, 30, 1, "罚酒三觥")
+        return cups, ev
 
     def mx(self, g: Gfx, t: float, cups):
-        path = [(7, 0), (6, 0), (5, 1), (4, 2), (4, 3), (4, 4), (3, 5), (2, 6), (1, 6), (0, 6)]
-        for i, (x, y) in enumerate(path):  # 溪水：流动的虚线
-            if (i - int(t * 4)) % 3:
-                g.mx_set(x, y)
-        for k, u, stopped in cups:
-            i = int(u * (len(path) - 1) + 0.5)
-            x, y = path[min(i, len(path) - 1)]
-            g.mx_set(x, y - 1)
-            g.mx_set(x, y)
-
-    # ------------------------------------------------------------ 阶段
+        pts = [(1, 0), (2, 0), (3, 1), (4, 1), (5, 2), (6, 2), (6, 3), (5, 4), (4, 4), (3, 5), (2, 5), (1, 6),
+               (2, 7), (3, 7), (4, 7), (5, 7), (6, 7)]
+        for j, (x, y) in enumerate(pts):
+            if (j - int(t * 4)) % 3:
+                g.mx[y, x] = True
+        for x, y, fr in cups:
+            s = 0
+            best = 1e9
+            for j, (px_, py_) in enumerate(pts):
+                X, Y = 64 + (px_ - 3.5) * 16, 26 + py_ * 4.2
+                d = abs(X - x) + abs(Y - y)
+                if d < best:
+                    best, s = d, j
+            x8, y8 = pts[s]
+            g.mx[y8, x8] = int(t * 6) % 2 == 0
+            if x8 + 1 < 8:
+                g.mx[y8, x8 + 1] = True
 
     def enter(self, g: Gfx, t: float):
-        front = ease_in_out(span(t, 0.0, 1.6))
-        pops = tuple(ease_out_back(span(t, 1.4 + i * 0.35, 1.9 + i * 0.35)) for i in range(3))
-        self.frame(g, 0.0, front, pops)
-        if t < 2.2:
-            g.mx[:] = False
-            for i in range(int(front * 8)):
-                g.mx_set(7 - i, min(7, i))
+        self.scene(g, t, min(t / self.T["enter"], 0.999))
+        self.mx(g, t, [])
 
     def hold(self, g: Gfx, t: float):
         self.ht = t
-        self.frame(g, t)
+        cups, ev = self.scene(g, t)
+        self.mx(g, t, cups)
 
     def exit(self, g: Gfx, t: float):
-        self.frame(g, self.ht + t)
-        iris(g, span(t, 0.0, self.T["exit"]), 70, 36)
-        if t > 0.8:
-            g.mx[:] = False
+        tt = self.ht + t
+        cups, ev = self.scene(g, tt)
+        self.mx(g, tt, cups)
+        iris(g, t / self.T["exit"], DX + 8, 34)

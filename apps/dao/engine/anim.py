@@ -33,7 +33,11 @@ def ease_in_out(p: float) -> float:
 
 
 def ease_out_back(p: float, s: float = 1.70158) -> float:
-    p = clamp(p) - 1
+    if p <= 0:
+        return 0.0
+    if p >= 1:
+        return 1.0
+    p = p - 1
     return 1 + (s + 1) * p * p * p + s * p * p
 
 

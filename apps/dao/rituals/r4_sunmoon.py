@@ -1,284 +1,387 @@
-"""采日精月华：山巅上一个打坐的人，太阳从左边升起划过天空，光芒一缕缕流进他口中；
-日落之后月亮升起、群星闪烁，再采月华。一昼夜为一轮。
+"""采日月：小道士盘坐在云海上的孤峰顶，白天面日服日芒，夜里对月服月华。
 
-依据：上清派“服日月芒”之法（《真诰》、《上清握中诀》等），面日而坐、闭目存想日芒入口，咽之；
-夜则对月服月华。内丹家亦以日为离（火）、月为坎（水）。
-
-入场：群山从云海里升起，人坐在峰顶，东边天际泛白，太阳露头。
-持续：一轮 10 分钟 = 一昼夜：前半日行（日出→中天→日落，光线流入人口），后半月行（月升→月落，满天星）。
-      人身上的光晕随采得的精华慢慢变亮。天亮时“第几日”加一。
-中断：一片云飘过来遮住日（月），光线断了，“云遮”。
-恢复：云散开，光线重新流下来。
-圆满：日月同时出现，相向而行在头顶合成一团光，光团落进人的身子，“日月合璧”。
+依据：上清派“服日月芒”（《真诰》《上清握中诀》一类：面日存想日芒入口咽之，夜对月服月华）；内丹以日为离、月为坎。
+入场：云海里一座孤峰升起，峰顶一团云散开，现出打坐的小道士；天边一亮，太阳从右边露头。
+持续：一轮 10 分钟 = 一昼夜：前 5 分钟太阳从右边升起、划过天顶、在左边落下（日出日落时地平线泛光），
+      日芒一缕缕沿点线流进口中；小道士随日转身；后 5 分钟月亮升起、群星闪烁，月华稀疏地流下。
+      身上的光晕随一轮的进度越来越大；白天不时飞过一行雁，夜里偶尔一颗流星。续：天亮，左上“第几日”加一。
+中断：一大片云从右边飘来遮住日（月），光线断，“云遮”。  恢复：云散开，光线重新流下来。
+圆满：日月同时出现，相向而行在头顶合成一团强光，闪白，光团落进身体，周身放光，“日月合璧”。
+点阵：白天是闪芒的太阳，夜里是月牙加三颗闪烁的星；圆满时日月从两边合到中间。
 """
 from __future__ import annotations
 
 import math
 
-from ..engine.anim import blink, clamp, ease_in, ease_in_out, ease_out, lerp, noise, pulse, rand, span
+from ..engine import pix
+from ..engine.anim import ease_in, ease_in_out, ease_out, lerp, span
+from ..engine.chars import Part
 from ..engine.cn import cn_num
-from ..engine.fx import cloud, ring, stars, typewriter
-from ..engine.gfx import Gfx, Sprite
+from ..engine.gfx import Gfx
 from ..engine.scene import Ritual, register
+from .r4_kit import P, Clock, cached, cloud_sea, counter, dao, label, mount, mx_art, mx_ring, pop_title, ring, star
 
-SAGE = Sprite("""
-       #
-      ###
-     #####
-     #.#.#
-     #####
-      #.#
-    #######
-   ##.###.##
-   #.#####.#
-  ##.#####.##
-  ###.###.###
- ######.######
-###############
- #############
+PEAK_TOP = 48            # 峰顶（小道士坐的地方）
+DX = 44
+SIT = P(legs="sit", b=(110, 30, "palm"), f=(70, 150, "palm"), face="sleep")
+SIT_UP = P(legs="sit", b=(110, 30, "palm"), f=(70, 150, "palm"))
+HALF = 300.0
+
+
+def _peak():
+    """孤峰 56×18：峰顶平台、岩缝、阴面网点、崖边一棵小松"""
+    p = Part(56, 18)
+    p.shape("polygon", [(0, 17), (8, 9), (14, 5), (20, 2), (36, 2), (42, 5), (48, 11), (55, 17)], fill=1)
+    p.d.line((20, 2, 36, 2), fill=1)
+    p.d.line((21, 3, 35, 3), fill=0)
+    for a, b in (((12, 8), (16, 12)), ((24, 6), (26, 10)), ((32, 8), (30, 13)), ((8, 13), (11, 16)), ((40, 9), (44, 14))):
+        p.d.line(a + b, fill=0)
+    p.dither([(36, 3), (42, 5), (48, 11), (55, 17), (36, 17), (33, 9)], 0.5, 0)
+    # 崖边小松
+    p.shape("line", (40, 3, 44, 0), fill=1)
+    return p.sprite()
+
+
+def _side_peak(w, h, n):
+    p = Part(w, h)
+    p.shape("polygon", [(0, h - 1), (w // 3, 2), (w // 2, 0), (w * 2 // 3, 3), (w - 1, h - 1)], fill=1)
+    p.dither([(w // 2, 0), (w * 2 // 3, 3), (w - 1, h - 1), (w // 2 + 1, h - 1)], 0.5, 0)
+    p.d.line((w // 3 + 1, 4, w // 3 + 3, 8), fill=0)
+    return p.sprite()
+
+
+SUN = pix.frames("""
+  .###.
+ #######
+.#######.
+#########
+#########
+#########
+.#######.
+ #######
+  .###.
 """)
-SX, SY = 64, 46          # 人坐的位置（峰顶）
-MOUTH = (SX, SY - 10)
-HORIZON = 54
+
+MOON = pix.frames("""
+  ####
+ ##.###
+####.###
+########
+#.######
+###.####
+ ######
+  ####
+""")
+
+CLOUD_BIG = pix.frames("""
+         ######
+     ###########   ####
+   ####################
+ ########################
+###########################
+#.#.#.#.#.#.#.#.#.#.#.#.##
+""")
+
+CLOUDLET = pix.frames("""
+  ###
+#######
+#.#.#.#
+""")
+
+GEESE = pix.frames("""
+#.#
+ #
+---
+ #
+#.#
+""")
 
 
-def sky_pos(p: float) -> tuple[float, float]:
-    """日月在天上的位置：p 0 = 东边地平线，0.5 = 中天，1 = 西边"""
-    x = lerp(12, 116, p)
-    y = HORIZON - 4 - 39 * math.sin(math.pi * p)
-    return x, y
+def sky_pos(theta: float):
+    """天上的弧：theta 0 = 右边地平线，pi = 左边地平线"""
+    return 64 + 56 * math.cos(theta), 44 - 38 * math.sin(theta)
+
+
+def landscape(g: Gfx, t: float, off: int = 0):
+    """云海与群峰（孤峰最后画，压在云海上）"""
+    pix.blit(g, mount(2), 94, 36 + off)
+    pix.blit(g, mount(3), 2, 40 + off)
+    cloud_sea(g, t, 50, speed=1.5)
+    pix.blit(g, cached(("sm", "peak"), _peak), DX - 28, PEAK_TOP - 2 + off)
+
+
+def stars(g: Gfx, t: float, k: float, seed: int = 3):
+    """群星（k = 夜色浓度 0–1）"""
+    import random
+    r = random.Random(seed)
+    for i in range(22):
+        x, y = r.randrange(2, 126), r.randrange(2, 40)
+        if r.random() < k:
+            on = (t * (0.5 + r.random()) + r.random()) % 1 < 0.8
+            g.px(x, y, 1 if on else 0)
+            if i % 7 == 0 and on:
+                g.px(x - 1, y), g.px(x + 1, y)
 
 
 @register
 class SunMoon(Ritual):
     id = "r4.sunmoon"
     name = "采日月"
-    desc = "山巅打坐，日出东方光芒流入口中，日落月升再采月华，一昼夜一轮"
-    T = {"enter": 4.5, "interrupt": 1.6, "resume": 1.8, "complete": 5.5}
+    desc = "小道士盘坐云海孤峰顶，白天面日服日芒、夜里对月服月华，日月东升西落，一轮一昼夜"
+    T = {"enter": 6.0, "interrupt": 1.8, "resume": 2.0, "complete": 6.0}
     CYCLE = 600.0
 
-    # ------------------------------------------------------------ 零件
+    def setup(self):
+        self.sparks = pix.Sparks(self.seed + 1)
+        self.clock = Clock()
 
-    def day(self, e: float) -> tuple[bool, float, float]:
-        """→ (白天?, 日/月在天上的进度 0..1, 一轮的进度 0..1)"""
-        p = (e % self.CYCLE) / self.CYCLE
-        if p < 0.5:
-            return True, p * 2, p
-        return False, (p - 0.5) * 2, p
+    def state(self, k: float):
+        """一轮第 k 秒：('sun'|'moon', theta)"""
+        if k < HALF:
+            return "sun", lerp(0.08, math.pi - 0.08, k / HALF)
+        return "moon", lerp(0.08, math.pi - 0.08, (k - HALF) / HALF)
 
-    def hills(self, g: Gfx, rise: float = 1.0):
-        d = g.d
-        dy = (1 - rise) * 30
-        back = [(0, 64), (0, 54 + dy), (12, 47 + dy), (24, 53 + dy), (34, 50 + dy), (44, 58 + dy), (84, 58 + dy),
-                (96, 49 + dy), (108, 54 + dy), (120, 46 + dy), (128, 50 + dy), (128, 64)]
-        d.polygon(back, fill=0)
-        g.shade_poly(back, 0.07)
-        # 主峰：一块高耸的石峰，峰顶平台坐人；右侧背光（抖动），几道石纹
-        main = [(30, 64), (44, 56 + dy), (52, SY + 3 + dy), (56, SY + dy), (72, SY + dy), (76, SY + 3 + dy),
-                (86, 55 + dy), (100, 64)]
-        d.polygon(main, fill=0, outline=1)
-        g.shade_poly([(66, SY + 2 + dy), (72, SY + dy), (76, SY + 3 + dy), (86, 55 + dy), (100, 64), (70, 64)], 0.25,
-                     outline=None)
-        d.line((56, SY + 4 + dy, 52, 58 + dy), fill=1)
-        d.line((60, SY + 6 + dy, 58, 63 + dy), fill=1)
-        for i in range(4):  # 云海
-            y = 59 + (i % 2) * 3 + dy * 0.3
-            x = (i * 37 + 10) % 128
-            d.line((x, y, x + 14, y), fill=0)
-            d.line((x, y + 1, x + 14, y + 1), fill=1)
+    def body(self, g: Gfx, t: float, x_target: float, eyes_open=False):
+        flip = x_target < DX
+        return dao(g, DX, PEAK_TOP, SIT_UP if eyes_open else SIT, t, flip=flip)
 
-    def sage(self, g: Gfx, glow: float, t: float, dy: float = 0.0):
-        g.blit(SAGE, SX - SAGE.w // 2, SY - SAGE.h + 1 + dy)
-        if glow > 0.05:
-            r = 9 + glow * 4 + pulse(t, 3.0) * 1.5
-            ring(g, SX, SY - 7 + dy, r + 2, 3 if glow < 0.5 else 2, t * 0.4)
-
-    def sun(self, g: Gfx, x: float, y: float, t: float, r: float = 6):
-        g.d.ellipse((x - r, y - r, x + r, y + r), fill=1)
-        for i in range(8):
-            a = i * math.pi / 4 + t * 0.3
-            l0, l1 = r + 2, r + 4 + (i % 2) * 2
-            g.d.line((x + math.cos(a) * l0, y + math.sin(a) * l0, x + math.cos(a) * l1, y + math.sin(a) * l1), fill=1)
-
-    def moon(self, g: Gfx, x: float, y: float, r: float = 6):
-        g.d.ellipse((x - r, y - r, x + r, y + r), fill=1)
-        g.d.ellipse((x - r + 3, y - r - 2, x + r + 3, y + r - 2), fill=0)
-
-    def beams(self, g: Gfx, x: float, y: float, t: float, amt: float = 1.0, sparse: bool = False):
-        """日芒（月华）一缕缕从日月流进口中"""
-        if amt <= 0:
-            return
-        mx_, my_ = MOUTH
-        dx, dy = mx_ - x, my_ - y
-        L = math.hypot(dx, dy)
-        if L < 12:
-            return
-        ux, uy = dx / L, dy / L
-        nx, ny = -uy, ux
-        n = 3 if sparse else 5
+    def streams(self, g: Gfx, t: float, src, h: dict, kind: str, cut: float = 1.0):
+        """日芒 / 月华：沿点线流进口中；cut < 1 时只画靠近源头的一段"""
+        mx_, my = h["mouth"]
+        sx, sy = src
+        n = 3 if kind == "sun" else 2
         for j in range(n):
-            off = (j - (n - 1) / 2) * (2.2 if sparse else 1.8)
-            for k in range(3):
-                s = ((t * (0.35 if sparse else 0.5) + j * 0.23 + k / 3) % 1.0)
-                if s > amt:
-                    continue
-                w = off * (1 - s)  # 越近越收拢
-                px = x + ux * (8 + s * (L - 10)) + nx * w
-                py = y + uy * (8 + s * (L - 10)) + ny * w
-                g.d.line((px, py, px + ux * (2 if sparse else 3), py + uy * (2 if sparse else 3)), fill=1)
+            off = (j - (n - 1) / 2) * 3
+            x0, y0 = sx + off, sy + 4
+            L = math.hypot(mx_ - x0, my - y0)
+            steps = int(L / 3)
+            ph = t * (6 if kind == "sun" else 3) + j
+            for i in range(steps):
+                q = i / max(steps, 1)
+                if q > cut:
+                    break
+                if (i + int(ph)) % (2 if kind == "sun" else 3) == 0:
+                    g.px(lerp(x0, mx_, q), lerp(y0, my, q))
 
-    def horizon_glow(self, g: Gfx, k: float, left: bool):
-        """日出日落时天边泛光"""
-        if k <= 0:
-            return
-        x0 = 0 if left else 64
-        g.shade((x0, HORIZON - 10, x0 + 64, HORIZON - 2), 0.12 * k)
+    def halo(self, g: Gfx, t: float, prog: float):
+        """身上的光晕：一轮里越来越大"""
+        r = 14 + prog * 8
+        cx, cy = DX, PEAK_TOP - 17
+        n = int(10 + prog * 26)
+        for i in range(n):
+            a = i / n * 2 * math.pi + t * 0.3
+            g.px(cx + math.cos(a) * r, cy + math.sin(a) * r * 0.95)
 
-    def texts(self, g: Gfx, e: float, right: str | None = None, a: float = 1.0):
-        is_day, s, p = self.day(e)
-        n = int(e // self.CYCLE) + 1
-        left = "采日精" if is_day else "采月华"
-        g.vtext(2, 2, left[:int(round(len(left) * a))])
-        r = right if right is not None else f"第{cn_num(n)}日"
-        g.vtext(115, 2, r[:int(round(len(r) * a))])
-
-    def mx(self, g: Gfx, e: float, t: float):
-        is_day, s, p = self.day(e)
-        if is_day:
-            g.mx[2:6, 2:6] = True
-            g.mx[2, 2] = g.mx[2, 5] = g.mx[5, 2] = g.mx[5, 5] = False
-            k = int(t * 2) % 2
-            for x, y in (((3, 0), (4, 0), (0, 3), (0, 4), (7, 3), (7, 4), (3, 7), (4, 7)) if k else
-                         ((1, 1), (6, 1), (1, 6), (6, 6))):
-                g.mx[y, x] = True
+    def orb(self, g: Gfx, kind: str, x: float, y: float, t: float):
+        if kind == "sun":
+            for j in range(8):  # 日芒（转动的光芒）
+                a = j * math.pi / 4 + t * 0.6
+                r0, r1 = 7, 9 + (j % 2) * 2
+                pix.dotted(g, x + math.cos(a) * r0, y + math.sin(a) * r0, x + math.cos(a) * r1, y + math.sin(a) * r1, 1)
+            pix.blit(g, SUN[0], x - 4, y - 4)
         else:
-            for y, row in enumerate(("..###...", ".##.....", "##......", "##......", "##......", ".##.....",
-                                     "..###...", "........")):
-                for x, ch in enumerate(row):
-                    g.mx[y, x] = ch == "#"
-            for i, (x, y) in enumerate(((6, 1), (5, 4), (7, 6))):
-                g.mx[y, x] = blink(t + i * 0.43, 1.3, 0.5)
+            pix.blit(g, MOON[0], x - 4, y - 4)
+            g.d.ellipse((x - 1, y - 6, x + 6, y + 3), fill=0)   # 月牙（盈亏）
+
+    def horizon(self, g: Gfx, kind: str, theta: float, t: float):
+        """日出 / 日落：地平线泛光（网点带）"""
+        if kind == "sun" and (theta < 0.35 or theta > math.pi - 0.35):
+            side = 1 if theta < 0.35 else -1
+            k = 1 - (min(theta, math.pi - theta) / 0.35)
+            sx, sy = sky_pos(theta)
+            for j, w in enumerate((30, 20, 12)):  # 霞光：几道横纹
+                ww = w * (0.4 + 0.6 * k)
+                pix.dotted(g, sx - ww, 47 - j * 3, sx + ww, 47 - j * 3, 2 if j else 1, j)
+
+    def mx(self, g: Gfx, t: float, kind: str):
+        if kind == "sun":
+            mx_art(g, """
+..####..
+.######.
+########
+########
+########
+########
+.######.
+..####..
+""" if (t * 2) % 1 < 0.5 else """
+#..##..#
+.######.
+.######.
+########
+########
+.######.
+.######.
+#..##..#
+""")
+        else:
+            mx_art(g, """
+..###...
+.##.....
+##......
+##......
+##......
+.##.....
+..###...
+........
+""")
+            for x, y, ph in ((6, 1, 0.0), (5, 5, 0.33), (7, 6, 0.66)):
+                g.mx[y, x] = (t * 1.3 + ph) % 1 < 0.6
+
+    def labels(self, g: Gfx, e: float, kind: str, extra: str | None = None):
+        n = int(e // self.CYCLE) + 1
+        counter(g, f"第{cn_num(n)}日" if n < 100 else f"{n}日")
+        counter(g, extra or ("服日芒" if kind == "sun" else "服月华"), right=True)
+
+    def scene(self, g: Gfx, t: float, e: float, dt: float, cloud: float = 0.0, flow: float = 1.0):
+        """cloud：遮日的大云盖住的程度（0–1）；flow：光线流到哪"""
+        k = e % self.CYCLE
+        kind, th = self.state(k)
+        night = 0.0
+        if kind == "moon":
+            night = min(1.0, (k - HALF) / 8.0)
+        elif k > HALF - 8:
+            night = 0.0
+        stars(g, t, night * (1.0 - cloud * 0.5))
+        sx, sy = sky_pos(th)
+        self.horizon(g, kind, th, t)
+        self.orb(g, kind, sx, sy, t)
+        # 小事件：白天一行雁 / 夜里流星（按 e）
+        ph = (e % 41) / 5.0
+        if ph < 1:
+            if kind == "sun":
+                for j in range(4):
+                    pix.blit(g, pix.anim(GEESE, t + j * 0.2, 4), lerp(-10, 140, ph) - j * 6, 12 + j * 2 + (j % 2), outline=False)
+            else:
+                x, y = lerp(110, 50, ph), lerp(4, 24, ph)
+                g.d.line((x, y, x + 6, y - 2), fill=1)
+                g.px(x - 1, y + 1)
+        if cloud > 0:  # 大云遮住
+            cx = lerp(150, sx - 14, ease_out(cloud))
+            pix.blit(g, CLOUD_BIG[0], cx, sy - 4)
+        landscape(g, t)
+        self.halo(g, t, k / self.CYCLE)
+        h = self.body(g, t, sx)
+        if flow > 0 and cloud < 0.6:
+            self.streams(g, t, (sx, sy), h, kind, flow)
+        self.mx(g, t, kind)
+        return kind, (sx, sy), h
 
     # ------------------------------------------------------------ 阶段
 
-    def frame(self, g: Gfx, t: float, e: float, cover: float = 0.0):
-        """画一整帧（不含字）；cover：云遮住日月的程度 0..1"""
-        is_day, s, p = self.day(e)
-        if not is_day:
-            stars(g, t, self.seed, n=26, box=(16, 0, 112, 44))
-        edge = 1 - span(min(s, 1 - s), 0.0, 0.12)  # 日出日落
-        self.horizon_glow(g, edge if is_day else edge * 0.4, s < 0.5)
-        x, y = sky_pos(s)
-        if is_day:
-            self.sun(g, x, y, t, r=6 + edge * 1.5)
-        else:
-            self.moon(g, x, y)
-        self.hills(g)
-        amt = (1 - edge) * (1 - cover)
-        self.beams(g, x, y, t, amt, sparse=not is_day)
-        glow = 0.3 + 0.7 * p
-        self.sage(g, glow * (0.5 + 0.5 * amt), t)
-        if cover > 0:  # 云从右边飘来遮住
-            cx = lerp(160, x, ease_out(cover))
-            cloud(g, cx, y + 1, 44, 22, self.seed + 3, fill=0)
-        return is_day, s, p
+    def enter(self, g: Gfx, t: float):
+        dt = self.clock(t)
+        rise = ease_out(span(t, 0.0, 2.0))
+        off = int((1 - rise) * 30)
+        landscape(g, t, off)
+        if t > 2.0:
+            self.body(g, t, 120, eyes_open=t < 3.6)
+        if 1.8 < t < 3.2:  # 峰顶的云散开
+            k = span(t, 1.8, 3.2)
+            for s in (-1, 1):
+                x = DX + s * k * 30
+                pix.blit(g, CLOUD_BIG[0] if k < 0.5 else CLOUDLET[0], x - 13, PEAK_TOP - 22 - k * 4, flip=s < 0)
+        if t > 3.4:  # 太阳露头
+            th = lerp(-0.12, 0.08, ease_out(span(t, 3.4, 6.0)))
+            sx, sy = sky_pos(th)
+            self.horizon(g, "sun", 0.1, t)
+            self.orb(g, "sun", sx, sy, t)
+            landscape(g, t)
+            if 1.8 < t < 3.2:
+                k = span(t, 1.8, 3.2)
+                for s in (-1, 1):
+                    pix.blit(g, CLOUD_BIG[0] if k < 0.5 else CLOUDLET[0], DX + s * k * 30 - 13,
+                             PEAK_TOP - 22 - k * 4, flip=s < 0)
+            self.body(g, t, 120, eyes_open=t < 3.6)
+            if abs(t - 3.4) < dt:
+                self.sparks.burst(118, 40, 12, 20, up=10, life=0.6, gravity=10)
+        self.sparks.step(dt)
+        self.sparks.draw(g)
+        self.mx(g, t, "sun")
+        if t > 4.0:
+            self.labels(g, 0, "sun")
 
     def hold(self, g: Gfx, t: float, e: float):
-        self.frame(g, t, e)
+        dt = self.clock(t)
         k = e % self.CYCLE
-        if e >= self.CYCLE and k < 3.0:  # 天亮，新的一日
-            typewriter(g, 64, 2, f"第{cn_num(int(e // self.CYCLE) + 1)}日", k, cps=5, align="center")
-            if k > 2.4:
-                g.fade(1 - span(k, 2.4, 3.0), (40, 0, 90, 14))
-        self.texts(g, e)
-        self.mx(g, e, t)
-
-    def enter(self, g: Gfx, t: float):
-        rise = ease_out(span(t, 0, 1.6))
-        self.horizon_glow(g, span(t, 1.4, 3.0), True)
-        if t > 2.4:  # 太阳从东边露头
-            x, y = sky_pos(0)
-            k = ease_out(span(t, 2.4, 4.5))
-            self.sun(g, x, lerp(HORIZON + 6, y, k), t, r=7.5)
-        self.hills(g, rise)
-        if t > 1.4:  # 人现身（一团云散开）
-            k = span(t, 1.4, 2.4)
-            self.sage(g, 0.3 * span(t, 3.0, 4.5), t)
-            if k < 1:
-                g.fade(ease_in(k), (SX - 8, SY - 14, SX + 8, SY + 1))
-                for j in range(8):
-                    a = j / 8 * 2 * math.pi
-                    r = 4 + k * 12
-                    g.px(SX + math.cos(a) * r, SY - 5 + math.sin(a) * r * 0.6)
-        self.texts(g, 0, a=span(t, 3.4, 4.5))
-        self.mx(g, 0, t)
-        if t < 2.4:
-            g.mx[:] = False
-            g.mx[7, :] = True
-            g.mx[6, 2:6] = t > 1.4
+        if e >= self.CYCLE and k < 5.0:  # 续：天亮
+            kind, src, h = self.scene(g, t, e, dt, flow=span(k, 1.5, 4.0))
+            if abs(k - 0.1) < dt:
+                self.sparks.burst(src[0], src[1], 16, 26, life=0.8, gravity=0)
+            self.sparks.step(dt)
+            self.sparks.draw(g)
+            n = int(e // self.CYCLE) + 1
+            pop_title(g, 64, 3, f"第{cn_num(n)}日" if n < 100 else f"{n}日", span(k, 0.3, 0.7), t)
+            return
+        kind, src, h = self.scene(g, t, e, dt)
+        self.sparks.step(dt)
+        self.sparks.draw(g)
+        self.labels(g, e, kind)
 
     def interrupt(self, g: Gfx, t: float, e: float):
-        self.frame(g, t, e, cover=ease_in_out(span(t, 0, 1.3)))
-        self.texts(g, e, right="云遮")
-        self.mx(g, e, t)
-        k = span(t, 0.6, 1.3)
-        for y in range(8):
-            for x in range(8):
-                if (x + y) % 2 and rand(x * 8 + y, 5) < k:
-                    g.mx[y, x] = False
+        dt = self.clock(t)
+        q = span(t, 0.0, 1.2)
+        kind, src, h = self.scene(g, t, e, dt, cloud=q, flow=1 - q)
+        self.labels(g, e, kind, "云遮" if t > 0.6 else None)
 
     def resume(self, g: Gfx, t: float, e: float):
-        self.frame(g, t, e, cover=1 - ease_in_out(span(t, 0.2, 1.6)))
-        self.texts(g, e, right="云遮" if t < 0.5 else None)
-        self.mx(g, e, t)
+        dt = self.clock(t)
+        q = 1 - span(t, 0.0, 1.2)
+        kind, src, h = self.scene(g, t, e, dt, cloud=q, flow=span(t, 1.0, 2.0))
+        if abs(t - 1.2) < dt:
+            self.sparks.burst(src[0], src[1], 14, 22, life=0.6, gravity=0)
+        self.sparks.step(dt)
+        self.sparks.draw(g)
+        self.labels(g, e, kind)
 
     def complete(self, g: Gfx, t: float, e: float):
-        is_day, s, p = self.day(e)
-        # 日月同时出现，往中天走，合成一团
-        k = ease_in_out(span(t, 0.3, 2.4))
-        sun0 = sky_pos(s) if is_day else sky_pos(0.15)
-        moon0 = sky_pos(s) if not is_day else sky_pos(0.85)
-        top = (SX, 12)
-        sx_, sy_ = lerp(sun0[0], top[0] - 3, k), lerp(sun0[1], top[1], k)
-        mx_, my_ = lerp(moon0[0], top[0] + 3, k), lerp(moon0[1], top[1], k)
-        stars(g, t, self.seed, n=int(26 * span(t, 0, 1.0)), box=(16, 0, 112, 44))
-        fall = ease_in(span(t, 2.6, 3.4))
-        if t < 2.6:
-            self.sun(g, sx_, sy_, t, r=6)
-            if not is_day or t > 0.3:
-                self.moon(g, mx_, my_)
-            if t > 2.2:  # 合璧闪光
-                r = 8 + span(t, 2.2, 2.6) * 8
-                g.d.ellipse((top[0] - r, top[1] - r, top[0] + r, top[1] + r), fill=1)
-        elif t < 3.4:  # 光团落进身子
-            y = lerp(top[1], SY - 6, fall)
-            r = 8 * (1 - fall) + 2
-            g.d.ellipse((SX - r, y - r, SX + r, y + r), fill=1)
-            for j in range(10):
-                a = j / 10 * 2 * math.pi + t
-                g.d.line((SX + math.cos(a) * (r + 2), y + math.sin(a) * (r + 2), SX + math.cos(a) * (r + 6),
-                          y + math.sin(a) * (r + 6)), fill=1)
-        self.hills(g)
-        glow = 1.0 if t > 3.4 else 0.6
-        self.sage(g, glow, t)
-        if t > 3.4:  # 周身放光
-            gl = ease_out(span(t, 3.4, 4.2))
-            for j in range(16):
-                a = j / 16 * 2 * math.pi + t * 0.3
-                r0, r1 = 12, 12 + 14 * gl * (0.6 + 0.4 * math.sin(t * 5 + j))
-                g.d.line((SX + math.cos(a) * r0, SY - 6 + math.sin(a) * r0 * 0.8, SX + math.cos(a) * r1,
-                          SY - 6 + math.sin(a) * r1 * 0.8), fill=1)
-            typewriter(g, 64, 2, "日月合璧", t - 3.6, cps=5, align="center")
-        if t < 1.2:
-            self.texts(g, e, a=1 - span(t, 0.2, 1.2))
-        # 点阵：日、月各在一边，合到中间
-        c = int(round(lerp(0, 3, k)))
-        g.mx[3:5, c:c + 2] = True
-        g.mx[3:5, 6 - c:8 - c] = True
-        if t > 2.4:
-            r = (t - 2.4) * 4
-            for y in range(8):
-                for x in range(8):
-                    if abs(math.hypot(x - 3.5, y - 3.5) - r % 6) < 0.7:
-                        g.mx[y, x] = True
-        g.mx_level = 6 if 2.3 < t < 2.8 else 1
+        dt = self.clock(t)
+        stars(g, t, 0.6)
+        q = ease_in_out(span(t, 0.3, 2.4))
+        top = (DX, 10)
+        sx, sy = lerp(110, top[0] + 3, q), lerp(30, top[1], q)
+        mx_, my = lerp(10, top[0] - 3, q), lerp(30, top[1], q)
+        if t < 2.4:
+            self.orb(g, "sun", sx, sy, t)
+            self.orb(g, "moon", mx_, my, t)
+        landscape(g, t)
+        drop = ease_in(span(t, 2.8, 3.6))
+        cx, cy = top[0], lerp(top[1], PEAK_TOP - 12, drop)
+        if 2.4 <= t < 3.6:  # 合成一团强光，落进身体
+            r = 4 + math.sin(t * 20) * 1
+            g.d.ellipse((cx - r, cy - r, cx + r, cy + r), fill=1)
+            for j in range(12):
+                a = j * math.pi / 6 + t * 2
+                pix.dotted(g, cx + math.cos(a) * (r + 2), cy + math.sin(a) * (r + 2), cx + math.cos(a) * (r + 7),
+                           cy + math.sin(a) * (r + 7), 2, int(t * 10))
+        h = dao(g, DX, PEAK_TOP, SIT if t < 3.6 else P(legs="sit", b=(110, 30, "palm"), f=(70, 150, "palm"),
+                                                          face="happy"), t)
+        if t > 3.6:  # 周身放光
+            for j in range(3):
+                r = ((t - 3.6) * 14 + j * 8) % 24 + 6
+                ring(g, DX, PEAK_TOP - 17, r, dotted=2)
+        if abs(t - 2.4) < dt:
+            pix.flash(g)
+            self.sparks.burst(cx, cy, 24, 36, life=1.0, gravity=10)
+        if abs(t - 3.6) < dt:
+            self.sparks.burst(DX, PEAK_TOP - 17, 20, 30, up=10, life=0.8, gravity=20)
+        if 2.4 < t < 2.7 or 3.6 < t < 3.8:
+            pix.shake(g, t, 1.2)
+        self.sparks.step(dt)
+        self.sparks.draw(g)
+        # 点阵：日月从两边合到中间
+        if t < 2.4:
+            d = int(round(lerp(3, 0, q)))
+            for yy in range(3, 5):
+                for xx in (3 - d, 4 + d):
+                    if 0 <= xx < 8:
+                        g.mx[yy, xx] = True
+        else:
+            mx_ring(g, (t - 2.4) * 4 % 5)
+            g.mx[3:5, 3:5] = True
+            g.mx_level = 1 + int(6 * (1 - span(t, 2.4, 3.8)))
+        if t > 3.0:
+            pop_title(g, 96, 3, "日月合璧", span(t, 3.0, 3.4), t)
+        else:
+            n = int(e // self.CYCLE)
+            counter(g, f"第{cn_num(max(n, 1))}日" if n < 100 else f"{n}日")

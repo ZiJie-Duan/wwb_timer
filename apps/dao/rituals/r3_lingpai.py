@@ -1,294 +1,431 @@
-"""令牌拍案：法师执五雷令牌拍击法案发号施令，东南西北中五营兵马的令旗一面面应令而至。
+"""令牌拍案：小道士站在法案边，抓起五雷令牌高高举起、“啪”地拍在案上——案面一震、尘起、火星迸、旗筒跳；
+五营令旗随计时一面面飞来插进旗筒。
 
-令牌（五雷令牌）木制长方，正面刻“令”或“五雷号令”，明《上清灵宝济度大成金书》载其以雷击枣木制成。
-行法时以令牌击案，调遣兵将；民间道坛与闾山法有“五营兵马”（东南西北中五营）的说法。
+五雷令牌为长方木牌，正面刻“令”或“五雷号令”，明《上清灵宝济度大成金书》载其以雷击枣木制成。
+行法时以令牌击案、调遣兵将。民间道坛与闾山法有东、南、西、北、中“五营兵马”的说法。
+
+入场：法案上立着令牌，小道士走到案边，抓起令牌举过头，第一拍：冲击线、扬尘、震屏；桌帷上现“五营兵马”。
+持续：每 10 秒拍一次案（举起 → 一顿 → 猛拍 → 余震），拍案之间令牌边框上一点灵光绕行，牌顶冒灵气。
+      一轮 600 秒，东南西北中五营令旗各在一次拍案后飞来插进旗筒（桌帷上写“某营兵马到”）。
+      续：五面令旗一齐飞出画外（“五营齐发”），旗筒空了，从头点兵。
+中断：令牌向后倒下卧在案上，令旗垂下，写“收令”。  恢复：手把令牌扶起，灵光一闪。
+圆满：连拍三下，一下比一下重，五营令旗齐到，令牌放光，令旗升天，题“五雷号令”。
 """
 from __future__ import annotations
 
 import math
 
-from ..engine.anim import blink, clamp, ease_in, ease_in_out, ease_out, ease_out_back, ease_out_bounce, lerp, rand, span
-from ..engine.cn import cn_num
+from ..engine import pix
+from ..engine.anim import ease_in, ease_out, ease_out_back, lerp, span
+from ..engine.chars import daoshi
 from ..engine.gfx import Gfx
 from ..engine.scene import Ritual, register
-from .r3_kit import nth, round_of, sleeve, sparkle
+from .r3_kit import (FLOOR, Clock, art, banner, banner_text, crossed, floor, hit, mx_ring, pose_arm, put,
+                     rays, rot_spr, round_of, sparkle)
 
-CX = 64
-TOP = 51                  # 案面
-CW, CH = 26, 32           # 令牌宽高
-SLAM = 20.0               # 每隔多少秒拍一次
-FLAGS = [("东", 3, 0), ("南", 19, 0), ("西", 109, 0), ("北", 125, 0), ("中", 64, 1)]
-ARRIVE = [i * 120 + 31.05 for i in range(5)]   # 本轮内各营到达时刻
-RENEW = 4.0
+DX = 30
+TX0, TX1, TY = 40, 112, 40          # 法案：左右、桌面 y
+PX = 50                             # 令牌立在案上的中心 x
+HOLDER = 92                         # 旗筒中心 x
+CYCLE = 600.0
+SLAM = 10.0
+YING = ["东营", "南营", "西营", "北营", "中营"]
+ARRIVE = [100 + 110 * i for i in range(5)]     # 本轮第几秒那一拍之后到一营（取最近的拍）
+RENEW = 6.0
 
-
-def slam_pose(u: float) -> tuple[float, float, float]:
-    """一拍之内（u 秒）：→ (令牌离案高度, 手的进出 0..1, 冲击 0..1)"""
-    hand = span(u, 0, 0.4) * (1 - span(u, 1.5, 2.0))
-    if u < 0.4:
-        return 0.0, ease_out(hand), 0.0
-    if u < 0.9:
-        return 14 * ease_out(span(u, 0.4, 0.9)), 1.0, 0.0
-    if u < 1.02:
-        return 14 * (1 - ease_in(span(u, 0.9, 1.02))), 1.0, 0.0
-    return 0.0, ease_in_out(hand), 1 - span(u, 1.02, 1.6)
-
-
-def ling(g: Gfx, x: float, cy: float):
-    """手写粗笔“令”字（像素字体放大太糊）"""
-    w = 2
-    g.d.line((x - 9, cy - 3, x, cy - 10), fill=1, width=w)        # 撇
-    g.d.line((x, cy - 10, x + 9, cy - 3), fill=1, width=w)        # 捺
-    g.d.line((x - 1, cy - 6, x + 1, cy - 4), fill=1, width=w)     # 点
-    g.d.line((x - 6, cy, x + 5, cy), fill=1, width=w)             # 横撇：横
-    g.d.line((x + 5, cy, x - 1, cy + 6), fill=1, width=w)         #        撇
-    g.d.line((x - 1, cy + 7, x + 1, cy + 9), fill=1, width=w)    # 点
-
-
-class Card:
-    """令牌：底边中点 (x, y)，h 为可见高度比例（1 = 立起，接近 0 = 卧倒）"""
-
-    @staticmethod
-    def draw(g: Gfx, x: float, y: float, h: float = 1.0, tilt: float = 0.0, glow: float = 0.0, shine: float = -1.0):
-        hh = max(3, CH * h)
-        x0, x1 = x - CW / 2, x + CW / 2
-        y1 = y
-        y0 = y - hh
-        top = [(x0 + 3 + tilt, y0 + 3 * h), (x0 + 7 + tilt, y0), (x1 - 7 + tilt, y0), (x1 - 3 + tilt, y0 + 3 * h)]
-        pts = [(x0, y1), (x0 + tilt, y0 + 5 * h)] + top + [(x1 + tilt, y0 + 5 * h), (x1, y1)]
-        g.d.polygon(pts, fill=0, outline=1)
-        if h > 0.6:
-            g.d.polygon([(x0 + 3, y1 - 3), (x0 + 3 + tilt, y0 + 6 * h), (x1 - 3 + tilt, y0 + 6 * h),
-                         (x1 - 3, y1 - 3)], outline=1)
-            ling(g, x + tilt / 2, y0 + 18 * h)
-            if 0 <= shine <= 1:  # 一点灵光沿令牌边框走过
-                per = [(x0, y1 - 1), (x0, y0 + 5 * h), (x0 + 7, y0), (x1 - 7, y0), (x1, y0 + 5 * h), (x1, y1 - 1)]
-                segs = [math.hypot(b[0] - a[0], b[1] - a[1]) for a, b in zip(per, per[1:])]
-                d = shine * sum(segs)
-                for (a, b), ln in zip(zip(per, per[1:]), segs):
-                    if d <= ln:
-                        f = d / ln
-                        sparkle(g, a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f, 2)
-                        break
-                    d -= ln
-        else:  # 卧倒的令牌：只看到侧面一条
-            g.d.line((x0 + 2, y0 + 1, x1 - 2, y0 + 1), fill=1)
+def _plaque():
+    """五雷令牌 15×21：拱顶、双线边框、正中阴刻一个“令”字（取 12px 字形逐像素刻上去）、底座一道"""
+    import numpy as np
+    from ..engine.chars import Part
+    from ..engine.gfx import Sprite, _text_img
+    p = Part(15, 21)
+    p.shape("polygon", [(0, 3), (3, 0), (11, 0), (14, 3), (14, 20), (0, 20)], fill=1)
+    p.d.line((3, 1, 11, 1), fill=0)                  # 拱顶内线
+    p.px(2, 2, 0), p.px(12, 2, 0)
+    p.d.line((1, 3, 1, 16), fill=0)                  # 边框
+    p.d.line((13, 3, 13, 16), fill=0)
+    p.d.line((1, 16, 13, 16), fill=0)
+    p.d.line((0, 18, 14, 18), fill=0)                # 底座
+    glyph = np.array(_text_img("令", 12, 1), bool)[:11, :11]
+    for y, x in zip(*np.nonzero(glyph)):
+        p.px(int(x) + 2, int(y) + 3, 0)
+    p.px(7, 15, 0)
+    p.dither([(11, 19), (14, 19), (14, 20), (11, 20)], 0.5, 0)
+    s = Sprite(on=np.array(p.on, bool), mask=np.array(p.mk, bool))
+    s.anchor = (7, 20)
+    s.pts = {"grip": (0, 11), "top": (7, 0)}
+    return s
 
 
-def table(g: Gfx, dy: float = 0.0, text: str = "五营兵马"):
-    y = TOP + dy
-    g.d.rectangle((14, y, 114, y + 2), fill=1)
-    g.d.rectangle((18, y + 3, 110, max(64, y + 6)), fill=0, outline=1)   # 案围（桌帷）
-    g.d.line((18, y + 5, 110, y + 5), fill=1)
-    for x in list(range(22, 36, 4)) + list(range(94, 108, 4)):  # 桌帷两角的回纹
-        g.d.rectangle((x, y + 8, x + 2, y + 10), outline=1)
-    g.text(CX, y + 6, text, size=8, align="center")
+PLAQUE = _plaque()
+
+HOLD = art("""
+#########
+ #######
+ .......
+ ###.###
+ ##.####
+ .......
+ #######
+#########
+""", anchor=(4, 7))
+
+FLAG = [art("""
+######
+#####
+###
+#####
+######
+""", anchor=(0, 0)), art("""
+#####
+######
+####
+######
+#####
+""", anchor=(0, 0))]
+
+DROOP = art("""
+##
+###
+###
+##
+##
+#
+""", anchor=(0, 0))
+
+BURNER = art("""
+  #  #  #
+  #  #  #
+#.#######.#
+###########
+ ######.#.
+ #####.#.#
+  #######
+  #     #
+""", anchor=(5, 7))
+
+MX_PLAQUE = """
+.####.
+######
+#....#
+#.##.#
+#....#
+######
+"""
 
 
-def flag(g: Gfx, x: float, base: float, ch: str, t: float, wave: float = 1.0, h: int = 30, seed: float = 0,
-         left: bool = False):
-    """令旗：杆 + 方旗面（反白写营名）+ 飘动的燕尾；left = 旗面朝左"""
-    top = base - h
-    sd = -1 if left else 1
-    g.d.line((x, base, x, top - 1), fill=1)
-    g.d.rectangle((x - 1, top - 3, x + 1, top - 2), fill=1)          # 杆头
-    x0 = x + sd
-    g.d.rectangle((min(x0, x0 + sd * 11), top, max(x0, x0 + sd * 11), top + 10), fill=1)
-    g.text(x0 + sd * 6 - 3.5, top + 2, ch, size=8, fill=0)
-    # 燕尾：随风起伏
-    k1 = math.sin(t * 5 + seed) * 1.5 * wave + 2 * (1 - wave)
-    k2 = math.sin(t * 5 + seed - 1.2) * 1.5 * wave + 3 * (1 - wave)
-    xe = x0 + sd * 11
-    g.d.polygon([(xe, top), (xe + sd * 6, top + k1), (xe + sd * 3, top + 5 + k2 * 0.5), (xe + sd * 6, top + 10 + k2),
-                 (xe, top + 10)], fill=1)
+def table(g: Gfx, t: float, jump: float = 0.0):
+    """法案：案面（两道线）、案腿、桌帷（深色，镶边、下摆流苏）"""
+    j = int(round(jump))
+    g.d.rectangle((TX0 - 2, TY - j, TX1 + 2, TY + 2 - j), fill=1)
+    g.d.line((TX0 - 1, TY + 1 - j, TX1 + 1, TY + 1 - j), fill=0)
+    g.d.rectangle((TX0, TY + 3, TX1, FLOOR - 1), fill=0, outline=1)
+    g.d.line((TX0 + 2, TY + 4, TX1 - 2, TY + 4), fill=1)
+    for x in range(TX0 + 2, TX1 - 1, 2):     # 流苏
+        g.px(x, FLOOR - 1, 0)
+    g.d.rectangle((TX0, FLOOR - 1, TX0 + 2, FLOOR), fill=1)
+    g.d.rectangle((TX1 - 2, FLOOR - 1, TX1, FLOOR), fill=1)
+
+
+def flags(g: Gfx, n: int, t: float, droop: bool = False, lift: float = 0.0, jump: float = 0.0, new: int = -1,
+          newk: float = 1.0):
+    """旗筒里的令旗（扇形插开），n = 已到几面；new 号那面正在飞来（newk 0..1）"""
+    j = int(round(jump))
+    base = (HOLDER, TY - 8 - j)
+    tops = [(HOLDER - 14, 16), (HOLDER - 7, 12), (HOLDER, 10), (HOLDER + 7, 12), (HOLDER + 14, 16)]
+    for i in range(n):
+        tx, ty = tops[i]
+        sx, sy = base[0] + (tx - base[0]) * 0.25, base[1]
+        off = lift * (60 + i * 6)
+        if i == new:
+            off += (1 - ease_out_back(newk)) * 46
+        ty -= off
+        sy -= off
+        if droop:
+            ty += 3
+        g.d.line((sx, sy, tx, ty), fill=1)
+        g.px(tx, ty - 1)
+        f = DROOP if droop else FLAG[int(t * 4 + i) % 2]
+        put(g, f, tx + (0 if droop else 1), ty)
+        # 各营旗面花样：东实、南网点、西空心、北一道、中十字
+        if not droop:
+            if i == 1:
+                for yy in range(1, 4):
+                    g.px(tx + 2 + yy % 2, ty + yy, 0)
+            elif i == 2:
+                g.d.line((tx + 2, ty + 2, tx + 3, ty + 2), fill=0)
+            elif i == 3:
+                g.d.line((tx + 1, ty + 2, tx + 4, ty + 2), fill=0)
+            elif i == 4:
+                g.px(tx + 3, ty + 1, 0), g.px(tx + 3, ty + 3, 0), g.px(tx + 2, ty + 2, 0), g.px(tx + 4, ty + 2, 0)
+    put(g, HOLD, base[0], base[1] + 7)
 
 
 @register
-class CommandToken(Ritual):
+class LingpaiRitual(Ritual):
     id = "r3.lingpai"
     name = "令牌拍案"
-    desc = "执五雷令牌拍案发令，案震尘起；东南西北中五营令旗一面面应令而至，一轮满则五营齐发"
-    T = {"enter": 3.4, "interrupt": 1.5, "resume": 1.6, "complete": 5.5}
-    CYCLE = 600.0
+    desc = "小道士抓起五雷令牌高举、猛拍法案，案震尘起火星迸；五营令旗随计时一面面飞来插进旗筒"
+    T = {"enter": 6.0, "interrupt": 1.6, "resume": 1.8, "complete": 5.8}
+    CYCLE = CYCLE
 
-    # ------------------------------------------------------------ 零件
+    def setup(self):
+        self.sparks = pix.Sparks(self.seed)
+        self.puffs = pix.Puffs(self.seed + 1)
+        self.clock = Clock()
 
-    def arrived(self, k: float) -> list[float]:
-        """各营令旗的到达进度（0..1）"""
-        return [clamp((k - a) / 1.2) for a in ARRIVE]
+    # ------------------------------------------------------------ 公用
 
-    def flags(self, g: Gfx, arr: list[float], t: float, wave: float = 1.0, lift: float = 0.0, dy: float = 0.0):
-        for i, (ch, x, center) in enumerate(FLAGS):
-            p = arr[i]
-            if p <= 0:
-                continue
-            q = ease_out_back(p)
-            if center:
-                base, h = 18 + dy, 18
+    def arrived(self, k: float) -> int:
+        return sum(1 for a in ARRIVE if k >= self.slam_after(a) + 0.6)
+
+    @staticmethod
+    def slam_after(a: float) -> float:
+        """a 秒之后最近的一拍的拍下时刻"""
+        return math.ceil((a - 1.4) / SLAM) * SLAM + 1.4
+
+    def slam_pose(self, u: float):
+        """一拍（u = 本拍已过秒数）→ (手臂, 令牌在手里的角度, 抬高, 表情)。1.4 秒时拍下"""
+        if u < 0.5:        # 握住（令牌立在案上）
+            return "reach", 0, 0, "normal"
+        if u < 1.0:        # 举起
+            return "up60", 0, 0, "normal"
+        if u < 1.3:        # 一顿（举到最高，蓄力）
+            return "up90", 0, 0, "wow"
+        if u < 1.4:        # 拍下（中途帧）
+            return "up30", 0, 0, "wow"
+        return "reach", 0, 0, "wow" if u < 2.0 else "normal"
+
+    def actor(self, g: Gfx, t: float, arm: str, tilt: float, face: str, plaque=True, dy=0, glow=False,
+              border: float = -1.0, lying: bool = False):
+        """小道士 + 手里（或立在案上）的令牌"""
+        out = {}
+
+        def prop(g2, h):
+            if not plaque:
+                return
+            spr = rot_spr(PLAQUE, tilt)
+            gx, gy = spr.pts["grip"]
+            ax, ay = spr.anchor
+            if arm == "reach":   # 手扶着立在案上的令牌
+                x, y = PX, TY + 1 + dy
             else:
-                base, h = TOP + dy, 32 if i % 2 else 38
-            rise = (1 - q) * (h + 14) + lift * (70 + i * 6)
-            flag(g, x - (8 if center else 0), base - rise, ch, t, wave, h, i * 1.3, left=(i in (2, 3)))
+                x, y = h[0] + (ax - gx), h[1] + (ay - gy)
+            out["pts"] = put(g2, spr, x, y)
+            out["xy"] = (x, y)
+            if 0 <= border <= 1:   # 边框上绕行的一点灵光
+                bx0, by0 = x - ax + 1, y - ay + 3
+                per = [(bx0 + 2 + i, by0 - 2) for i in range(9)] + [(bx0 + 12, by0 + i) for i in range(14)] + \
+                      [(bx0 + 12 - i, by0 + 13) for i in range(13)] + [(bx0, by0 + 13 - i) for i in range(14)]
+                p = per[int(border * len(per)) % len(per)]
+                g2.px(*p, 1)
+                g2.px(*per[(int(border * len(per)) + 1) % len(per)], 1)
+            if glow:
+                sparkle(g2, x - ax + 2, y - ay + 1, 2)
+        if lying:
+            pose_arm(g, DX, "low", t, "fist")
+            spr = rot_spr(PLAQUE, -90)
+            out["pts"] = put(g, spr, PX + 4, TY)
+        else:
+            pose_arm(g, DX, arm, t, "fist", face=face, prop=prop, prop_behind=False)
+        return out
 
-    def hand(self, g: Gfx, x: float, y: float, a: float):
-        """从右上方伸来捏住令牌顶的手；a 0..1 为伸入程度"""
-        if a <= 0:
-            return
-        hx, hy = lerp(x + 60, x + 4, a), lerp(y - 40, y - 3, a)
-        sleeve(g, hx + 6, hy - 4, -0.6, length=60, w0=12, w1=30, shade=0.25)
-        g.d.rounded_rectangle((hx - 5, hy - 5, hx + 7, hy + 4), radius=3, fill=0, outline=1)
-        g.d.line((hx - 4, hy - 1, hx + 1, hy - 1), fill=1)
-        g.d.line((hx - 4, hy + 2, hx + 1, hy + 2), fill=1)
+    def impact(self, g: Gfx, t: float, power: float = 1.0):
+        """拍下的一瞬：冲击线、扬尘、火星"""
+        x, y = PX, TY
+        self.sparks.burst(x, y - 2, int(8 + 8 * power), 30 + 14 * power, up=16, life=0.6, gravity=90)
+        for s in (-1, 1):
+            self.puffs.emit(x + s * 9, y - 2, vx=s * 16 * power, vy=-3, life=0.6, rmax=1.0 + power * 0.4)
 
-    def impact(self, g: Gfx, s: float, power: float = 1.0):
-        """拍下的冲击：两侧震波线 + 扬尘"""
-        if s <= 0:
-            return
-        f = 1 - s
-        for side in (-1, 1):
-            for j in range(3):
-                x0 = CX + side * (CW / 2 + 3 + f * 16 * power + j * 4)
-                y0 = TOP - 3 - j * 4
-                g.d.line((x0, y0, x0 + side * 4 * power, y0 - 2 - j), fill=1)
-        for j in range(8):
-            a = math.pi + rand(j, 3) * math.pi
-            r = f * (10 + 14 * rand(j, 4)) * power
-            g.px(CX + math.cos(a) * r * 1.6, TOP - 1 + math.sin(a) * r * 0.4)
+    def impact_lines(self, g: Gfx, k: float, power: float = 1.0):
+        """冲击线（k 0..1）"""
+        if 0 <= k < 1:
+            x, y = PX, TY - 2
+            r0 = 8 + k * 10 * power
+            for a in (-160, -135, -110, -70, -45, -20):
+                c, s = math.cos(math.radians(a)), math.sin(math.radians(a))
+                g.d.line((x + c * r0, y + s * r0 * 0.7, x + c * (r0 + 4), y + s * (r0 + 4) * 0.7), fill=1)
+            hit(g, x - 10, y - 2, k)
+            hit(g, x + 10, y - 2, k)
 
-    def panel_text(self, k: float) -> str:
-        for i, a in enumerate(ARRIVE):
-            if 0 <= k - a < 5:
-                return f"{FLAGS[i][0]}营兵马到"
-        return "五营兵马"
+    def fx(self, g: Gfx, dt: float):
+        self.puffs.step(dt)
+        self.puffs.draw(g)
+        self.sparks.step(dt)
+        self.sparks.draw(g)
 
-    def mx(self, g: Gfx, arr: list[float], lift: float, shock: float, t: float):
-        g.mx[1, 3:5] = True
-        g.mx[2:7, 2] = True
-        g.mx[2:7, 5] = True
-        g.mx[6, 2:6] = True
-        g.mx_set(3, 3)
-        g.mx_set(4, 4)
-        if lift > 0.3:  # 令牌被提起
-            g.mx[:] = False
-            g.mx[0, 3:5] = True
-            g.mx[1:5, 2] = True
-            g.mx[1:5, 5] = True
-            g.mx[4, 2:6] = True
-        g.mx[7, :] = True
-        for i, (x, y) in enumerate(((0, 2), (1, 4), (6, 4), (7, 2), (0, 0))):
-            if arr[i] >= 1:
-                if i == 4:
-                    g.mx_set(7, 0)
-                g.mx_set(x, y)
-        if shock > 0.6:
-            g.mx[7, :] = blink(t, 0.1)
-            g.mx_set(1, 6)
-            g.mx_set(6, 6)
+    def cloth(self, g: Gfx, s: str):
+        g.text((TX0 + TX1) / 2, TY + 6, s, align="center")
+
+    def mx(self, g: Gfx, n: int, lift: int = 0, slam: bool = False):
+        g.mx_blit(MX_PLAQUE, 1, 1 - lift)
+        for i in range(n):
+            g.mx[0, 7] = g.mx[2, 7] = g.mx[4, 7] = g.mx[6, 7] = False
+        for i, (x, y) in enumerate(((7, 1), (7, 3), (7, 5), (6, 7), (4, 7))):
+            if i < n:
+                g.mx[y, x] = True
+        if slam:
+            g.mx[7, :] = True
+
+    def burner(self, g: Gfx, t: float, jump: float = 0.0):
+        put(g, BURNER, TX1 - 8, TY - 1 - int(round(jump)))
+        x = TX1 - 8
+        for i in range(3):   # 三缕细烟
+            yy = TY - 8 - i * 3 - (t * 4) % 3
+            g.px(x - 2 + i * 2 + int(math.sin(t * 2 + i) * 1.2), yy)
 
     # ------------------------------------------------------------ 阶段
 
-    def frame(self, g: Gfx, t: float, e: float, k: float, arr: list[float], u: float | None, text: str | None = None,
-              wave: float = 1.0, h: float = 1.0):
-        lift, hand, shock = slam_pose(u) if u is not None else (0.0, 0.0, 0.0)
-        dy = 1 if shock > 0.85 else 0
-        self.flags(g, arr, t, wave, dy=dy)
-        table(g, dy, text if text is not None else self.panel_text(k))
-        self.impact(g, shock)
-        shine = (k % 7.0) / 1.2 if k % 7.0 < 1.2 and lift == 0 else -1
-        Card.draw(g, CX, TOP - lift + dy, h, shine=shine)
-        for j in range(4):  # 令牌上袅袅的灵气
-            q = (t * 0.5 + j / 4) % 1.0
-            g.px(CX - 9 + j * 6 + math.sin(t * 2 + j) * 2, TOP - CH - 2 - q * 14 + dy - lift)
-        self.hand(g, CX, TOP - lift - CH + dy, hand)
-        self.mx(g, arr, lift / 14, shock, t)
-        g.mx_level = 5 if shock > 0.85 else 1
+    def scene(self, g: Gfx, t: float, e: float, dt: float, k: float, n: int, u: float, power: float = 1.0,
+              new: int = -1, newk: float = 1.0, text: str | None = None):
+        """一帧：u = 本拍已过秒数（None = 不拍，只扶着令牌）"""
+        floor(g)
+        jump = 0.0
+        if u is not None and 1.4 <= u < 1.75:
+            jump = math.sin(span(u, 1.4, 1.75) * math.pi) * 2 * power
+        arm, tilt, _, face = self.slam_pose(u) if u is not None else ("reach", 0, 0, "normal")
+        if u is not None and crossed(u, dt, 1.4):
+            self.impact(g, t, power)
+        self.actor(g, e, arm, tilt, face, border=((e * 0.35) % 1) if (u is None or u > 2.2) else -1)
+        table(g, t)
+        self.burner(g, e, jump * 1.5)
+        flags(g, n, e, jump=jump * 1.5, new=new, newk=newk)
+        if u is not None and arm == "up30":   # 拍下的中途：残影
+            from .r3_kit import smear
+            smear(g, DX + 6, FLOOR - 26, 18, 6, -100, -10, solid=0.5)
+        if u is not None and 1.4 <= u < 1.8:
+            self.impact_lines(g, (u - 1.4) / 0.4, power)
+        if u is not None and 1.4 <= u < 1.6:
+            pix.shake(g, t, 1.0 + power * 0.6)
+        if u is None or u > 2.2:   # 牌顶冒灵气
+            if int(e * 2.5) != int((e - dt) * 2.5):
+                self.puffs.emit(PX, TY - 23, vx=0, vy=-6, life=1.4, rmax=1.2, spread=2)
+        self.fx(g, dt)
+        self.cloth(g, text or "五营兵马")
+        return jump
 
     def enter(self, g: Gfx, t: float):
-        # 手持令牌从上方落下立于案上（第一拍），旗还没来
-        tab = ease_out(span(t, 0, 0.6))
-        if t < 1.0:
-            y = lerp(-10, TOP - 14, ease_out(span(t, 0.2, 1.0)))
-        elif t < 1.14:
-            y = lerp(TOP - 14, TOP, ease_in(span(t, 1.0, 1.14)))
-        else:
-            y = TOP
-        shock = 1 - span(t, 1.14, 1.8) if t > 1.14 else 0
-        table(g, (1 - tab) * 14 + (1 if 0 < shock and shock > 0.85 else 0), "五营兵马" if t > 2.0 else "")
-        self.impact(g, shock)
-        if t > 0.2:
-            Card.draw(g, CX, y)
-        hand = 1 - span(t, 1.6, 2.4)
-        if t > 0.2:
-            self.hand(g, CX, y - CH, ease_out(span(t, 0.2, 0.5)) * hand if t < 0.5 else hand)
-        arr = [0.0] * 5
-        self.mx(g, arr, 0, shock, t)
-        g.mx_level = 5 if shock > 0.85 else 1
+        dt = self.clock(t)
+        if t < 2.2:
+            floor(g)
+            x = lerp(-14, DX, ease_out(span(t, 0, 2.2)))
+            daoshi(g, x, FLOOR, "walk", t)
+            put(g, PLAQUE, PX, TY + 1)
+            table(g, t)
+            self.burner(g, t)
+            flags(g, 0, t)
+            self.fx(g, dt)
+            self.cloth(g, "法案")
+            self.mx(g, 0)
+            return
+        u = t - 2.2 + 0.0
+        self.scene(g, t, t, dt, 0, 0, u * 1.0, power=1.2, text="五营兵马" if u > 1.4 else "法案")
+        self.mx(g, 0, slam=1.4 <= u < 1.6)
 
     def hold(self, g: Gfx, t: float, e: float):
-        n, k, _ = round_of(e, self.CYCLE)
-        if n > 1 and k < RENEW:
-            # 续：五营领令齐发（令旗飞起出画），案上只剩令牌，随即重新点兵
-            lift = ease_in(span(k, 0.3, 2.0))
-            self.flags(g, [1.0] * 5, t, 1.0, lift=lift)
-            table(g, 0, "五营齐发" if k < 3.0 else "五营兵马")
-            Card.draw(g, CX, TOP, glow=1 - span(k, 0, 1.5))
-            self.mx(g, [1.0 if k < 1.5 else 0.0] * 5, 0, 0, t)
+        dt = self.clock(t)
+        n_round, k, _ = round_of(e, CYCLE)
+        if e >= CYCLE and k < RENEW:
+            self.renew(g, k, t, e, dt)
             return
-        u = (k - 10) % SLAM
-        self.frame(g, t, e, k, self.arrived(k), u)
+        n = self.arrived(k)
+        u = e % SLAM
+        new, newk, text = -1, 1.0, None
+        for i, a in enumerate(ARRIVE):   # 刚到的那营：令旗从天上飞来插进旗筒
+            s = self.slam_after(a)
+            if s <= k < s + 4.0:
+                new, newk = i, span(k - s, 0.0, 0.6)
+                n = i + 1
+                text = f"{YING[i]}兵马到"
+        self.scene(g, t, e, dt, k, n, u, new=new, newk=newk, text=text)
+        if new >= 0 and crossed(newk, dt, 1.0) or (new >= 0 and 0.6 <= k - self.slam_after(ARRIVE[new]) < 0.6 + dt):
+            tops = [(HOLDER - 14, 16), (HOLDER - 7, 12), (HOLDER, 10), (HOLDER + 7, 12), (HOLDER + 14, 16)]
+            self.sparks.burst(tops[new][0] + 3, tops[new][1] + 2, 6, 18, life=0.5)
+        self.mx(g, n, lift=1 if 0.5 <= u < 1.4 else 0, slam=1.4 <= u < 1.6)
+
+    def renew(self, g: Gfx, k: float, t: float, e: float, dt: float):
+        """k ∈ [0, RENEW)：五营令旗一齐飞出画外（五营齐发），旗筒空，再从头点兵"""
+        floor(g)
+        self.actor(g, e, "up60" if k < 2.6 else "reach", 0, "happy" if k < 3.5 else "normal", glow=k < 2.6)
+        table(g, t)
+        self.burner(g, e)
+        lift = ease_in(span(k, 0.6, 2.4))
+        flags(g, 5 if k < 2.4 else 0, e, lift=lift)
+        if k < 2.4 and int(k * 20) % 2 == 0:
+            for i, x in enumerate((HOLDER - 14, HOLDER - 7, HOLDER, HOLDER + 7, HOLDER + 14)):
+                self.sparks.burst(x, 20 - lift * 60 + 10, 1, 8, life=0.4, gravity=-10)
+        self.fx(g, dt)
+        self.cloth(g, "五营齐发" if k < 3.5 else "五营兵马")
+        self.mx(g, 5 if k < 2.4 else 0)
 
     def interrupt(self, g: Gfx, t: float, e: float):
-        _, k, _ = round_of(e, self.CYCLE)
-        arr = self.arrived(k)
-        p = ease_out_bounce(span(t, 0.2, 1.0))
-        wave = 1 - span(t, 0, 1.0)
-        self.flags(g, arr, t, wave)
-        table(g, 0, "收令暂歇" if t > 0.5 else self.panel_text(k))
-        Card.draw(g, CX, TOP, 1 - 0.92 * p)
-        self.mx(g, arr, 0, 0, t)
+        dt = self.clock(t)
+        floor(g)
+        n = self.arrived(e % CYCLE)
+        fall = span(t, 0.2, 0.7)
+        if fall < 1:
+            self.actor(g, e, "reach", -int(fall * 90 / 15) * 15 if fall > 0 else 0, "normal")
+        else:
+            self.actor(g, e, "low", 0, "normal", lying=True)
+        if crossed(t, dt, 0.7):
+            self.puffs.emit(PX + 8, TY - 2, vx=10, vy=-3, life=0.6, rmax=1.5)
+            self.puffs.emit(PX - 4, TY - 2, vx=-10, vy=-3, life=0.6, rmax=1.5)
+        table(g, t)
+        self.burner(g, e)
+        flags(g, n, e, droop=t > 0.9)
+        self.fx(g, dt)
+        self.cloth(g, "收令" if t > 0.7 else "五营兵马")
+        self.mx(g, n)
+        if t > 0.7:
+            g.mx[1:7, 1:7] = False
+            g.mx[5:7, 0:8] = True
 
     def resume(self, g: Gfx, t: float, e: float):
-        _, k, _ = round_of(e, self.CYCLE)
-        arr = self.arrived(k)
-        p = ease_out_back(span(t, 0.2, 1.0))
-        wave = span(t, 0.6, 1.6)
-        self.flags(g, arr, t, wave)
-        table(g, 0, self.panel_text(k))
-        Card.draw(g, CX, TOP, lerp(0.08, 1, clamp(p)))
-        self.hand(g, CX, TOP - CH, ease_out(span(t, 0, 0.3)) * (1 - span(t, 1.0, 1.6)))
-        self.mx(g, arr, 0, 0, t)
+        dt = self.clock(t)
+        floor(g)
+        n = self.arrived(e % CYCLE)
+        up = span(t, 0.3, 0.9)
+        if up <= 0:
+            self.actor(g, e, "low", 0, "normal", lying=True)
+        else:
+            self.actor(g, e, "reach", -int((1 - up) * 90 / 15) * 15, "happy" if up >= 1 else "normal",
+                       glow=0.9 < t < 1.3)
+        if crossed(t, dt, 0.9):
+            self.sparks.burst(PX, TY - 16, 12, 24, life=0.5)
+        if 0.9 <= t < 0.97:
+            pix.flash(g)
+        table(g, t)
+        self.burner(g, e)
+        flags(g, n, e, droop=t < 0.9)
+        self.fx(g, dt)
+        self.cloth(g, "五营兵马")
+        self.mx(g, n)
 
     def complete(self, g: Gfx, t: float, e: float):
-        # 三拍（越拍越重），五营令旗齐亮飞升，令牌放光：五雷号令
-        _, k, _ = round_of(e, self.CYCLE)
-        arr = [max(a, clamp((t - 2.6) / 0.8)) for a in self.arrived(k)]
-        if t < 2.7:
-            j = min(2, int(t / 0.9))
-            u = (t - j * 0.9)
-            lift = 12 * ease_out(span(u, 0, 0.55)) * (1 - ease_in(span(u, 0.55, 0.66)))
-            shock = 1 - span(u, 0.66, 0.9) if u > 0.66 else 0
-            dy = (1 + j) if shock > 0.8 else 0
-            self.flags(g, arr, t, dy=dy)
-            table(g, dy, ["一拍", "二拍", "三拍"][j])
-            self.impact(g, shock, 1 + j * 0.4)
-            Card.draw(g, CX, TOP - lift + dy)
-            self.hand(g, CX, TOP - lift - CH + dy, 1.0)
-            self.mx(g, arr, lift / 14, shock, t)
-            g.mx_level = 3 + 2 * j if shock > 0.8 else 1
+        """连拍三下（一下比一下重）→ 五营齐到 → 令牌放光、令旗升天 → 五雷号令"""
+        dt = self.clock(t)
+        if t < 3.0:
+            i = min(int(t / 1.0), 2)
+            u = 0.6 + (t - i * 1.0) * 1.0 if t - i * 1.0 < 0.8 else 1.4 + (t - i * 1.0 - 0.8) * 1.0
+            power = 1.0 + i * 0.8
+            n = min(5, self.arrived(e % CYCLE) + (i + 1) * 2)
+            jump = self.scene(g, t, e, dt, 0, n, u, power=power, text=["一拍", "二拍", "三拍"][i])
+            if i == 2 and 1.4 <= u < 1.48:
+                pix.flash(g)
+            self.mx(g, n, slam=1.4 <= u < 1.6)
             return
-        glow = ease_out(span(t, 2.7, 3.6))
+        floor(g)
+        self.actor(g, e, "reach", 0, "happy", glow=True)
+        rays(g, PX, TY - 9, 11, 17, 12, rot=t * 0.7, dash=2)
+        table(g, t)
+        self.burner(g, e)
         lift = ease_in(span(t, 3.4, 5.0))
-        self.flags(g, arr, t, lift=lift)
-        table(g, 0, "五雷号令")
-        Card.draw(g, CX, TOP, glow=glow * (1 + 0.15 * math.sin(t * 8)))
-        self.hand(g, CX, TOP - CH, 1 - span(t, 2.7, 3.2))
-        for j in range(6):
-            if blink(t + j * 0.13, 0.5, 0.3):
-                g.px(30 + rand(j, 9) * 70, 4 + rand(j, 10) * 30)
-        self.mx(g, arr, 0, 0, t)
-        rr = (t - 2.7) * 4
-        for yy in range(8):
-            for xx in range(8):
-                if abs(math.hypot(xx - 3.5, yy - 3.5) - rr) < 0.7:
-                    g.mx[yy, xx] = True
-        g.mx_level = 1 + int(6 * (1 - span(t, 2.7, 4.2)))
+        flags(g, 5, e, lift=lift)
+        self.fx(g, dt)
+        self.cloth(g, "五营兵马")
+        if t > 3.2:
+            banner(g, 64, 4, "五雷号令", span(t, 3.2, 3.6))
+            banner_text(g, 64, 4, "五雷号令", span(t, 3.2, 3.6))
+        self.mx(g, 5)
+        mx_ring(g, (t - 3.0) * 4)
+        g.mx_level = 1 + int(6 * (1 - span(t, 3.0, 4.4)))

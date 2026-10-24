@@ -1,251 +1,282 @@
 """寒江独钓：柳宗元《江雪》“千山鸟飞绝，万径人踪灭。孤舟蓑笠翁，独钓寒江雪。”
 
-入场：雪先落下来，一叶小舟从左边滑进江心停住，蓑笠翁扬竿，钓线甩出去，浮子落水漾开一圈。
-持续：千山覆雪（远山只剩山脊线），江面空阔，只有一舟一翁一竿；雪分远近三层飘落。
-      雪慢慢积在斗笠和船舷上，积满了老翁抖一抖，雪簌簌落下。
-      浮子不时一点一点地动；有时老翁提竿——多半是空钩（钓的是雪），偶尔钓上一尾小鱼，又放回江里。
-退场：小舟悠悠划出画外，雪幕合拢。
+千山覆雪（远山山顶实白的雪冠、山脚网点），江面空阔，碎光稀疏；一叶小舟随波轻轻起伏，有倒影；
+小道士戴斗笠、披蓑衣，坐在船尾垂钓，钓竿伸出去，浮子在水面一点一点；右岸一丛雪松。
+雪分远近三层飘落（远的小而慢，近的是十字雪花、左右摇）。
+持续：斗笠和船舷上的积雪慢慢变厚（150 秒一轮），积满了小道士抖一抖，雪簌簌落下。
+      小事件（47s）：浮子连点几下 → 提竿：多半是空钩（钓的是雪），三成钓上一尾小鱼挂着乱扑腾，
+      放回江里，重新甩线、浮子落水漾开一圈。“千山鸟飞绝”，所以这一幕刻意没有鸟。
+      “独钓寒江雪”题字（80s 一次）。
+入场：雪由疏到密，小舟从左边滑进来，船尾拖着水纹。  退场：小舟悠悠划出画外，风吹雪斜，画面淡出。
+点阵：雪花落下，底部积雪随斗笠积雪一起变厚，抖雪时清空。
 """
 from __future__ import annotations
 
 import math
 
-from ..engine.anim import clamp, ease_in, ease_in_out, ease_out, ease_out_back, lerp, noise, rand, span
+from ..engine import pix
+from ..engine.anim import clamp, ease_in_out, ease_out, lerp, rand, span
+from ..engine.chars import Part, figure
 from ..engine.gfx import Gfx
 from ..engine.scene import Rest, register
-from .x3_lib import every, layer, peaks, poem_cols
+from .x3_lib import bake, every, glints, hat, mountain, pine_pad, plate, ridge, ring
 
-WATER = 38           # 江岸线（远）
-BX, BY = 64, 50      # 船中心（船舷）
-SHAKE_P = 150.0      # 积雪 → 抖雪 一轮
-BITE_P = 47.0
+WATER = 39
+BOAT_Y = 51          # 船底水线
+BX = 44              # 船中心
+DX = BX - 8          # 小道士（船尾）
+SNOWC = 150.0
+
+
+def _boat():
+    """小舟 40×8：船头上翘（右）、船尾略翘，船舷一道白边、木板缝，船身右半背光网点"""
+    p = Part(40, 8)
+    pts = [(0, 1), (3, 3), (34, 3), (39, 0), (37, 4), (33, 7), (6, 7), (2, 4)]
+    p.shape("polygon", pts, fill=0)
+    p.d.polygon(pts, outline=1)
+    p.d.line((3, 3, 34, 3), fill=1)
+    p.d.line((5, 5, 33, 5), fill=1)
+    for x in range(8, 33, 6):
+        p.px(x, 4, 1)
+    p.dither([(20, 6), (35, 4), (33, 7), (20, 7)], 0.5, 1)
+    return p.sprite()
+
+
+def _cape():
+    """蓑衣：盖住肩背到腰，一道道草茎、下摆参差"""
+    p = Part(17, 9)
+    pts = [(5, 0), (11, 0), (16, 7), (0, 7)]
+    p.shape("polygon", pts, fill=1)
+    for x in range(2, 15, 2):
+        p.d.line((x, 3, x, 7), fill=0)
+    p.d.line((4, 2, 12, 2), fill=0)
+    for x in range(0, 17, 2):
+        p.px(x, 8, 1)
+    return p.sprite()
+
+
+FISH = pix.frames("""
+  #
+ ###
+ #.#
+ ###
+ ###
+  #
+ # #
+---
+  #
+ ###
+ #.#
+ ###
+ ###
+  #
+  ##
+""")
+
+_C: dict = {}
+
+
+def parts():
+    if not _C:
+        far = mountain(ridge([(8, 18, 18), (34, 12, 20), (66, 22, 16), (100, 10, 22), (128, 17, 14)], 21, base=42,
+                             rough=0.9, power=1.1), lit=((0.25, 1),), shade=(), cap=(20, 2), outline=1)
+        mid = mountain(ridge([(10, 28, 20), (32, 32, 12), (122, 27, 16)], 23, base=50, rough=1.0, round_top=True),
+                       lit=((0.5, 1), (0.25, 2)), shade=((0.125, 1),), cap=(32, 2), outline=1)
+        trees = bake(lambda g: _bank(g), solid=lambda d: d.polygon([(100, 64), (108, 56), (128, 52), (128, 64)], fill=1))
+        _C.update(far=far, mid=mid, boat=_boat(), hat=hat(), cape=_cape(), bank=trees,
+                  pads=[pine_pad(11, 1, snow=True), pine_pad(9, 2, snow=True), pine_pad(13, 3, snow=True)])
+    return _C
+
+
+def _bank(g: Gfx):
+    g.d.polygon([(100, 64), (108, 56), (128, 52), (128, 64)], fill=0, outline=1)
+    g.d.line((108, 56, 128, 52), fill=1)
+    g.d.line((109, 57, 127, 53), fill=1)  # 岸上积雪两层
+    for x in range(104, 128, 3):
+        g.px(x, 60 + (x % 2))
 
 
 @register
 class SnowFishing(Rest):
     id = "x3.snow"
     name = "寒江独钓"
-    desc = "千山覆雪，江心一叶孤舟，蓑笠翁独钓；雪积满斗笠就抖一抖，提竿多半是空钩"
+    desc = "千山覆雪，小道士戴笠披蓑坐在孤舟上垂钓；雪分三层飘落、斗笠积雪渐厚抖落，浮子一点，提竿多是空钩"
     T = {"enter": 3.4, "exit": 1.3}
 
     def setup(self):
-        s = self.seed
-        self.far = layer(peaks(128, WATER, [(24, 6, 22), (60, 12, 22), (96, 4, 24)], s + 2, 0.8), 0.0, outline=2)
-        self.mid = layer(peaks(128, WATER, [(6, 16, 26), (44, 20, 22), (80, 22, 20), (118, 14, 26)], s, 1.2), 0.08,
-                         outline=1, fog=10, floor=0.0, solid=True)
-        # 近岸寒林：几棵落了叶的树（枝上挂雪）
-        import random
-        r = random.Random(s * 3 + 1)
-        self.trees = []
-        for tx, th in ((6, 24), (15, 30), (25, 20)):
-            self.trees += self._tree(r, tx, 63, -math.pi / 2 + r.uniform(-0.1, 0.1), th * 0.45, 4)
-        # 雪：三层（远小慢、近大快）
-        self.flakes = [(rand(i, s) * 140, rand(i + 300, s), 0 if i < 26 else 1 if i < 40 else 2) for i in range(46)]
+        self.P = parts()
 
-    def _tree(self, r, x, y, ang, ln, depth):
-        x1, y1 = x + math.cos(ang) * ln, y + math.sin(ang) * ln
-        out = [(x, y, x1, y1, depth)]
-        if depth > 0:
-            for da in (-0.5, 0.45) if depth > 1 else (-0.6, 0.0, 0.5):
-                out += self._tree(r, x1, y1, ang + da + r.uniform(-0.25, 0.25), ln * r.uniform(0.55, 0.75), depth - 1)
-        return out
+    # ------------------------------------------------------------ 雪
 
-    # ------------------------------------------------------------ 零件
-
-    def bank(self, g: Gfx):
-        pts = [(0, 52), (10, 51), (22, 53), (32, 57), (38, 63), (0, 63)]
-        g.d.polygon(pts, fill=0, outline=1)
-        for x0, y0, x1, y1, d in self.trees:
-            g.d.line((x0, y0 - 11, x1, y1 - 11), fill=1)
-            if d <= 1 and rand(int(x1 * 7 + y1), 3) < 0.5:   # 枝头的雪
-                g.d.rectangle((x1 - 1, y1 - 12, x1, y1 - 11), fill=1)
-
-    def snow(self, g: Gfx, t: float, amount: float = 1.0, wind: float = 0.0):
-        for i, (x0, ph, layer_) in enumerate(self.flakes):
-            if rand(i + 900, self.seed) > amount:
-                continue
-            sp = (5, 9, 15)[layer_]
-            y = (ph * 74 + t * sp) % 74 - 6
-            x = (x0 + math.sin(t * (0.5 + layer_ * 0.2) + i) * (1 + layer_) + t * (1.5 + wind) * (layer_ + 1)) % 140 - 6
-            if layer_ == 2:
-                g.d.rectangle((x, y, x + 1, y + 1), fill=1)
+    def snow(self, g: Gfx, t: float, layer: int, density: float = 1.0, wind: float = 0.0):
+        n, sp, sway, big = ((26, 7, 1.0, False), (18, 13, 2.0, False), (9, 22, 3.0, True))[layer]
+        n = int(n * density)
+        for i in range(n):
+            seed = layer * 100 + i
+            x0 = rand(i, seed) * 140
+            y = (rand(i + 7, seed) * 72 + t * sp * (0.8 + 0.4 * rand(i, seed + 1))) % 72 - 4
+            x = (x0 + math.sin(t * 0.8 + i) * sway + wind * y * 0.5 + t * wind * 6) % 140 - 6
+            if big:
+                g.px(x, y), g.px(x - 1, y), g.px(x + 1, y), g.px(x, y - 1), g.px(x, y + 1)
             else:
                 g.px(x, y)
+                if layer == 1 and i % 3 == 0:
+                    g.px(x + 1, y)
 
-    def river(self, g: Gfx, t: float):
-        for j in range(9):  # 江面的几道淡波
-            y = WATER + 4 + j * 2.6
-            x = (rand(j, 7) * 128 + t * (1 + j * 0.3)) % 150 - 20
-            ln = 4 + j * 1.5
-            g.d.line((x, y, x + ln, y), fill=1)
-            if j > 5:
-                g.d.line((x + ln + 6, y, x + ln + 8, y), fill=1)
+    # ------------------------------------------------------------ 船与人
 
-    def boat(self, g: Gfx, bx: float, by: float, t: float, cap: float = 0.0, shake: float = 0.0,
-             rod: float = 0.0, cast: float | None = None, catch: bool = False):
-        """船、蓑笠翁、竿。cap 0..1 斗笠积雪；shake 抖雪的幅度；rod 提竿 0..1；cast 甩线进度（None=线在水里）"""
-        bob = math.sin(t * 0.9) * 0.6
-        by += bob
-        # 船身：两头翘的小舟
-        hull = [(bx - 22, by - 5), (bx - 15, by - 1), (bx + 15, by - 1), (bx + 21, by - 5), (bx + 16, by + 3),
-                (bx - 16, by + 3)]
-        g.d.polygon(hull, fill=0, outline=1)
-        g.d.line((bx - 15, by + 1, bx + 15, by + 1), fill=1)
-        # 倒影
-        for x in range(int(bx - 18), int(bx + 18), 2):
-            if rand(x + int(t * 2), 3) < 0.6:
-                g.px(x, by + 6 + (x % 3 == 0))
-        # 蓑衣：坐着的钟形，草茎竖线，下摆参差
-        sx = bx - 9 + math.sin(shake * 40) * shake * 1.5
-        top = by - 15
-        cape = [(sx - 2, top), (sx + 2, top), (sx + 7, by - 1), (sx - 7, by - 1)]
-        g.d.polygon(cape, fill=0, outline=1)
-        for k in (-4, -1.5, 1.5, 4):
-            g.d.line((sx + k * 0.35, top + 2, sx + k, by - 2), fill=1)
-        # 斗笠：大而扁的尖顶，积雪从顶上往下堆白
-        hat = [(sx - 10, top), (sx + 10, top), (sx, top - 6)]
-        g.d.polygon(hat, fill=0, outline=1)
-        if cap > 0:
-            h = 1 + cap * 5
-            g.d.polygon([(sx - 10 * h / 6, top - 6 + h), (sx + 10 * h / 6, top - 6 + h), (sx, top - 6)], fill=1)
-        # 船舷积雪
-        if cap > 0.3:
-            for x in range(int(bx - 15), int(bx + 15), 2 if cap < 0.7 else 1):
-                g.px(x, by - 2)
-        # 钓竿
-        hx, hy = sx + 6, by - 7
-        ang = lerp(-0.42, -0.95, rod)
-        L = 32
-        tx, ty = hx + math.cos(ang) * L, hy + math.sin(ang) * L
-        bend = 2 * rod
-        g.d.line((hx, hy, (hx + tx) / 2 + bend * 0.3, (hy + ty) / 2 - bend, tx, ty), fill=1)
-        fx, fy = bx + 38, by + 3   # 浮子
-        if cast is not None:  # 甩线：浮子沿抛物线飞出去
-            p = cast
-            fx, fy = lerp(tx, bx + 38, p), lerp(ty, by + 3, p) - math.sin(p * math.pi) * 8
-            g.d.line((tx, ty, fx, fy), fill=1)
-            g.px(fx, fy)
-            return tx, ty
-        if rod > 0.05:  # 提竿：线出水，钩上挂着什么
-            hook = (lerp(fx, tx + 2, rod * 0.7), lerp(fy, ty + 14, rod))
-            g.d.line((tx, ty, hook[0], hook[1]), fill=1)
-            if catch:
-                swing = math.sin(t * 9) * 1.5
-                g.d.polygon([(hook[0] + swing, hook[1]), (hook[0] + 2 + swing, hook[1] + 3),
-                             (hook[0] + swing, hook[1] + 6), (hook[0] - 2 + swing, hook[1] + 3)], fill=1)
-                g.d.line((hook[0] - 2 + swing, hook[1] + 7, hook[0] + 2 + swing, hook[1] + 7), fill=1)
+    def boat(self, g: Gfx, t: float, bx: float, snow_k: float, rod: bool = True, oar: bool = False):
+        P = self.P
+        bob = round(math.sin(t * 0.9) * 0.8)
+        by = BOAT_Y + bob
+        for i, x in enumerate(range(int(bx) - 18, int(bx) + 20, 2)):  # 倒影：隔点
+            if (x + int(t * 2)) % 4 < 2:
+                g.px(x, BOAT_Y + 3 + (i % 2))
+        g.d.line((bx - 14, BOAT_Y + 5, bx + 10, BOAT_Y + 5), fill=0)
+        for i in range(0, 20, 4):
+            g.px(bx - 12 + i + int(t * 3) % 4, BOAT_Y + 5)
+        pix.blit(g, P["boat"], bx - 20, by - 7)
+        if snow_k > 0.15:  # 船舷积雪
+            n = int(snow_k * 14)
+            for i in range(n):
+                g.px(bx - 16 + i * 2 + (i % 2), by - 5)
+        return by
+
+    def angler(self, g: Gfx, t: float, x: float, by: float, snow_k: float, shake: float = 0.0, arm="offer"):
+        P = self.P
+        sx = round(math.sin(shake * 40) * 1) if shake > 0 else 0
+
+        def front(g_, at):
+            at(-8, -17, P["cape"])
+            at(-10 + sx, -33, P["hat"])
+            n = int(snow_k * 4)  # 斗笠积雪：笠顶一层层堆白
+            top = by - 6 - 33
+            for r in range(n):
+                g_.d.line((x + sx - 1 - r * 2, top - 1 + r, x + sx + 1 + r * 2, top - 1 + r), fill=1)
+            if n:
+                g_.px(x + sx, top - 2)
+
+        return figure(g, x, by - 6, t, legs="sit", arm=arm, front=front, face="sleep" if (t % 31) > 24 else "normal")
+
+    # ------------------------------------------------------------ 钓
+
+    def fishing(self, g: Gfx, t: float, hand, by: float):
+        hx, hy = hand
+        ev = every(t, 47, 12, 15)
+        lt = ev[1] if ev else None
+        catch = ev and rand(ev[0], self.seed) < 0.3
+        lift = 0.0
+        if lt is not None:
+            lift = span(lt, 4.3, 5.0) * (1 - span(lt, 8.5, 9.3))
+        tip = (hx + lerp(44, 32, lift), hy - lerp(10, 22, lift))
+        g.d.line((hx, hy, (hx + tip[0]) / 2, (hy + tip[1]) / 2 - 1 + lift * 2, tip[0], tip[1]), fill=1)
+        fx, fy = tip[0] + 3, WATER + 13
+        if lt is None or lt < 4.3:
+            dip = 0
+            if lt is not None and 1.5 < lt < 4.3:
+                dip = 1 if int(lt * 5) % 3 == 0 else 0
+            g.d.line((tip[0], tip[1], fx, fy - 2), fill=1)
+            g.d.rectangle((fx, fy - 2 + dip, fx + 1, fy + dip), fill=1)  # 浮子
+            g.px(fx, fy - 3 + dip, 0)
+            k = (t % 3.3) / 3.3
+            ring(g, fx + 0.5, fy + 1, k, rmax=4, flat=0.3)
+            if dip:
+                ring(g, fx + 0.5, fy + 1, 0.3, rmax=3, flat=0.3)
+        elif lt < 9.3:  # 提竿：线挂着（空钩 / 小鱼）
+            sw = math.sin(lt * 4) * 2
+            end = (tip[0] + sw, tip[1] + 14)
+            g.d.line((tip[0], tip[1], end[0], end[1]), fill=1)
+            if lt < 5.0:
+                for i in range(5):
+                    g.px(end[0] + (i - 2) * 2, end[1] + 2 + i % 2)  # 甩起的水珠
+            if catch and lt < 8.6:
+                f = FISH[int(lt * 6) % 2]
+                pix.blit(g, f, end[0] - 2, end[1] + 1)
             else:
-                g.d.arc((hook[0] - 1, hook[1] - 1, hook[0] + 1, hook[1] + 2), 0, 180, fill=1)
-        else:
-            g.d.line((tx, ty, fx, fy - 1), fill=1)
-            g.d.rectangle((fx, fy - 1, fx, fy), fill=1)
-        return tx, ty
+                g.d.arc((end[0] - 2, end[1] - 1, end[0], end[1] + 2), 0, 180, fill=1)  # 空钩
+        else:  # 重新甩线
+            k = span(lt, 9.3, 10.4)
+            x = lerp(tip[0], fx, k)
+            y = lerp(tip[1], fy, k) - math.sin(k * math.pi) * 8
+            g.d.line((tip[0], tip[1], x, y), fill=1)
+            g.d.rectangle((x, y - 2, x + 1, y), fill=1)
+            if k >= 1:
+                ring(g, fx + 0.5, fy + 1, span(lt, 10.4, 12), rmax=6, flat=0.3)
+        return lt, catch
 
-    def state(self, t: float):
-        """按 t 算：积雪、抖雪、咬钩、提竿"""
-        k = t % SHAKE_P
-        cap = clamp(k / (SHAKE_P - 6))
-        shake = 0.0
-        if k > SHAKE_P - 6:
-            q = k - (SHAKE_P - 6)
-            shake = math.exp(-q * 2) * (q < 2.5)
-            cap = 1 - ease_out(span(q, 0.2, 1.2))
-        ev = every(t, BITE_P, 14.0, 17.0)
-        bob, rod, catch, cast = 0.0, 0.0, False, None
-        if ev:
-            n, lt = ev
-            if lt < 4:  # 浮子一点一点
-                bob = (1 if int(lt * 3) % 2 else 0) * (1 if rand(n * 5 + int(lt * 3), 2) < 0.7 else 0)
-            lift = rand(n, self.seed + 1) < 0.6
-            if lift and 4 <= lt < 14:
-                if lt < 5.0:
-                    rod = ease_out_back(lt - 4)
-                elif lt < 10.5:
-                    rod = 1.0
-                elif lt < 12.0:
-                    rod = 1 - ease_in(span(lt, 10.5, 12.0))
-                    cast = None
-                else:
-                    cast = ease_out(span(lt, 12.0, 13.4))
-                catch = rand(n, self.seed + 2) < 0.3
-        return cap, shake, bob, rod, catch, cast
+    # ------------------------------------------------------------ 合成
 
-    def poem(self, g: Gfx, t: float, k: float):
-        if k <= 0:
-            return
-        g.d.rectangle((100, 0, 127, 62), fill=0)
-        poem_cols(g, 127, 2, ("孤舟蓑笠翁", "独钓寒江雪"), k)
+    def world(self, g: Gfx, t: float, bx: float = BX, density: float = 1.0, wind: float = 0.0, rod: bool = True):
+        P = self.P
+        self.snow(g, t, 0, density, wind)
+        g.blit(P["far"], 0, 0)
+        self.snow(g, t, 1, density * 0.5, wind)
+        g.blit(P["mid"], 0, 0)
+        g.d.rectangle((0, WATER, 127, 63), fill=0)
+        for x in range(0, 128, 2):  # 对岸：一道隔点
+            g.px(x, WATER)
+        glints(g, 0, 128, WATER + 3, 63, t, 5, n=12, speed=1.5, far=1, near=5, blink=0.5, rows=3)
+        g.blit(P["bank"], 0, 0)
+        for cx, top, n in ((117, 26, 4), (104, 40, 2)):  # 岸上雪松：一层层压着雪的枝
+            g.d.line((cx, top + 2, cx, top + 6 + n * 6), fill=1)
+            for i in range(n):
+                y = top + i * 6
+                w = 4 + i * 3
+                tri_ = [(cx, y), (cx + w, y + 6), (cx - w, y + 6)]
+                g.d.polygon(tri_, fill=0)
+                g.d.line((cx - w, y + 6, cx, y, cx + w, y + 6), fill=1)
+                g.d.line((cx - w + 2, y + 5, cx, y + 1, cx + w - 2, y + 5), fill=1)
+                for x in range(cx - w + 2, cx + w - 1, 2):
+                    g.px(x, y + 7)
+        c = t % SNOWC
+        snow_k = span(c, 0, SNOWC - 8)
+        shake = span(c, SNOWC - 8, SNOWC - 6) if c > SNOWC - 8 else 0
+        if c > SNOWC - 6:  # 抖下来的雪簌簌落下
+            k = span(c, SNOWC - 8, SNOWC - 4)
+            snow_k = 0
+            for i in range(10):
+                g.px(bx - 8 + (i - 5) * 2.2 * (1 + k), BOAT_Y - 40 + k * k * 40 + (i % 3) * 2)
+        by = self.boat(g, t, bx, snow_k)
+        h = self.angler(g, t, bx - 8, by, snow_k if shake == 0 else 1, shake)
+        if rod:
+            self.fishing(g, t, h["hand"], by)
+        self.snow(g, t, 2, density, wind)
+        return snow_k
 
-    def mx(self, g: Gfx, t: float, pile: float):
+    def poem(self, g: Gfx, t: float):
+        if every(t, 80, 12, 35):
+            plate(g, 64, 3, "独钓寒江雪", align="center")
+
+    def mx(self, g: Gfx, t: float, snow_k: float):
         for i in range(6):
-            x = int(rand(i, 4) * 8)
-            y = int((t * (1.5 + rand(i, 5)) + rand(i, 6) * 8) % 8)
-            g.mx_set(x, y)
-        h = int(pile * 2.99)
-        if h:
-            g.mx[8 - h:, :] = True
-            if h < 3:
-                for x in range(8):
-                    if rand(x, int(t / 20)) < 0.4:
-                        g.mx_set(x, 7 - h)
+            x = int(rand(i, 3) * 8)
+            y = int((t * (1.2 + rand(i, 4)) + rand(i, 5) * 8) % 8)
+            g.mx[y, (x + int(y * 0.3)) % 8] = True
+        h = int(snow_k * 2.5) + 1
+        g.mx[8 - h:, :] = True
 
-    # ------------------------------------------------------------ 阶段
-
-    def landscape(self, g: Gfx, t: float):
-        g.blit(self.far, 0, -6)
-        g.blit(self.mid, 0, 0)
-        g.d.line((0, WATER, 127, WATER), fill=1)
-        self.river(g, t)
-        self.bank(g)
+    def hold(self, g: Gfx, t: float):
+        k = self.world(g, t)
+        self.poem(g, t)
+        self.mx(g, t, k)
 
     def enter(self, g: Gfx, t: float):
         T = self.T["enter"]
-        self.landscape(g, t)
-        self.snow(g, t, amount=0.3 + 0.7 * span(t, 0, 1.5))
-        bx = lerp(-30, BX, ease_out(span(t, 0, 2.0)))
-        if t < 2.2:
-            self.boat(g, bx, BY, t, rod=0.6 * span(t, 1.4, 2.2))
-            # 船尾的水纹
-            for j in range(3):
-                g.d.line((bx - 22 - j * 6, BY + 3 + j, bx - 18 - j * 6, BY + 3 + j), fill=1)
-        else:
-            rod = 0.6 * (1 - ease_in(span(t, 2.2, 2.5)))
-            cast = ease_out(span(t, 2.3, 3.0))
-            self.boat(g, BX, BY, t, rod=rod, cast=cast if cast < 1 else None)
-            if t > 3.0:  # 浮子落水漾开
-                r = (t - 3.0) * 14
-                g.d.ellipse((BX + 38 - r, BY + 3 - r * 0.25, BX + 38 + r, BY + 3 + r * 0.25), outline=1)
-        self.poem(g, t, span(t, 1.6, T))
-        self.mx(g, t, 0.0)
-
-    def hold(self, g: Gfx, t: float):
-        self.landscape(g, t)
-        cap, shake, bob, rod, catch, cast = self.state(t)
-        self.snow(g, t)
-        self.boat(g, BX, BY + 0, t, cap=cap, shake=shake, rod=rod, catch=catch, cast=cast)
-        if bob and rod == 0 and cast is None:  # 浮子被拽了一下：一圈涟漪
-            g.d.ellipse((BX + 33, BY + 2, BX + 43, BY + 5), outline=1)
-        if shake > 0.05:  # 抖下来的雪
-            q = 1 - shake
-            for j in range(10):
-                a = rand(j, 8) * math.pi
-                r = 4 + q * 14
-                g.px(BX - 9 + math.cos(a) * r * 1.4, BY - 21 - math.sin(a) * r * 0.5 + q * q * 20)
-        if t < 21:
-            self.poem(g, t, 1 - span(t, 18, 21))
-        else:
-            ev = every(t, 180.0, 24.0, 100.0)
-            if ev:
-                self.poem(g, t, span(ev[1], 0, 2.5) * (1 - span(ev[1], 21, 24)))
-        self.mx(g, t, cap)
+        tw = t - T
+        bx = lerp(-24, BX, ease_out(span(t, 0, 2.6)))
+        self.world(g, tw, bx, density=0.3 + 0.7 * span(t, 0, T))
+        if t < 2.6:  # 船尾拖着水纹
+            for i in range(4):
+                x = bx - 22 - i * 5
+                g.d.line((x, BOAT_Y + 2 + i % 2, x + 3, BOAT_Y + 2 + i % 2), fill=1)
+        g.fade(span(t, 0, 0.8))
+        self.mx(g, tw, 0)
+        g.mx[: max(0, int(8 - t * 4))] = False
 
     def exit(self, g: Gfx, t: float):
-        T = self.T["exit"]
-        p = ease_in(t / T)
-        tt = self.hold_t + t   # 接着持续阶段最后的样子
-        self.landscape(g, tt)
-        self.boat(g, BX + p * 110, BY, tt, cap=self.state(tt)[0], rod=0.3 * span(t, 0, 0.3))
-        self.snow(g, tt, amount=1.0, wind=p * 30)
-        g.fade(1 - ease_in(span(t, 0.4, T)))
-        self.mx(g, t, 0.0)
-        g.mx[: int(t / T * 8), :] = False
+        tt = self.hold_t + t
+        k = span(t, 0, self.T["exit"])
+        self.world(g, tt, BX + ease_in_out(k) * 100, wind=k * 2, rod=True)
+        g.fade(1 - span(t, 0.6, 1.3))
+        self.mx(g, tt, 0)
+        g.mx[: int(k * 8)] = False

@@ -63,6 +63,12 @@ class _Part:
         self.on = Image.fromarray(on)
         self.d = ImageDraw.Draw(self.on)
 
+    def paste_mask(self, mask, x: int, y: int, v: int = 1):
+        """把一个遮罩（PIL '1' 或 bool 数组，如 gfx.text_image("丹")）印进部件：v=1 亮、v=0 暗"""
+        im = mask if isinstance(mask, Image.Image) else Image.fromarray(np.asarray(mask, bool))
+        self.on.paste(v, (x, y), im)
+        self.mk.paste(1, (x, y), im)
+
     def sprite(self) -> Sprite:
         return Sprite(on=np.array(self.on, bool), mask=np.array(self.mk, bool))
 
