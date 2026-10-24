@@ -27,10 +27,13 @@ host/wwb/            上位机 Python 库
   showcase.py        赛博风多场景演示：开机自检、星空跃迁、四维超立方体、代码雨、等离子、频谱、故障标志
   visual.py          目测验证（时钟档位）
   cli.py             命令行
+  sim.py             网页模拟器的 Python 桥（Device("sim")）
+web/                 网页模拟器：三块屏 + 开关，在浏览器里设计动画与交互
 docs/
   hardware.md        器件、接线、供电、实测结论
   protocol.md        协议规范
   benchmarks.md      性能极限实测
+  simulator.md       网页模拟器
 results/             跑分原始数据（JSON）
 ```
 
@@ -50,6 +53,15 @@ python -m wwb.maxdemo                # 三屏同时全速演示，实时显示�
 python -m wwb.maxdemo --rate 320     # 数码管、点阵限速 320 帧/s（点阵指针一秒一圈）
 python -m wwb.showcase               # 赛博风多场景演示（拨开关切场景，按 BOOT 反色）
 ```
+
+## 网页模拟器（不接设备）
+
+```bash
+python -m wwb.sim                    # 打开 http://127.0.0.1:8765：三块屏 + 开关 + 脚本编辑器
+python -m wwb.showcase --port sim    # 任何程序加 --port sim / Device("sim") 就画到网页上
+```
+
+模拟器按固件逐条执行协议命令，并模拟真机的刷新时序（OLED 约 95fps、数码管只写变化的位、20ms 消抖），实测刷新数与真机误差在 1% 左右。网页右侧可以直接写 JS 脚本（API 与 Python 同名），也可以直接双击 `web/index.html` 打开。详见 [docs/simulator.md](docs/simulator.md)。
 
 ```python
 from wwb import Device, Font

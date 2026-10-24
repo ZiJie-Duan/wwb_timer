@@ -5,6 +5,8 @@
         d.seg_text("12:34")
     with Device("/dev/ttyUSB0", baud=921600) as d:   # UART（GPIO20/21）
         ...
+    with Device("sim") as d:                   # 网页模拟器（先运行 python -m wwb.sim）
+        ...
 """
 from __future__ import annotations
 
@@ -79,18 +81,33 @@ def image_to_frame(img) -> bytes:
     return (a * (1 << np.arange(8, dtype=np.uint8))[None, :, None]).sum(axis=1, dtype=np.uint8).tobytes()
 
 
+SIM_ADDR = "127.0.0.1:8766"  # python -m wwb.sim 给程序连接的 TCP 端口
+
+
 class Device:
     def __init__(self, port: str = "/dev/ttyACM0", baud: int = 921600, timeout: float = 2.0):
+        """port 为 "sim" 或 "sim:主机:端口" 时连接网页模拟器，协议与真机完全相同"""
         self.timeout = timeout
-        self.ser = serial.Serial()
-        self.ser.port = port
-        self.ser.baudrate = baud
-        self.ser.timeout = 0.05
-        # USB-Serial/JTAG：RTS=1 且 DTR=0 会复位芯片，保持两线同为有效
-        self.ser.dtr = True
-        self.ser.rts = True
-        self.ser.open()
-        self._no_hupcl()
+        self.sim = port == "sim" or port.startswith("sim:")
+        if self.sim:
+            addr = port[4:] or SIM_ADDR
+            try:
+                self.ser = serial.serial_for_url(f"socket://{addr}", timeout=0.05)
+            except serial.SerialException as e:
+                raise ConnectionError(f"连不上模拟器 {addr}：先运行 python -m wwb.sim 并打开它给出的网页") from e
+            # 关掉 Nagle：否则小帧会被攒成一批到达，模拟器里的“只保留最新一帧”会合并掉本不该合并的帧
+            import socket
+            self.ser._socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        else:
+            self.ser = serial.Serial()
+            self.ser.port = port
+            self.ser.baudrate = baud
+            self.ser.timeout = 0.05
+            # USB-Serial/JTAG：RTS=1 且 DTR=0 会复位芯片，保持两线同为有效
+            self.ser.dtr = True
+            self.ser.rts = True
+            self.ser.open()
+            self._no_hupcl()
 
         self._seq = 0
         self._seq_lock = threading.Lock()
@@ -216,7 +233,8 @@ class Device:
         if not p.event.wait(self.timeout if timeout is None else timeout):
             with self._pending_lock:
                 self._pending.pop(seq, None)
-            raise TimeoutError(f"{Op(op).name}: no reply")
+            hint = "（模拟器网页打开了吗？）" if self.sim else ""
+            raise TimeoutError(f"{Op(op).name}: no reply{hint}")
         f = p.frame
         if f.flags & Flag.ERR:
             raise DeviceError(op, f.payload[0] if f.payload else 0)
