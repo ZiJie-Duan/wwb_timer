@@ -1,0 +1,85 @@
+{
+  "info": {
+    "name": "wwb_timer",
+    "fw": "0.1.0",
+    "proto": 1,
+    "chip": "ESP32-C3",
+    "rev": 4,
+    "mac": "80:53:e0:b4:3e:5c",
+    "cpu_mhz": 160,
+    "flash": 4194304,
+    "max_payload": 1100,
+    "oled": {
+      "present": true,
+      "addr": 60,
+      "w": 128,
+      "h": 64,
+      "i2c_hz": 1100000
+    },
+    "seg": {
+      "brightness": 3,
+      "on": true,
+      "rise_us": 50,
+      "fall_us": 2,
+      "dio_rise_us": 5
+    },
+    "mx": {
+      "intensity": 1,
+      "rotation": 1,
+      "test": false,
+      "shutdown": false,
+      "spi_hz": 1000000
+    },
+    "io": {
+      "debounce_us": 20000,
+      "led": true
+    },
+    "uart": {
+      "rx": 20,
+      "tx": 21,
+      "baud": 921600
+    },
+    "fonts": [
+      "6x10",
+      "9x15",
+      "logisoso16",
+      "logisoso24n",
+      "logisoso32n",
+      "wqy12"
+    ]
+  },
+  "port": "/dev/ttyACM0",
+  "time": "2026-10-24 16:41:57",
+  "oled": {
+    "400": {
+      "frame_ms": 23.75633333333333,
+      "fps": 42.09403808107312,
+      "errors": 0
+    },
+    "800": {
+      "frame_ms": 13.046883333333334,
+      "fps": 76.64665763087736,
+      "errors": 0
+    },
+    "1000": {
+      "frame_ms": 11.187983333333333,
+      "fps": 89.38161330832634,
+      "errors": 0
+    },
+    "1100": {
+      "frame_ms": 10.485866666666666,
+      "fps": 95.36646152281166,
+      "errors": 0
+    },
+    "2400": {
+      "frame_ms": 9.547333333333334,
+      "fps": 104.74128901613015,
+      "errors": 0
+    },
+    "2600": {
+      "frame_ms": 9.313716666666668,
+      "fps": 107.36852277017945,
+      "errors": 0
+    }
+  }
+}
