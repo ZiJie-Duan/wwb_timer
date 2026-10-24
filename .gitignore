@@ -1,3 +1,4 @@
 firmware/.pio/
 __pycache__/
 *.egg-info/
+native/build/

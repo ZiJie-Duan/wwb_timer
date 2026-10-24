@@ -34,6 +34,7 @@ class Op(IntEnum):
     SUBSCRIBE = 0x09
     BENCH = 0x0A
     TIME = 0x0B
+    RELEASE = 0x0C
 
     IO_READ = 0x10
     IO_CONFIG = 0x11

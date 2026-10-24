@@ -99,6 +99,7 @@
       this.t0 = performance.now();
       this.links = [];
       this.listeners = [];  // (kind, detail) => void；kind: frame / reboot / error
+      this.offline = null;  // 脱机程序（offline.js），没有时显示固件的等待画面
       this.reset();
     }
 
@@ -161,8 +162,21 @@
         l.resetStats();
       }
       this.mxRefreshConfig();
-      this.drawIdle();
+      if (this.offline) this.offline.begin();
+      else this.drawIdle();
       this.io.led = true;  // 蓝灯常亮 = 通道就绪
+    }
+
+    // 装上脱机程序，并像开机一样从头运行
+    setOffline(off) {
+      this.offline = off;
+      this.reset();
+    }
+
+    // 开机前的输入电平（比如开关一直拨在上面），不产生事件
+    presetInput(i, level) {
+      const s = this.io.inputs[i];
+      s.level = s.active = level;
     }
 
     drawIdle() {
@@ -187,6 +201,7 @@
       this.segAdvance(now);
       this.ioAdvance(now);
       if (now >= this.mx.nextRefresh) this.mxRefreshConfig();
+      if (this.offline) this.offline.advance(now);
     }
 
     // ---------------------------------------------------------------- OLED
@@ -419,6 +434,7 @@
         P.wr32(p, 2, s.count);
         P.wr64(p, 6, s.changedUs);
         this.broadcastEvent(1, Op.EV_INPUT, p);
+        if (this.offline) this.offline.input(i, s.active, s.changedUs);
         this.emit("input", { input: i, active: s.active });
       });
     }
@@ -464,6 +480,11 @@
 
     dispatch(link, f) {
       if (f.flags & (Flag.RESP | Flag.EVENT)) return;
+      // 控制器发来的每条命令：先让脱机程序让出设备（与固件 dispatch() 相同）
+      if (this.offline) {
+        if (f.op === Op.RELEASE) this.offline.release();
+        else this.offline.hostFrame();
+      }
       let r;
       try {
         r = this.execute(link, f.op, f.flags, f.seq, f.payload);
@@ -533,6 +554,7 @@
           return r;
         }
         case Op.BENCH: return this.bench(p);
+        case Op.RELEASE: return new Uint8Array(0);
 
         case Op.IO_READ: {
           const r = new Uint8Array(26);

@@ -1,0 +1,77 @@
+# 脱机程序与 wwb timer
+
+设备有两种状态：
+
+- **脱机**：没有控制器时，芯片里的脱机程序驱动外设。现在的脱机程序是计时器 wwb timer（`native/timer/`）。
+- **控制器接管**：上位机程序（Python，`wwb.Device`）一发命令，设备就交给它。程序退出（发 `RELEASE`）或 1.5 秒没有任何命令，就算控制器拔出，脱机程序播放断开动画后恢复显示。
+
+脱机程序是 C++，**同一份源码编译两次**：编进固件在芯片上运行（原生性能，不经过串口），编成 WebAssembly 在网页模拟器里运行。所以在网页上看到的就是芯片上的效果。
+
+## wwb timer
+
+| 操作 | 效果 |
+|---|---|
+| 开关拨上 | 开始计时。点阵：两个箭头冲上去，从中心炸开一圈；OLED：亮带自下而上扫过，时间弹上来；数码管亮一下 |
+| 开关拨下 | 停止。点阵：箭头落下，新的一个点掉进自己的格子、闪两下；OLED：亮带自上而下扫过，新格子旁飘起“+1” |
+| 停止时 | 时间保留显示，缓慢地呼吸闪烁（亮 1.8s → 渐暗 → 灭 0.4s → 渐亮），数码管和 OLED 同步 |
+| 计时时 | 数码管冒号每秒闪一次；点阵和 OLED 底部的“下一个格子”跟着闪 |
+| 开关在**下面**时开机 | 接着上次的累计时间 |
+| 开关在**上面**时开机 | 清零（时间和点数），清零提示后直接开始计时 |
+
+- **数码管**：`时:分`，不足 10 小时首位空白；100 小时起显示 `123h`，1000 小时起只显示小时数（这块数码管只有中间的冒号，没有小数点）。
+- **OLED**：状态（计时中 / 已停止）、第几次、`时:分` 大字加 `:秒` 小字；底部 64 格和点阵一一对应。
+- **点阵**：每完成一次“开 → 关”，从左上角起多亮一个点，按行排，最多 64 个；常态亮度 1（最低档之上一档）。
+- **开机**：老显示器式开机动画，亮出标题“wwb timer”。之后提示“插入控制器 / 解锁更多功能”：插头滑进接口，点阵上的锁打开。每隔 10 秒重复，直到第一次拨开关或接入控制器为止；之后再也不提示，直到下次开机。
+- **控制器断开**：插头被拔出，“控制器已断开”，点阵上的锁合上，然后回到计时画面。
+- **控制器接管期间**计时照常按开关进行（画面不显示），开关事件同时上报给控制器。
+- **断电保留**：芯片存在 NVS 里（计时中每 30 秒存一次，开关拨动时立即存），网页存在 localStorage。板子没有时钟电池，断电期间不计时；计时中突然断电，最多丢最后 30 秒。
+
+## 怎么写脱机程序
+
+```
+native/
+  wwb/wwb.h, wwb.cpp   框架：Device（输出带缓存，只发变化）、Canvas（u8g2 画布）、App、Runtime（控制器接管）
+  timer/timer.cpp      wwb timer
+  web/main.cpp         WebAssembly 的运行环境（命令交给模拟器）
+  build_web.py         编译成 web/js/native.js
+firmware/src/offline.* 芯片上的运行环境（命令直接交给 execute()，存储用 NVS，约 60 帧/秒的任务）
+```
+
+程序实现 `wwb::App`，并提供 `wwb::createApp()`：
+
+```cpp
+class MyApp : public wwb::App {
+  void setup(Device &d, uint64_t now) override;                      // 开机；d.input(SWITCH) 为开机时的开关状态
+  void input(Device &d, Input in, bool active, uint64_t t) override;  // 开关 / BOOT 变化，t 为变化时刻 µs
+  void controller(Device &d, bool attached, uint64_t now) override;  // 控制器接入 / 断开
+  void frame(Device &d, uint64_t now) override;                      // 约 60 次/秒，接管期间也调用（d.visible() 为 false）
+};
+wwb::App *wwb::createApp() { return new MyApp(); }
+```
+
+- **OLED**：在 `Canvas` 上用 u8g2 的 C 接口画（`u8g2_DrawStr(c.u(), …)`，字体用 `u8g2_font_*`），然后 `d.oled(canvas)`；只发变化的区域（`OLED_BLIT`）。`fade()` 做有序抖动淡入淡出，`invert()` 反色。
+- **数码管**：`d.seg(段码[4])`、`d.segConfig(亮度, 开/关)`；`wwb::segDigit()` 给数字段码。
+- **点阵**：`d.mx(行[8])`（行 0 在上，bit7 在左）、`d.mxIntensity(0-15)`。
+- **存储**：`d.load()` / `d.save()`，一小块二进制。
+- 时间都是设备的 µs 时钟（与输入事件同一时钟）。不要用 `millis()` 之类平台函数，也不要用全局状态，模拟器重启设备时会重新 `createApp()`。
+
+换程序：改 `firmware/platformio.ini` 的 `build_src_filter` 和 `native/build_web.py` 的参数。
+
+## 编译
+
+```bash
+# 芯片
+conda activate esp32
+cd firmware && pio run -t upload
+
+# 网页（生成 web/js/native.js，单文件，内嵌 wasm）
+conda run -n emsdk python native/build_web.py
+```
+
+`emsdk` 环境：`conda create -n emsdk -c conda-forge emscripten=4.0.9`。conda-forge 的这个包带的 binaryen 是 117，而 emcc 4.0.9 需要 123，要从 [binaryen 发布页](https://github.com/WebAssembly/binaryen/releases/tag/version_123) 下载 `binaryen-version_123-x86_64-linux.tar.gz`，把 `bin/`、`lib/` 拷进环境覆盖。
+
+## 控制器协议
+
+- 控制器发来的**任何一条命令**都会让设备进入接管状态。第一条命令执行前，外设先恢复开机默认：OLED 清屏、正常显示、对比度 0xCF；数码管亮度 3、清空；点阵亮度 1、旋转 1、10MHz、清空；消抖 20ms。
+- `RELEASE`（0x0C）立即交还给脱机程序；1.5 秒没有命令也会交还。`wwb.Device` 空闲时每 0.5 秒发一次 `PING` 保持控制，`close()` 时发 `RELEASE`。
+- 交还时外设同样恢复默认，脱机程序重新画全部内容。

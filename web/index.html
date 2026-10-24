@@ -10,13 +10,14 @@
 <header class="top">
   <div class="brand"><span class="logo"></span>wwb_timer <span class="muted">模拟器</span></div>
   <div class="pill" id="bridge" title="Python 桥：python -m wwb.sim">Python 桥：未连接</div>
+  <div class="pill" id="ctl" title="没有控制器时由芯片里的脱机程序显示；运行 Python 程序 = 插入控制器"></div>
   <div class="rates" id="rates">OLED – fps · 数码管 –/s · 点阵 –/s</div>
   <div class="spacer"></div>
   <label class="ctl">OLED 缩放
     <select id="scale"><option>3</option><option selected>4</option><option>5</option><option>6</option></select>
   </label>
   <label class="ctl"><input type="checkbox" id="grid" checked> 像素格</label>
-  <button id="reboot" title="相当于 REBOOT 命令">重启设备</button>
+  <button id="reboot" title="断电再上电：脱机程序从头运行（开关在上面时开机 = 计时清零）">重启设备</button>
 </header>
 
 <main>
@@ -81,7 +82,9 @@
       <p>这个页面是设备的模拟器：程序发出的协议帧由网页按固件逐条执行，并模拟真机的刷新时序（OLED 约 95fps、数码管只写变化的位、输入 20ms 消抖）。</p>
       <p>启动：<code>python -m wwb.sim</code>，然后打开它给出的网址。程序列表来自 <code>apps/</code> 目录（每个程序一个带 <code>__main__.py</code> 的包）和 wwb 自带演示。
         也可以在终端运行任何程序并加 <code>--port sim</code>。</p>
-      <p>开关：点击或按 S / 空格；BOOT：按住或按住 B。</p>
+      <p>没有程序运行时，设备由芯片里的<b>脱机程序</b>（<code>native/timer</code>，C++ 编成 WebAssembly，与烧进芯片的是同一份代码）显示。
+        运行一个 Python 程序 = 插入控制器，它接管设备；停止 = 拔出控制器。</p>
+      <p>开关：点击或按 S / 空格；BOOT：按住或按住 B。开关位置和计时数据在刷新网页后保留（相当于断电）。</p>
     </details>
   </section>
 </main>
@@ -90,6 +93,8 @@
 <script src="js/proto.js"></script>
 <script src="js/u8g2.js"></script>
 <script src="js/emulator.js"></script>
+<script src="js/native.js"></script>
+<script src="js/offline.js"></script>
 <script src="js/view.js"></script>
 <script src="js/app.js"></script>
 </body>

@@ -45,6 +45,12 @@
     seg.render(emu);
     matrix.render(emu);
     $("led").classList.toggle("on", emu.io.led);
+    const ctl = emu.offline ? (emu.offline.controlled ? "控制器接管中" : "脱机程序运行中") : "";
+    if ($("ctl").textContent !== ctl) {
+      $("ctl").textContent = ctl;
+      $("ctl").classList.toggle("ok", ctl === "控制器接管中");
+      $("ctl").hidden = !ctl;
+    }
     const pn = emu.oled.panel;
     $("oled-state").textContent = [!pn.on && "关显示", pn.invert && "反色", pn.allOn && "全亮", pn.contrast !== 0xcf && `对比度 ${pn.contrast}`].filter(Boolean).join(" · ");
     requestAnimationFrame(frameLoop);
@@ -62,8 +68,10 @@
   // ---------------------------------------------------------------- 开关 / BOOT
 
   const sw = $("switch"), boot = $("boot");
-  function setSwitch(on) {
-    emu.setInput(0, on);
+  function setSwitch(on, preset) {
+    if (preset) emu.presetInput(0, on);
+    else emu.setInput(0, on);
+    store.set("wwb.sim.switch", on ? "1" : "0");  // 开关是实物，断电后还在原位
     sw.setAttribute("aria-pressed", on);
     sw.classList.toggle("on", on);
     $("switch-state").textContent = on ? "开" : "关";
@@ -74,6 +82,7 @@
     $("boot-state").textContent = down ? "按下" : "松开";
   }
   sw.onclick = () => setSwitch(!emu.io.inputs[0].level);
+  setSwitch(store.get("wwb.sim.switch") === "1", true);
   boot.addEventListener("pointerdown", (e) => { boot.setPointerCapture(e.pointerId); setBoot(true); });
   boot.addEventListener("pointerup", () => setBoot(false));
   boot.addEventListener("pointercancel", () => setBoot(false));
@@ -222,4 +231,9 @@
   connectBridge();
 
   log("info", "模拟器已启动。S / 空格 拨开关，按住 B = BOOT");
+  WWB.Offline.load(emu).then((off) => {
+    if (!off) return log("error", "没有脱机程序（web/js/native.js），运行 native/build_web.py 生成");
+    emu.setOffline(off);
+    log("info", "脱机程序已启动：没有控制器时由它显示");
+  }, (e) => log("error", "脱机程序加载失败：" + e));
 })();

@@ -1,5 +1,6 @@
 // wwb_timer 设备固件：把开关、OLED、数码管、点阵封装成一套串口 API
 // USB-Serial/JTAG 与 UART1 两条通道共用 dispatch()，协议见 docs/protocol.md
+// 没有控制器时由脱机程序（native/，见 offline.cpp）驱动外设；控制器一发命令就接管
 
 #include <Arduino.h>
 #include <esp_chip_info.h>
@@ -15,6 +16,7 @@
 #include "board.h"
 #include "io.h"
 #include "matrix.h"
+#include "offline.h"
 #include "oled.h"
 #include "proto.h"
 #include "seg.h"
@@ -22,7 +24,7 @@
 
 using namespace proto;
 
-static SemaphoreHandle_t execMutex;
+static SemaphoreHandle_t execMutex;  // 可重入：控制器命令里会再执行脱机程序让出设备时的复位命令
 static uint8_t reply[MAX_PAYLOAD];
 static uint32_t opsExecuted = 0, opsFailed = 0, sinkBytes = 0;
 static uint64_t execUs[4];  // 命令执行耗时：OLED / 数码管 / 点阵 / 其他
@@ -141,6 +143,7 @@ static void onInput(io::Input in, const io::State &s) {
   wr32(p + 2, s.count);
   wr64(p + 6, s.changedUs);
   broadcastEvent(0x01, EV_INPUT, p, sizeof p);
+  offline::input(in, s);
 }
 
 void broadcastEvent(uint8_t mask, uint8_t op, const uint8_t *payload, size_t len) {
@@ -222,6 +225,9 @@ static int execute(Transport &t, uint8_t op, uint8_t flags, uint16_t seq, const 
     case OP_TIME:
       wr64(reply, esp_timer_get_time());
       return 8;
+
+    case OP_RELEASE:  // 已在 dispatch() 里处理
+      return 0;
 
     case OP_BENCH: {
       if (n < 3) return -E_BAD_LEN;
@@ -400,7 +406,10 @@ void dispatch(Transport &t, const uint8_t *frame, size_t len) {
   uint16_t seq = rd16(frame + 2);
   if (flags & (F_RESP | F_EVENT)) return;  // 忽略回环回来的设备帧
 
-  xSemaphoreTake(execMutex, portMAX_DELAY);
+  execLock();
+  // 控制器的每条命令：先让脱机程序让出设备（第一条命令时外设恢复默认）
+  if (op == OP_RELEASE) offline::release();
+  else offline::hostFrame();
   int64_t t0 = esp_timer_get_time();
   int r = execute(t, op, flags, seq, frame + HEADER, len - HEADER);
   int group = (op & 0xF0) == 0x20 ? 0 : (op & 0xF0) == 0x30 ? 1 : (op & 0xF0) == 0x40 ? 2 : 3;
@@ -415,7 +424,22 @@ void dispatch(Transport &t, const uint8_t *frame, size_t len) {
   } else if (!(flags & F_NOREPLY)) {
     t.send(op, F_RESP, seq, reply, r);
   }
-  xSemaphoreGive(execMutex);
+  execUnlock();
+}
+
+void execLock() { xSemaphoreTakeRecursive(execMutex, portMAX_DELAY); }
+void execUnlock() { xSemaphoreGiveRecursive(execMutex); }
+
+int deviceExec(uint8_t op, uint8_t flags, const uint8_t *p, size_t n, uint8_t *out, size_t cap) {
+  switch (op) {  // 这些命令针对通道或耗时很长，程序不能用
+    case OP_SOURCE: case OP_REBOOT: case OP_UART_BAUD: case OP_SUBSCRIBE: case OP_BENCH: case OP_RELEASE:
+      return -E_BAD_ARG;
+  }
+  execLock();
+  int r = execute(usbLink, op, flags, 0, p, n);
+  if (r > 0) memcpy(out, reply, (size_t)r < cap ? r : cap);
+  execUnlock();
+  return r == INT32_MIN ? 0 : r;
 }
 
 // ---------------------------------------------------------------- 启动
@@ -429,33 +453,9 @@ static void housekeepingTask(void *) {
   }
 }
 
-static void drawIdle() {
-  oled::lock();
-  U8G2 &g = oled::gfx();
-  g.clearBuffer();
-  g.setDrawColor(1);
-  g.setFont(u8g2_font_9x15_tf);
-  g.drawStr(0, 14, "wwb_timer");
-  g.setFont(u8g2_font_6x10_tf);
-  char line[32];
-  snprintf(line, sizeof line, "fw %s  proto %d", FW_VERSION, VERSION);
-  g.drawStr(0, 30, line);
-  g.drawStr(0, 44, "USB / UART 20,21");
-  g.drawStr(0, 58, "waiting for host");
-  oled::markAllDirty();
-  oled::unlock();
-  oled::commit();
-
-  seg::setText("----", 4);
-
-  // 向上的箭头：用来确认点阵旋转方向
-  static const uint8_t ARROW_UP[8] = {0x18, 0x3C, 0x7E, 0xDB, 0x18, 0x18, 0x18, 0x18};
-  mx::setFrame(ARROW_UP);
-}
-
 void setup() {
   esp_log_level_set("*", ESP_LOG_NONE);  // 日志会混进 USB 数据流，全部关闭
-  execMutex = xSemaphoreCreateMutex();
+  execMutex = xSemaphoreCreateRecursiveMutex();
   crc16(nullptr, 0);  // 预生成查表
 
   io::begin();
@@ -463,7 +463,7 @@ void setup() {
   seg::begin();
   mx::begin();
   oled::begin();
-  drawIdle();
+  offline::begin();
 
   bool usbOk = usbLink.begin();
   bool uartOk = uartLink.begin();

@@ -4,8 +4,8 @@ ESP32-C3 驱动的交互设备：1 个开关 + 0.96 寸 OLED + TM1637 四位数�
 
 项目分两条线：
 
-1. **设备 API**（本阶段）：ESP32-C3 作为驱动器，把四个器件封装成一套高速二进制串口协议，USB 和 UART 两条通道共用。上位机通过它扩展和控制设备。
-2. **计时器程序**（待定）：基于上面这套 API 实现。
+1. **设备 API**：ESP32-C3 作为驱动器，把四个器件封装成一套高速二进制串口协议，USB 和 UART 两条通道共用。上位机（“控制器”）通过它扩展和控制设备。
+2. **脱机计时器 wwb timer**：没有控制器时芯片自己运行的程序。开关拨上计时、拨下停止，时间累计断电保留，每次开关在点阵上多亮一个点；插上控制器就交给控制器，拔掉再回来。C++ 写成，同一份源码编进固件、也编成 WebAssembly 在网页模拟器里运行。见 [docs/offline.md](docs/offline.md)。
 
 ## 目录
 
@@ -19,6 +19,11 @@ firmware/            ESP32-C3 固件（PlatformIO + Arduino 3.3 / ESP-IDF 5.5）
   src/matrix.*       MAX7219：硬件 SPI，旋转换算，只写变化的行
   src/io.*           开关 / BOOT 键（中断时间戳）+ 板载灯
   src/main.cpp       命令分发、INFO/STATS、设备端自测
+  src/offline.*      脱机程序在芯片上的运行环境（控制器接管、NVS 存储）
+native/              脱机程序（C++，芯片与网页共用）
+  wwb/               框架：Device、Canvas（u8g2）、App、Runtime
+  timer/             wwb timer
+  web/, build_web.py 编译成 WebAssembly（web/js/native.js）
 host/wwb/            上位机 Python 库
   device.py          Device 类：所有命令的 API
   protocol.py        协议常量与编解码
@@ -36,6 +41,7 @@ docs/
   protocol.md        协议规范
   benchmarks.md      性能极限实测
   simulator.md       网页模拟器
+  offline.md         脱机程序与 wwb timer
 results/             跑分原始数据（JSON）
 ```
 
@@ -62,6 +68,7 @@ python -m wwb.showcase               # 赛博风多场景演示（拨开关切�
 python -m wwb.sim                    # 打开 http://127.0.0.1:8765，在右侧选程序运行，拨开关试交互
 ```
 
+没有程序运行时，网页里跑的是芯片上同一份脱机计时器（WebAssembly）；运行一个 Python 程序 = 插入控制器。
 模拟器按固件逐条执行协议命令，并模拟真机的刷新时序（OLED 约 95fps、数码管只写变化的位、20ms 消抖），实测刷新数与真机误差在 1% 左右。
 程序放在 `apps/<名字>/`（Python 包，入口用 `wwb.app.run(main)`），会自动出现在网页列表里，改了文件自动重启。
 同一个程序加 `--port sim` 跑在模拟器上，去掉就跑在真机上。详见 [docs/simulator.md](docs/simulator.md)。

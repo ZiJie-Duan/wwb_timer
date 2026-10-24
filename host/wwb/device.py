@@ -82,11 +82,15 @@ def image_to_frame(img) -> bytes:
 
 
 SIM_ADDR = "127.0.0.1:8766"  # python -m wwb.sim 给程序连接的 TCP 端口
+KEEPALIVE_S = 0.5  # 这么久没发命令就发一个 PING：设备 1.5s 收不到命令会认为控制器已拔出，交还给脱机程序
 
 
 class Device:
-    def __init__(self, port: str = "/dev/ttyACM0", baud: int = 921600, timeout: float = 2.0):
-        """port 为 "sim" 或 "sim:主机:端口" 时连接网页模拟器，协议与真机完全相同"""
+    """打开即“插入控制器”：设备的脱机程序让出屏幕，外设恢复默认；close() 时释放，脱机程序恢复显示"""
+
+    def __init__(self, port: str = "/dev/ttyACM0", baud: int = 921600, timeout: float = 2.0, keepalive: bool = True):
+        """port 为 "sim" 或 "sim:主机:端口" 时连接网页模拟器，协议与真机完全相同。
+        keepalive：空闲时定时发 PING，保持对设备的控制"""
         self.timeout = timeout
         self.sim = port == "sim" or port.startswith("sim:")
         if self.sim:
@@ -120,8 +124,11 @@ class Device:
         self._source_q: queue.Queue[Frame] = queue.Queue()
         self.rx_errors = 0
         self._stop = False
+        self._last_tx = time.monotonic()
         self._reader = threading.Thread(target=self._read_loop, name="wwb-rx", daemon=True)
         self._reader.start()
+        if keepalive:
+            threading.Thread(target=self._keepalive_loop, name="wwb-keepalive", daemon=True).start()
 
     # ------------------------------------------------------------ 连接
 
@@ -134,6 +141,8 @@ class Device:
             termios.tcsetattr(self.ser.fd, termios.TCSANOW, attrs)
 
     def close(self):
+        with contextlib.suppress(Exception):
+            self.send(Op.RELEASE)
         self._stop = True
         self._reader.join(timeout=1)
         self.ser.close()
@@ -143,6 +152,18 @@ class Device:
 
     def __exit__(self, *exc):
         self.close()
+
+    def _keepalive_loop(self):
+        while not self._stop:
+            time.sleep(0.1)
+            if time.monotonic() - self._last_tx > KEEPALIVE_S and not self._stop:
+                with contextlib.suppress(Exception):
+                    self.send(Op.PING)
+
+    def _write(self, data: bytes):
+        """调用方持有 _write_lock"""
+        self.ser.write(data)
+        self._last_tx = time.monotonic()
 
     def _read_loop(self):
         buf = bytearray()
@@ -205,7 +226,7 @@ class Device:
             if self._batch is not None:
                 self._batch += data
             else:
-                self.ser.write(data)
+                self._write(data)
         return seq
 
     @contextlib.contextmanager
@@ -219,7 +240,7 @@ class Device:
             with self._write_lock:
                 data, self._batch = self._batch, None
                 if data:
-                    self.ser.write(data)
+                    self._write(data)
 
     def request(self, op: int, payload: bytes = b"", flags: int = 0, timeout: float | None = None) -> bytes:
         """发出请求并等待回复，返回回复 payload；设备报错时抛 DeviceError"""
@@ -229,7 +250,7 @@ class Device:
             self._pending[seq] = p
         data = encode_frame(op, flags & ~Flag.NOREPLY, seq, payload)
         with self._write_lock:
-            self.ser.write(data)
+            self._write(data)
         if not p.event.wait(self.timeout if timeout is None else timeout):
             with self._pending_lock:
                 self._pending.pop(seq, None)
