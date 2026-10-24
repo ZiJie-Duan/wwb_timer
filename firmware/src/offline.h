@@ -13,6 +13,8 @@ void input(io::Input in, const io::State &s);  // 输入变化（io 任务中调
 void hostFrame();  // 控制器发来一条命令
 void release();    // 控制器发来 RELEASE
 bool controlled();
+bool accepts(uint8_t op);   // 控制器的这条命令现在能否执行（连接确认前不能碰外设）
+size_t status(uint8_t *out);  // CONNECT 的回复
 
 }  // namespace offline
 

@@ -229,6 +229,9 @@ static int execute(Transport &t, uint8_t op, uint8_t flags, uint16_t seq, const 
     case OP_RELEASE:  // 已在 dispatch() 里处理
       return 0;
 
+    case OP_CONNECT:
+      return offline::status(reply);
+
     case OP_BENCH: {
       if (n < 3) return -E_BAD_LEN;
       int count = rd16(p + 1);
@@ -407,11 +410,11 @@ void dispatch(Transport &t, const uint8_t *frame, size_t len) {
   if (flags & (F_RESP | F_EVENT)) return;  // 忽略回环回来的设备帧
 
   execLock();
-  // 控制器的每条命令：先让脱机程序让出设备（第一条命令时外设恢复默认）
+  // 控制器的每条命令都算一次“在线”；连接确认（3s 稳定）之前不能碰外设
   if (op == OP_RELEASE) offline::release();
   else offline::hostFrame();
   int64_t t0 = esp_timer_get_time();
-  int r = execute(t, op, flags, seq, frame + HEADER, len - HEADER);
+  int r = offline::accepts(op) ? execute(t, op, flags, seq, frame + HEADER, len - HEADER) : -E_NOT_READY;
   int group = (op & 0xF0) == 0x20 ? 0 : (op & 0xF0) == 0x30 ? 1 : (op & 0xF0) == 0x40 ? 2 : 3;
   execUs[group] += esp_timer_get_time() - t0;
   opsExecuted++;
@@ -433,6 +436,7 @@ void execUnlock() { xSemaphoreGiveRecursive(execMutex); }
 int deviceExec(uint8_t op, uint8_t flags, const uint8_t *p, size_t n, uint8_t *out, size_t cap) {
   switch (op) {  // 这些命令针对通道或耗时很长，程序不能用
     case OP_SOURCE: case OP_REBOOT: case OP_UART_BAUD: case OP_SUBSCRIBE: case OP_BENCH: case OP_RELEASE:
+    case OP_CONNECT:
       return -E_BAD_ARG;
   }
   execLock();

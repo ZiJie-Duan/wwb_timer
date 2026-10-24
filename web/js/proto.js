@@ -8,7 +8,7 @@
   const Flag = { NOREPLY: 0x01, RESP: 0x02, EVENT: 0x04, ERR: 0x08, FLUSH: 0x10 };
   const Op = {
     PING: 0x01, INFO: 0x02, SINK: 0x03, SOURCE: 0x04, STATS: 0x05, STATS_RESET: 0x06, REBOOT: 0x07,
-    UART_BAUD: 0x08, SUBSCRIBE: 0x09, BENCH: 0x0a, TIME: 0x0b, RELEASE: 0x0c,
+    UART_BAUD: 0x08, SUBSCRIBE: 0x09, BENCH: 0x0a, TIME: 0x0b, RELEASE: 0x0c, CONNECT: 0x0d,
     IO_READ: 0x10, IO_CONFIG: 0x11, LED: 0x12, EV_INPUT: 0x18,
     OLED_FRAME: 0x20, OLED_BLIT: 0x21, OLED_TEXT: 0x22, OLED_CLEAR: 0x23, OLED_RECT: 0x24, OLED_CMD: 0x25,
     OLED_CONFIG: 0x26, OLED_FLUSH: 0x2f,
@@ -17,8 +17,8 @@
   };
   const OpName = {};
   for (const k in Op) OpName[Op[k]] = k;
-  const Err = { UNKNOWN_OP: 1, BAD_LEN: 2, BAD_ARG: 3, HW: 4 };
-  const ErrName = { 1: "UNKNOWN_OP", 2: "BAD_LEN", 3: "BAD_ARG", 4: "HW" };
+  const Err = { UNKNOWN_OP: 1, BAD_LEN: 2, BAD_ARG: 3, HW: 4, NOT_READY: 5 };
+  const ErrName = { 1: "UNKNOWN_OP", 2: "BAD_LEN", 3: "BAD_ARG", 4: "HW", 5: "NOT_READY" };
   const Font = { F6X10: 0, F9X15: 1, LOGISOSO16: 2, LOGISOSO24_NUM: 3, LOGISOSO32_NUM: 4, WQY12_CN: 5 };
   const VERSION = 1, MAX_PAYLOAD = 1100, HEADER = 4;
 

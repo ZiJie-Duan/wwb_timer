@@ -1,5 +1,6 @@
 // 脱机程序（native/ 的 C++，编成 web/js/native.js）在模拟器里的运行环境，与固件的 offline.cpp 对应：
-// 程序的命令直接交给模拟器执行；控制器（Python 程序）发来命令就接管，释放或 1.5s 没有命令就交还。
+// 程序的命令直接交给模拟器执行；控制器（Python 程序）的命令持续 3s 才确认连接、播完连接动画后接管，
+// 释放或 1.5s 没有命令就断开（状态机在 native/wwb/wwb.cpp 的 Runtime 里）。
 // 断电保留的数据存在 localStorage，刷新网页 / 重启设备都不会丢
 (function () {
   const WWB = window.WWB;
@@ -7,7 +8,7 @@
   const NVS_KEY = "wwb.sim.nvs";
   const TICK_US = 16000;  // 与固件相同：约 60 帧/秒
   // 芯片上程序不能用的命令（会影响通道或耗时很长）
-  const BLOCKED = new Set([Op.SOURCE, Op.REBOOT, Op.UART_BAUD, Op.SUBSCRIBE, Op.BENCH, Op.RELEASE]);
+  const BLOCKED = new Set([Op.SOURCE, Op.REBOOT, Op.UART_BAUD, Op.SUBSCRIBE, Op.BENCH, Op.RELEASE, Op.CONNECT]);
 
   const nvs = {
     load() {
@@ -55,6 +56,14 @@
     hostFrame() { this.mod._wwb_host_frame(this.emu.nowUs()); }
     release() { this.mod._wwb_release(this.emu.nowUs()); }
     get controlled() { return !!this.mod._wwb_controlled(); }
+    accepts(op) { return !!this.mod._wwb_accepts(op); }
+    // CONNECT 的回复：u8 状态, u32 距离接管还有 ms
+    status() {
+      const p = this.mod._wwb_buffer(), n = this.mod._wwb_status(this.emu.nowUs(), p);
+      return this.mod.HEAPU8.slice(p, p + n);
+    }
+    // 状态文字（页面顶栏用）
+    get state() { return ["脱机程序运行中", "控制器连接中", "控制器接管中"][this.status()[0]]; }
 
     // 模拟器每次推进时调用
     advance(now) {

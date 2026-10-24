@@ -45,7 +45,7 @@
     seg.render(emu);
     matrix.render(emu);
     $("led").classList.toggle("on", emu.io.led);
-    const ctl = emu.offline ? (emu.offline.controlled ? "控制器接管中" : "脱机程序运行中") : "";
+    const ctl = emu.offline ? emu.offline.state : "";
     if ($("ctl").textContent !== ctl) {
       $("ctl").textContent = ctl;
       $("ctl").classList.toggle("ok", ctl === "控制器接管中");

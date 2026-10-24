@@ -120,7 +120,7 @@ void Runtime::begin(bool sw, bool boot, uint64_t now) {
   dev_.inputs_[BOOT] = boot;
   dev_.visible_ = true;
   dev_.invalidate();
-  controlled_ = false;
+  state_ = OFFLINE;
   app_ = createApp();
   app_->setup(dev_, now);
 }
@@ -145,25 +145,67 @@ void Runtime::resetPeripherals() {
   dev_.invalidate();
 }
 
-void Runtime::setControlled(bool on, uint64_t now) {
-  controlled_ = on;
-  dev_.visible_ = !on;
-  resetPeripherals();
-  if (app_) app_->controller(dev_, on, now);
-}
-
 void Runtime::hostFrame(uint64_t now) {
   lastHostUs_ = now;
-  if (!controlled_) setControlled(true, now);
+  if (state_ == OFFLINE) {
+    state_ = CONNECTING;
+    sinceUs_ = now;
+    notify(LINK_CONNECTING, now);
+  }
 }
 
 void Runtime::release(uint64_t now) {
-  if (controlled_) setControlled(false, now);
+  if (state_ == CONTROLLED) {
+    state_ = OFFLINE;
+    dev_.visible_ = true;
+    resetPeripherals();
+    notify(LINK_RELEASED, now);
+  } else if (state_ != OFFLINE) {
+    state_ = OFFLINE;
+    notify(LINK_ABORTED, now);
+  }
 }
 
 void Runtime::tick(uint64_t now) {
-  if (controlled_ && now - lastHostUs_ > DETACH_US) setControlled(false, now);
+  uint64_t quiet = now > lastHostUs_ ? now - lastHostUs_ : 0;
+  switch (state_) {
+    case CONNECTING:
+    case CONFIRMING:
+      if (quiet > GAP_US) {
+        release(now);  // 确认前就断了：中断
+      } else if (state_ == CONNECTING && now - sinceUs_ >= STABLE_US) {
+        state_ = CONFIRMING;
+        sinceUs_ = now;
+        notify(LINK_CONFIRMED, now);
+      } else if (state_ == CONFIRMING && now - sinceUs_ >= CONFIRM_US) {
+        state_ = CONTROLLED;
+        dev_.visible_ = false;
+        resetPeripherals();
+      }
+      break;
+    case CONTROLLED:
+      if (quiet > DETACH_US) release(now);
+      break;
+    case OFFLINE:
+      break;
+  }
   if (app_) app_->frame(dev_, now);
+}
+
+bool Runtime::accepts(uint8_t op) const {
+  if (state_ == CONTROLLED) return true;
+  // 接管前不能碰外设：显示类、灯、消抖设置、外设自测
+  uint8_t group = op & 0xF0;
+  return !(group == 0x20 || group == 0x30 || group == 0x40 || op == OP_LED || op == OP_IO_CONFIG || op == OP_BENCH);
+}
+
+size_t Runtime::status(uint64_t now, uint8_t *out) const {
+  uint64_t el = now > sinceUs_ ? now - sinceUs_ : 0, left = 0;
+  if (state_ == CONNECTING) left = (el < STABLE_US ? STABLE_US - el : 0) + CONFIRM_US;
+  else if (state_ == CONFIRMING) left = el < CONFIRM_US ? CONFIRM_US - el : 0;
+  out[0] = state_ == CONTROLLED ? STATE_CONTROLLED : state_ == OFFLINE ? STATE_OFFLINE : STATE_CONNECTING;
+  wr32(out + 1, (uint32_t)(left / 1000));
+  return 5;
 }
 
 // ---------------------------------------------------------------- 工具

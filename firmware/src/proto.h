@@ -38,6 +38,7 @@ enum Op : uint8_t {
   OP_BENCH       = 0x0A,  // u8 目标, ... → JSON（设备端自测外设极限）
   OP_TIME        = 0x0B,  // → u64 设备时间 µs
   OP_RELEASE     = 0x0C,  // 控制器释放设备，脱机程序立即恢复显示（否则 1.5s 没有命令才算断开）
+  OP_CONNECT     = 0x0D,  // → u8 状态(0=脱机 1=连接中 2=已接管), u32 距离接管还有 ms；见 docs/offline.md
 
   // 输入 / 板载灯
   OP_IO_READ     = 0x10,  // → 每个输入 13B：u8 状态 u32 次数 u64 最近变化µs；顺序 开关(1=开启)、BOOT(1=按下)
@@ -71,6 +72,7 @@ enum Err : uint8_t {
   E_BAD_LEN    = 2,
   E_BAD_ARG    = 3,
   E_HW         = 4,
+  E_NOT_READY  = 5,  // 控制器连接还没确认，不能操作外设
 };
 
 enum BenchTarget : uint8_t {

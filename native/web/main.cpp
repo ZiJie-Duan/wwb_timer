@@ -46,4 +46,11 @@ EMSCRIPTEN_KEEPALIVE void wwb_host_frame(double now) { runtime.hostFrame((uint64
 EMSCRIPTEN_KEEPALIVE void wwb_release(double now) { runtime.release((uint64_t)now); }
 EMSCRIPTEN_KEEPALIVE void wwb_tick(double now) { runtime.tick((uint64_t)now); }
 EMSCRIPTEN_KEEPALIVE int wwb_controlled() { return runtime.controlled(); }
+EMSCRIPTEN_KEEPALIVE int wwb_accepts(int op) { return runtime.accepts(op); }
+// CONNECT 的回复（5 字节）写进 out
+EMSCRIPTEN_KEEPALIVE int wwb_status(double now, uint8_t *out) { return runtime.status((uint64_t)now, out); }
+EMSCRIPTEN_KEEPALIVE uint8_t *wwb_buffer() {
+  static uint8_t buf[16];
+  return buf;
+}
 }

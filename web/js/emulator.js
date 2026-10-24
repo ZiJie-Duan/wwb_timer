@@ -487,7 +487,9 @@
       }
       let r;
       try {
-        r = this.execute(link, f.op, f.flags, f.seq, f.payload);
+        // 连接确认（3s）之前不能碰外设
+        if (this.offline && !this.offline.accepts(f.op)) r = -Err.NOT_READY;
+        else r = this.execute(link, f.op, f.flags, f.seq, f.payload);
       } catch (e) {
         console.error(e);
         r = -Err.HW;
@@ -555,6 +557,7 @@
         }
         case Op.BENCH: return this.bench(p);
         case Op.RELEASE: return new Uint8Array(0);
+        case Op.CONNECT: return this.offline ? this.offline.status() : new Uint8Array([2, 0, 0, 0, 0]);
 
         case Op.IO_READ: {
           const r = new Uint8Array(26);

@@ -19,7 +19,8 @@ BUILD = NATIVE / "build"
 OUT = ROOT / "web/js/native.js"
 SKIP = {"u8g2_fonts.c", "u8g2_d_setup.c", "u8g2_d_memory.c"}  # 字体另取；setup 表引用全部显示驱动
 CFLAGS = ["-O2", "-ffunction-sections", "-fdata-sections"]
-EXPORTS = ["_wwb_begin", "_wwb_input", "_wwb_host_frame", "_wwb_release", "_wwb_tick", "_wwb_controlled"]
+EXPORTS = ["_wwb_begin", "_wwb_input", "_wwb_host_frame", "_wwb_release", "_wwb_tick", "_wwb_controlled",
+           "_wwb_accepts", "_wwb_status", "_wwb_buffer"]
 
 
 def run(cmd):
@@ -77,7 +78,7 @@ def main():
         f"-I{NATIVE}", f"-I{CLIB.parent}", f"-I{ROOT / 'firmware/src'}",
         *map(str, sources), str(fonts), *map(str, objs),
         "-sMODULARIZE=1", "-sEXPORT_NAME=createWwbNative", "-sSINGLE_FILE=1", "-sENVIRONMENT=web",
-        "-sFILESYSTEM=0", f"-sEXPORTED_FUNCTIONS={','.join(EXPORTS)}", "-Wl,--gc-sections",
+        "-sFILESYSTEM=0", f"-sEXPORTED_FUNCTIONS={','.join(EXPORTS)}", "-sEXPORTED_RUNTIME_METHODS=HEAPU8", "-Wl,--gc-sections",
         "-o", str(OUT),
     ])
     OUT.write_text(f"// 由 native/build_web.py 从 {app.relative_to(ROOT)} 生成，不要手改\n" + OUT.read_text())

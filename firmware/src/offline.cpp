@@ -80,4 +80,11 @@ void release() {
 
 bool controlled() { return runtime && runtime->controlled(); }
 
+bool accepts(uint8_t op) { return !runtime || runtime->accepts(op); }
+
+size_t status(uint8_t *out) {
+  if (!runtime) return out[0] = wwb::STATE_CONTROLLED, proto::wr32(out + 1, 0), 5;
+  return runtime->status(esp_timer_get_time(), out);
+}
+
 }  // namespace offline

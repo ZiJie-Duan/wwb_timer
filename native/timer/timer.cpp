@@ -1,9 +1,9 @@
 // wwb timer：脱机计时器（没有控制器时运行）
 //
 // 开关拨上 = 计时，拨下 = 停止；时间一直累计，断电保留。开关在上面时开机 = 清零。
-// 每完成一次“开 → 关”，点阵从左上角起多亮一个点（低亮度，最多 64 个）。
+// 数码管显示 时:分，OLED 显示秒。每完成一次“开 → 关”，点阵从左上角起多亮一个点（低亮度，最多 64 个）。
 // 开机后每隔一段时间提示“插入控制器”，直到第一次拨开关或接入控制器。
-// 控制器接管期间计时照常按开关进行，断开后播放断开动画，回到计时画面。
+// 控制器连接、确认、中断、断开各有一段插头动画；接管期间计时照常按开关进行。
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
@@ -22,10 +22,12 @@ constexpr uint64_t BOOT_US = 2300 * MS;
 constexpr uint64_t RESET_US = 1300 * MS;
 constexpr uint64_t HINT_US = 5200 * MS;
 constexpr uint64_t HINT_GAP_US = 10 * S;
+constexpr uint64_t ABORT_US = 900 * MS;
 constexpr uint64_t DETACH_US = 2000 * MS;
-constexpr uint64_t START_US = 750 * MS;
-constexpr uint64_t STOP_US = 1000 * MS;
+constexpr uint64_t START_US = 1200 * MS;
+constexpr uint64_t STOP_US = 1500 * MS;
 constexpr uint64_t FADE_IN_US = 300 * MS;
+constexpr uint64_t ROLL_US = 180 * MS;      // 换秒时数字滚动
 constexpr uint64_t SAVE_EVERY_US = 30 * S;  // 计时中定期保存，断电最多丢这么久
 
 constexpr uint8_t SEG_LEVEL = 3;  // 数码管常态亮度（0-7）
@@ -39,16 +41,14 @@ struct Saved {
   uint64_t totalMs;
 };
 
-const uint8_t *const BIG = u8g2_font_logisoso32_tn;
-const uint8_t *const MID = u8g2_font_logisoso24_tn;
+const uint8_t *const SECONDS = u8g2_font_logisoso38_tn;
 const uint8_t *const SMALL = u8g2_font_logisoso16_tr;
 const uint8_t *const CN = u8g2_font_wqy12_t_gb2312b;
 const uint8_t *const TINY = u8g2_font_6x10_tf;
 
-// 点阵图案（逻辑方向，bit7 在左）
-const uint8_t LOCK_CLOSED[8] = {0x00, 0x3C, 0x42, 0x42, 0xFF, 0xE7, 0xE7, 0xFF};
-const uint8_t LOCK_OPEN[8] = {0x3C, 0x42, 0x42, 0x40, 0xFF, 0xE7, 0xE7, 0xFF};
 const uint8_t CHEVRON_UP[4] = {0x18, 0x3C, 0x66, 0xC3};
+constexpr float CHEVRON_ROW_S = 0.03f;  // 箭头每走一行的时间
+constexpr float ARROWS_S = 0.67f;       // 三个箭头全部移出画面的时间（22 行）
 
 float sec(uint64_t us) { return us / 1e6f; }
 float span(float t, float a, float b) { return clamp01((t - a) / (b - a)); }
@@ -63,6 +63,8 @@ float breath(uint64_t since) {
   return 0.5f - 0.5f * cosf((t - 2.7f) / 0.5f * PI);
 }
 
+// ---------------------------------------------------------------- 点阵图形
+
 void setDot(uint8_t rows[8], int r, int c) {
   if (r >= 0 && r < 8 && c >= 0 && c < 8) rows[r] |= 0x80 >> c;
 }
@@ -71,7 +73,37 @@ void dots(uint8_t rows[8], uint32_t n) {
   for (uint32_t i = 0; i < n && i < SLOTS; i++) setDot(rows, i / 8, i % 8);
 }
 
-// 时:分。100 小时起显示“123h”，1000 小时起只显示小时数
+// 三个箭头依次穿过画面，t 秒；ARROWS_S 时全部移出。向下时整体上下翻转
+void arrows(uint8_t rows[8], float t, bool up) {
+  int y = 8 - (int)(t / CHEVRON_ROW_S);  // 第一个箭头的顶行
+  for (int k = 0; k < 3; k++) {
+    for (int i = 0; i < 4; i++) {
+      int r = y + k * 5 + i;
+      if (!up) r = 7 - r;
+      if (r >= 0 && r < 8) rows[r] |= CHEVRON_UP[i];
+    }
+  }
+}
+
+// 插头与右边的插座。body = 插头本体左列，PLUG_IN 时插好
+constexpr int PLUG_IN = 3, PLUG_NEAR = 1, PLUG_OUT = -5;
+void mxPlug(uint8_t rows[8], int body, bool socket = true) {
+  if (socket) {
+    for (int r = 1; r <= 6; r++) setDot(rows, r, 7);
+    setDot(rows, 1, 6), setDot(rows, 6, 6);
+  }
+  for (int c = 0; c < body; c++) setDot(rows, 3, c), setDot(rows, 4, c);  // 线
+  for (int r = 2; r <= 5; r++) setDot(rows, r, body), setDot(rows, r, body + 1);
+  for (int c = body + 2; c <= body + 3; c++) setDot(rows, 2, c), setDot(rows, 5, c);  // 两根插脚
+}
+
+// 插好后数据沿线流进去：线上一个暗点往右走
+void mxFlow(uint8_t rows[8], float t) {
+  int c = (int)(t / 0.1f) % 4;
+  if (c < PLUG_IN) rows[3] &= ~(0x80 >> c), rows[4] &= ~(0x80 >> c);
+}
+
+// 时:分。100 小时起显示“123h”，1000 小时起只显示小时数（这块数码管没有小数点）
 void timeSegs(uint64_t totalSec, bool colon, uint8_t out[4]) {
   uint64_t h = totalSec / 3600, m = totalSec / 60 % 60;
   if (h < 100) {
@@ -87,15 +119,17 @@ void timeSegs(uint64_t totalSec, bool colon, uint8_t out[4]) {
   }
 }
 
+// ---------------------------------------------------------------- 程序
+
 class Timer : public App {
  public:
   void setup(Device &d, uint64_t now) override;
   void input(Device &d, Input in, bool active, uint64_t t) override;
-  void controller(Device &d, bool attached, uint64_t now) override;
+  void link(Device &d, Link ev, uint64_t now) override;
   void frame(Device &d, uint64_t now) override;
 
  private:
-  enum Scene { NONE, BOOT, RESET, HINT, DETACH };
+  enum Scene { NONE, BOOT, RESET, HINT, CONNECTING, CONNECTED, ABORTED, DETACH };
   enum Fx { FX_NONE, FX_START, FX_STOP };
 
   uint64_t totalMs(uint64_t now) const { return baseMs_ + (running_ && now > runStart_ ? (now - runStart_) / MS : 0); }
@@ -111,9 +145,11 @@ class Timer : public App {
   void oledTimer(uint64_t now, const char *label);
   void oledBoot(float t);
   void oledHint(float t);
-  void oledDetach(float t);
-  void drawPlug(int bodyX, int cy);
+  void oledLink(float t);
+  void drawPlug(int bodyX);
   void drawSocket(bool lit);
+  void drawSparks(float s);
+  void drawFlow(int bodyX, float t);
 
   Canvas c_;
   bool running_ = false;
@@ -129,6 +165,7 @@ class Timer : public App {
   bool hinting_ = false;    // 开机后、第一次拨开关前
   bool resetBoot_ = false;  // 开关在上面时开机：清零并直接开始计时
   uint64_t nextHint_ = 0;
+  float linkFrom_ = 0;      // 连接中断时插头走到了哪里（0..1）
 };
 
 // ---------------------------------------------------------------- 逻辑
@@ -161,7 +198,7 @@ void Timer::save(Device &d, uint64_t now) {
 void Timer::input(Device &d, Input in, bool active, uint64_t t) {
   if (in != SWITCH) return;
   hinting_ = false;
-  if (scene_ == HINT || scene_ == DETACH) setScene(NONE, t);
+  if (scene_ == HINT) setScene(NONE, t);
   if (active && !running_) {
     running_ = true;
     runStart_ = t;
@@ -177,13 +214,23 @@ void Timer::input(Device &d, Input in, bool active, uint64_t t) {
   }
 }
 
-void Timer::controller(Device &d, bool attached, uint64_t now) {
-  if (attached) {
-    hinting_ = false;
-    setScene(NONE, now);
-    fx_ = FX_NONE;
-  } else {
-    setScene(DETACH, now);
+void Timer::link(Device &d, Link ev, uint64_t now) {
+  switch (ev) {
+    case LINK_CONNECTING:
+      hinting_ = false;
+      setScene(CONNECTING, now);
+      break;
+    case LINK_CONFIRMED:
+      setScene(CONNECTED, now);
+      break;
+    case LINK_ABORTED:
+      linkFrom_ = scene_ == CONNECTED ? 1 : scene_ == CONNECTING ? easeOutCubic(sec(now - sceneAt_) / 3) : 0;
+      setScene(ABORTED, now);
+      break;
+    case LINK_RELEASED:
+      setScene(DETACH, now);
+      fx_ = FX_NONE;
+      break;
   }
 }
 
@@ -199,7 +246,7 @@ void Timer::update(uint64_t now) {
   } else if (scene_ == HINT && el >= HINT_US) {
     setScene(NONE, now);
     nextHint_ = now + HINT_GAP_US;
-  } else if (scene_ == DETACH && el >= DETACH_US) {
+  } else if ((scene_ == DETACH && el >= DETACH_US) || (scene_ == ABORTED && el >= ABORT_US)) {
     setScene(NONE, now);
   }
   if (scene_ == NONE && hinting_ && now >= nextHint_) setScene(HINT, now);
@@ -263,113 +310,150 @@ void Timer::drawMatrix(Device &d, uint64_t now) {
   uint8_t level = MX_DIM;
   float t = sec(now - sceneAt_);
 
-  if (scene_ == BOOT) {
-    // 对角线扫亮、扫灭，再把已有的点逐个点亮
-    level = 4;
-    for (int r = 0; r < 8; r++) {
-      for (int c = 0; c < 8; c++) {
-        float k = t < 0.6f ? t / 0.6f * 15 : (t - 0.6f) / 0.6f * 15;
-        if (t < 0.6f ? r + c <= k : t < 1.2f && r + c > k) setDot(rows, r, c);
-      }
-    }
-    if (t >= 1.4f) {
-      dots(rows, (uint32_t)((t - 1.4f) / 0.4f * (cycles_ < SLOTS ? cycles_ : SLOTS)));
-      level = MX_DIM;
-    }
-  } else if (scene_ == RESET) {
-    // 全亮，然后自上而下清空
-    level = 6;
-    int cleared = t < 0.4f ? 0 : (int)((t - 0.4f) / 0.5f * 8);
-    for (int r = cleared; r < 8; r++) rows[r] = 0xFF;
-  } else if (scene_ == HINT) {
-    // 锁：钥匙孔闪 → 插头接上时打开 → 停留 → 自上而下消失
-    level = 5;
-    const float OPEN = 1.25f;
-    if (t < OPEN) {
-      memcpy(rows, LOCK_CLOSED, 8);
-      if (t > 0.4f && (int)(t / 0.2f) % 2) rows[5] |= 0x18, rows[6] |= 0x18;
-    } else if (t < OPEN + 0.08f) {
-      memset(rows, 0xFF, 8);
-      level = 9;
-    } else {
-      memcpy(rows, LOCK_OPEN, 8);
-    }
-    if (t > 4.4f) {
-      int gone = (int)((t - 4.4f) / 0.5f * 8);
-      for (int r = 0; r < gone && r < 8; r++) rows[r] = 0;
-      if (gone >= 8) dots(rows, cycles_), level = MX_DIM;
-    }
-  } else if (scene_ == DETACH) {
-    // 开着的锁“咔”地锁上，然后消失
-    level = 5;
-    if (t < 0.7f) memcpy(rows, LOCK_OPEN, 8);
-    else if (t < 0.78f) memset(rows, 0xFF, 8), level = 9;
-    else memcpy(rows, LOCK_CLOSED, 8);
-    if (t > 1.4f) {
-      int gone = (int)((t - 1.4f) / 0.45f * 8);
-      for (int r = 0; r < gone && r < 8; r++) rows[r] = 0;
-      if (gone >= 8) dots(rows, cycles_), level = MX_DIM;
-    }
-  } else if (fx_ == FX_START) {
-    // 两个向上的箭头冲上去，然后从中心炸开一圈
-    float e = sec(now - fxAt_);
-    if (e < 0.32f) {
-      level = MX_BRIGHT;
-      int y = 8 - (int)(e / 0.32f * 18);
-      for (int k = 0; k < 2; k++) {
-        for (int i = 0; i < 4; i++) {
-          int r = y + k * 5 + i;
-          if (r >= 0 && r < 8) rows[r] |= CHEVRON_UP[i];
+  switch (scene_) {
+    case BOOT:
+      // 对角线扫亮、扫灭，再把已有的点逐个点亮
+      level = 4;
+      for (int r = 0; r < 8; r++) {
+        for (int c = 0; c < 8; c++) {
+          float k = t < 0.6f ? t / 0.6f * 15 : (t - 0.6f) / 0.6f * 15;
+          if (t < 0.6f ? r + c <= k : t < 1.2f && r + c > k) setDot(rows, r, c);
         }
       }
-    } else {
-      dots(rows, cycles_);
-      if (e < 0.62f) {
-        level = MX_BRIGHT;
-        float rad = (e - 0.32f) / 0.3f * 6;
-        for (int r = 0; r < 8; r++) {
-          for (int c = 0; c < 8; c++) {
-            float dist = sqrtf((r - 3.5f) * (r - 3.5f) + (c - 3.5f) * (c - 3.5f));
-            if (fabsf(dist - rad) < 0.7f) setDot(rows, r, c);
+      if (t >= 1.4f) {
+        dots(rows, (uint32_t)((t - 1.4f) / 0.4f * (cycles_ < SLOTS ? cycles_ : SLOTS)));
+        level = MX_DIM;
+      }
+      break;
+
+    case RESET: {
+      // 全亮，然后自上而下清空
+      level = 6;
+      int cleared = t < 0.4f ? 0 : (int)((t - 0.4f) / 0.5f * 8);
+      for (int r = cleared; r < 8; r++) rows[r] = 0xFF;
+      break;
+    }
+
+    case HINT:
+      // 插头滑进插座，“咔”一下闪亮，数据流进去，最后自上而下消失
+      level = 5;
+      if (t < 1.25f) {
+        mxPlug(rows, lerp(PLUG_OUT, PLUG_IN, easeOutCubic(span(t, 0.2f, 1.25f))));
+      } else if (t < 1.33f) {
+        memset(rows, 0xFF, 8);
+        level = 9;
+      } else {
+        mxPlug(rows, PLUG_IN);
+        mxFlow(rows, t);
+      }
+      if (t > 4.4f) {
+        int gone = (int)((t - 4.4f) / 0.5f * 8);
+        for (int r = 0; r < gone && r < 8; r++) rows[r] = 0;
+        if (gone >= 8) dots(rows, cycles_), level = MX_DIM;
+      }
+      break;
+
+    case CONNECTING:
+      // 插头慢慢靠近，插座像心跳一样闪
+      level = 4;
+      mxPlug(rows, lerp(PLUG_OUT, PLUG_NEAR, easeOutCubic(t / 3)), (int)(t / 0.4f) % 2 == 0);
+      break;
+
+    case CONNECTED:
+      // 插进去，闪一下，数据流进去
+      level = 5;
+      if (t < 0.12f) {
+        mxPlug(rows, lerp(PLUG_NEAR, PLUG_IN, t / 0.12f));
+      } else if (t < 0.22f) {
+        memset(rows, 0xFF, 8);
+        level = 9;
+      } else {
+        mxPlug(rows, PLUG_IN);
+        mxFlow(rows, t);
+      }
+      break;
+
+    case ABORTED:
+      // 没插上：插头退回去
+      level = 4;
+      if (t < 0.6f) {
+        int from = lerp(PLUG_OUT, PLUG_NEAR, linkFrom_);
+        mxPlug(rows, lerp(from, PLUG_OUT, easeInOutCubic(t / 0.6f)));
+      } else {
+        dots(rows, cycles_);
+        level = MX_DIM;
+      }
+      break;
+
+    case DETACH:
+      // 插头被拔出、退走，插座消失，回到点数
+      level = 5;
+      if (t < 0.25f) {
+        mxPlug(rows, PLUG_IN);
+      } else if (t < 1.2f) {
+        mxPlug(rows, lerp(PLUG_IN, PLUG_OUT, easeInOutCubic(span(t, 0.25f, 0.85f))), (int)(t / 0.12f) % 2 == 0);
+      } else if (t < 1.6f) {
+        mxPlug(rows, PLUG_OUT);
+        int gone = (int)((t - 1.2f) / 0.4f * 8);
+        for (int r = 0; r < gone && r < 8; r++) rows[r] = 0;
+      } else {
+        dots(rows, cycles_);
+        level = MX_DIM;
+      }
+      break;
+
+    case NONE:
+      if (fx_ == FX_START) {
+        // 三个箭头冲上去，全部出画面后从中心炸开一圈，再落回点数
+        float e = sec(now - fxAt_);
+        const float RING = ARROWS_S + 0.3f;
+        if (e < ARROWS_S) {
+          level = MX_BRIGHT;
+          arrows(rows, e, true);
+        } else {
+          dots(rows, cycles_);
+          if (e < RING) {
+            level = MX_BRIGHT;
+            float rad = (e - ARROWS_S) / 0.3f * 6;
+            for (int r = 0; r < 8; r++) {
+              for (int c = 0; c < 8; c++) {
+                float dist = sqrtf((r - 3.5f) * (r - 3.5f) + (c - 3.5f) * (c - 3.5f));
+                if (fabsf(dist - rad) < 0.7f) setDot(rows, r, c);
+              }
+            }
+          } else {
+            level = (uint8_t)lerp(MX_BRIGHT, MX_DIM, span(e, RING, sec(START_US)));
           }
         }
-      } else {
-        level = (uint8_t)lerp(MX_BRIGHT, MX_DIM, span(e, 0.62f, 0.75f));
-      }
-    }
-  } else if (fx_ == FX_STOP) {
-    // 两个向下的箭头落下，新的一个点掉进自己的格子，闪两下
-    float e = sec(now - fxAt_);
-    uint32_t slot = cycles_ - 1;
-    if (e < 0.3f) {
-      level = MX_BRIGHT;
-      int y = -8 + (int)(e / 0.3f * 18);
-      for (int k = 0; k < 2; k++) {
-        for (int i = 0; i < 4; i++) {
-          int r = y - k * 5 + 3 - i;
-          if (r >= 0 && r < 8) rows[r] |= CHEVRON_UP[i];
+      } else if (fx_ == FX_STOP) {
+        // 三个箭头落下、全部出画面后，新的一个点掉进自己的格子，闪两下
+        float e = sec(now - fxAt_);
+        uint32_t slot = cycles_ - 1;
+        const float LAND = ARROWS_S + 0.35f;
+        if (e < ARROWS_S) {
+          level = MX_BRIGHT;
+          arrows(rows, e, false);
+        } else if (slot >= SLOTS) {
+          // 格子已经满了：整屏闪一下
+          dots(rows, SLOTS);
+          if (e < ARROWS_S + 0.2f) memset(rows, 0xFF, 8);
+          level = (uint8_t)lerp(MX_BRIGHT, MX_DIM, span(e, ARROWS_S + 0.2f, sec(STOP_US)));
+        } else if (e < LAND) {
+          level = 4;
+          dots(rows, slot);
+          float k = span(e, ARROWS_S, LAND);
+          setDot(rows, (int)(k * k * (slot / 8) + 0.5f), slot % 8);
+        } else {
+          dots(rows, slot);
+          if ((int)((e - LAND) / 0.07f) % 2 == 0 || e > LAND + 0.28f) setDot(rows, slot / 8, slot % 8);
+          level = (uint8_t)lerp(MX_BRIGHT, MX_DIM, span(e, LAND, sec(STOP_US)));
         }
+      } else {
+        dots(rows, cycles_);
+        // 计时中：下一个格子跟着冒号闪
+        if (running_ && cycles_ < SLOTS && blinkOn(now)) setDot(rows, cycles_ / 8, cycles_ % 8);
       }
-    } else if (slot >= SLOTS) {
-      // 格子已经满了：整屏闪一下
-      dots(rows, SLOTS);
-      if (e < 0.5f) memset(rows, 0xFF, 8);
-      level = (uint8_t)lerp(MX_BRIGHT, MX_DIM, span(e, 0.5f, 0.9f));
-    } else if (e < 0.65f) {
-      level = 4;
-      dots(rows, slot);
-      int r = slot / 8, c = slot % 8;
-      float k = span(e, 0.3f, 0.65f);
-      setDot(rows, (int)(k * k * r + 0.5f), c);
-    } else {
-      dots(rows, slot);
-      if ((int)((e - 0.65f) / 0.07f) % 2 == 0 || e > 0.93f) setDot(rows, slot / 8, slot % 8);
-      level = (uint8_t)lerp(MX_BRIGHT, MX_DIM, span(e, 0.65f, 0.95f));
-    }
-  } else {
-    dots(rows, cycles_);
-    // 计时中：下一个格子跟着冒号闪
-    if (running_ && cycles_ < SLOTS && blinkOn(now)) setDot(rows, cycles_ / 8, cycles_ % 8);
+      break;
   }
   d.mxIntensity(level);
   d.mx(rows);
@@ -382,7 +466,10 @@ void Timer::drawOled(Device &d, uint64_t now) {
   switch (scene_) {
     case BOOT: oledBoot(t); break;
     case HINT: oledHint(t); break;
-    case DETACH: oledDetach(t); break;
+    case CONNECTING:
+    case CONNECTED:
+    case ABORTED:
+    case DETACH: oledLink(t); break;
     case RESET: oledTimer(now, "已清零"); break;
     case NONE:
       oledTimer(now, nullptr);
@@ -414,54 +501,62 @@ void Timer::oledTimer(uint64_t now, const char *label) {
   snprintf(buf, sizeof buf, running_ ? "第 %u 次" : "共 %u 次", (unsigned)(running_ ? cycles_ + 1 : cycles_));
   u8g2_DrawUTF8(u, 128 - u8g2_GetUTF8Width(u, buf), 11, buf);
 
-  // 时间：时:分 大字，:秒 小字
-  uint64_t ts = ms / 1000;
-  char hm[16], ss[8];
-  snprintf(hm, sizeof hm, "%u:%02u", (unsigned)(ts / 3600), (unsigned)(ts / 60 % 60));
-  snprintf(ss, sizeof ss, ":%02u", (unsigned)(ts % 60));
-  u8g2_SetFont(u, SMALL);
-  int wss = u8g2_GetStrWidth(u, ss);
-  const uint8_t *font = BIG;
-  u8g2_SetFont(u, font);
-  int whm = u8g2_GetStrWidth(u, hm);
-  if (whm + 2 + wss > 128) {
-    font = MID;
-    u8g2_SetFont(u, font);
-    whm = u8g2_GetStrWidth(u, hm);
-  }
-  int x = (128 - whm - 2 - wss) / 2, y = 47;
-  if (fx_ == FX_START) y += lroundf((1 - easeOutBack(fe / 0.4f)) * 10);
-  if (fx_ == FX_STOP) y -= lroundf((1 - easeOutCubic(fe / 0.4f)) * 6);
+  // 秒（时、分在数码管上）。换秒时变了的那一位往上滚
+  int secNow = (int)(ms / 1000 % 60), secPrev = (secNow + 59) % 60;
+  uint64_t into = ms % 1000;
+  float roll = running_ && ms >= 1000 && into < ROLL_US / MS ? easeOutCubic(into / (float)(ROLL_US / MS)) : 1;
+  const int DW = 25, H = 38, UNIT_W = 12, GAP = 3;
+  int x0 = (128 - (2 * DW + GAP + UNIT_W)) / 2, base = 52;
+  if (fx_ == FX_START) base += lroundf((1 - easeOutBack(fe / 0.4f)) * 10);
+  if (fx_ == FX_STOP) base -= lroundf((1 - easeOutCubic(fe / 0.4f)) * 6);
   bool show = !(label && sec(now - sceneAt_) < 0.9f && (int)(sec(now - sceneAt_) / 0.15f) % 2);
   if (show) {
-    u8g2_DrawStr(u, x, y, hm);
-    u8g2_SetFont(u, SMALL);
-    u8g2_DrawStr(u, x + whm + 2, y, ss);
+    u8g2_SetFont(u, SECONDS);
+    for (int i = 0; i < 2; i++) {
+      int cur = i ? secNow % 10 : secNow / 10, prev = i ? secPrev % 10 : secPrev / 10;
+      char a[2] = {(char)('0' + cur), 0}, b[2] = {(char)('0' + prev), 0};
+      int x = x0 + i * DW;
+      if (roll >= 1 || cur == prev) {
+        u8g2_DrawStr(u, x, base, a);
+        continue;
+      }
+      u8g2_SetClipWindow(u, x, base - H, x + DW, base + 1);
+      int dy = lroundf(roll * (H + 4));
+      u8g2_DrawStr(u, x, base - dy, b);
+      u8g2_DrawStr(u, x, base + H + 4 - dy, a);
+      u8g2_SetMaxClipWindow(u);
+    }
+    u8g2_SetFont(u, CN);
+    u8g2_DrawUTF8(u, x0 + 2 * DW + GAP, base, "秒");
   }
-  if (!running_ && !label) c_.fade(0, 14, 128, 38, (int)lroundf(breathNow(now) * 16));
+  if (!running_ && !label) c_.fade(0, 13, 128, 41, (int)lroundf(breathNow(now) * 16));
 
   // 底部 64 格：和点阵一样，每完成一次开关多亮一格
+  const float LAND = ARROWS_S + 0.35f;  // 与点阵上新点落地同步
+  bool landing = fx_ == FX_STOP && cycles_ <= SLOTS;
   for (int i = 0; i < SLOTS; i++) {
     int cx = 1 + (i % 32) * 4, cy = 56 + (i / 32) * 4;
-    bool lit = (uint32_t)i < cycles_;
+    bool fresh = landing && (uint32_t)i == cycles_ - 1;
+    bool lit = (uint32_t)i < cycles_ && !(fresh && fe < LAND);
     if (running_ && (uint32_t)i == cycles_ && blink) lit = true;
-    if (fx_ == FX_STOP && (uint32_t)i == cycles_ - 1 && fe < 0.35f) {
+    if (fresh && fe >= LAND && fe < LAND + 0.3f) {
       u8g2_DrawBox(u, cx - 1, cy - 1, 5, 5);  // 刚加上的一格先大后小
       continue;
     }
     if (lit) u8g2_DrawBox(u, cx, cy, 3, 3);
     else u8g2_DrawPixel(u, cx + 1, cy + 1);
   }
-  if (fx_ == FX_STOP && cycles_ <= SLOTS && fe < 0.9f) {
+  if (landing && fe >= LAND) {
     // “+1” 从新格子上方飘起、淡出
+    float k = span(fe, LAND, sec(STOP_US));
     int i = cycles_ - 1, cx = 1 + (i % 32) * 4;
-    int ty = 54 - (int)(easeOutCubic(fe / 0.9f) * 8);
+    int ty = 54 - (int)(easeOutCubic(k) * 8);
     int tx = cx - 4 < 0 ? 0 : cx - 4 > 116 ? 116 : cx - 4;
     u8g2_SetFont(u, TINY);
     u8g2_SetDrawColor(u, 2);
     u8g2_DrawStr(u, tx, ty, "+1");
     u8g2_SetDrawColor(u, 1);
-    c_.fade(tx, ty - 8, 13, 9, (int)((1 - span(fe, 0.4f, 0.9f)) * 16));
+    c_.fade(tx, ty - 8, 13, 9, (int)((1 - span(k, 0.4f, 1)) * 16));
   }
 
   // 开始：一条亮带自下而上扫过；停止：自上而下
@@ -498,7 +593,7 @@ void Timer::oledBoot(float t) {
     u8g2_DrawHLine(u, (128 - w) / 2, 44, uw);
     if (t > 1.3f) {
       u8g2_SetFont(u, TINY);
-      const char *sub = "v0.2";
+      const char *sub = "v0.3";
       u8g2_DrawStr(u, (128 - u8g2_GetStrWidth(u, sub)) / 2, 57, sub);
       c_.fade(0, 48, 128, 10, (int)(span(t, 1.3f, 1.6f) * 16));
     }
@@ -506,9 +601,17 @@ void Timer::oledBoot(float t) {
   if (t > 1.9f) c_.fade(0, 0, 128, 64, (int)((1 - span(t, 1.9f, 2.3f)) * 16));
 }
 
+// ---------------------------------------------------------------- 插头动画
+
+constexpr int SOCKET_X = 84, ICON_Y = 18;
+constexpr int PLUGGED_X = SOCKET_X - 18;  // 插好时插头本体的位置
+constexpr int NEAR_X = PLUGGED_X - 8;     // 连接中最终停在这里，确认后插进去
+constexpr int AWAY_X = -40;
+
 // 插头：线从左边进来，bodyX 为插头本体左边
-void Timer::drawPlug(int bodyX, int cy) {
+void Timer::drawPlug(int bodyX) {
   u8g2_t *u = c_.u();
+  int cy = ICON_Y;
   u8g2_SetDrawColor(u, 1);
   if (bodyX > 0) u8g2_DrawBox(u, 0, cy - 1, bodyX, 3);
   u8g2_DrawRBox(u, bodyX, cy - 7, 16, 15, 2);
@@ -519,9 +622,6 @@ void Timer::drawPlug(int bodyX, int cy) {
   u8g2_DrawBox(u, bodyX + 16, cy - 4, 7, 2);
   u8g2_DrawBox(u, bodyX + 16, cy + 3, 7, 2);
 }
-
-constexpr int SOCKET_X = 84, ICON_Y = 18;
-constexpr int PLUGGED_X = SOCKET_X - 18;  // 插好时插头本体的位置
 
 void Timer::drawSocket(bool lit) {
   u8g2_t *u = c_.u();
@@ -534,35 +634,39 @@ void Timer::drawSocket(bool lit) {
   else u8g2_DrawCircle(u, SOCKET_X + 15, ICON_Y, 2, U8G2_DRAW_ALL);
 }
 
+// 插上那一下的火花，s 从 0 到 1
+void Timer::drawSparks(float s) {
+  u8g2_t *u = c_.u();
+  int r0 = 4 + (int)(s * 6), r1 = 7 + (int)(s * 9);
+  int cx = SOCKET_X - 1, cy = ICON_Y;
+  for (int i = 0; i < 6; i++) {
+    float a = (i * 60 + 30) * PI / 180;
+    u8g2_DrawLine(u, cx + lroundf(cosf(a) * r0), cy + lroundf(sinf(a) * r0), cx + lroundf(cosf(a) * r1),
+                  cy + lroundf(sinf(a) * r1));
+  }
+}
+
+// 插好后数据沿着线流进去
+void Timer::drawFlow(int bodyX, float t) {
+  u8g2_t *u = c_.u();
+  u8g2_SetDrawColor(u, 0);
+  int phase = (int)(t * 40) % 12;
+  for (int x = phase; x < bodyX - 2; x += 12) u8g2_DrawBox(u, x, ICON_Y, 3, 1);
+  u8g2_SetDrawColor(u, 1);
+}
+
 void Timer::oledHint(float t) {
   u8g2_t *u = c_.u();
   c_.clear();
   const float CONTACT = 1.25f;
 
   // 插头滑过来、“咔”一下插进接口
-  float k = easeOutBack(span(t, 0.2f, CONTACT));
-  int bodyX = lerp(-30, PLUGGED_X, k);
+  int bodyX = lerp(-30, PLUGGED_X, easeOutBack(span(t, 0.2f, CONTACT)));
   bool plugged = t >= CONTACT;
   drawSocket(plugged && (int)((t - CONTACT) / 0.25f) % 2 == 0);
-  drawPlug(bodyX, ICON_Y);
-  if (plugged && t < CONTACT + 0.35f) {
-    // 接触的火花
-    float s = (t - CONTACT) / 0.35f;
-    int r0 = 4 + (int)(s * 6), r1 = 7 + (int)(s * 9);
-    int cx = SOCKET_X - 1, cy = ICON_Y;
-    for (int i = 0; i < 6; i++) {
-      float a = (i * 60 + 30) * PI / 180;
-      u8g2_DrawLine(u, cx + lroundf(cosf(a) * r0), cy + lroundf(sinf(a) * r0), cx + lroundf(cosf(a) * r1),
-                    cy + lroundf(sinf(a) * r1));
-    }
-  }
-  if (plugged) {
-    // 数据沿着线流进去
-    u8g2_SetDrawColor(u, 0);
-    int phase = (int)((t - CONTACT) * 40) % 12;
-    for (int x = phase; x < PLUGGED_X - 2; x += 12) u8g2_DrawBox(u, x, ICON_Y, 3, 1);
-    u8g2_SetDrawColor(u, 1);
-  }
+  drawPlug(bodyX);
+  if (plugged && t < CONTACT + 0.35f) drawSparks((t - CONTACT) / 0.35f);
+  if (plugged) drawFlow(PLUGGED_X, t - CONTACT);
 
   // 文字：第一行逐字打出来，第二行淡入
   u8g2_SetFont(u, CN);
@@ -585,25 +689,61 @@ void Timer::oledHint(float t) {
   c_.fade(0, 0, 128, 64, (int)(a * 16));
 }
 
-void Timer::oledDetach(float t) {
+// 控制器连接中 / 已连接 / 连接中断 / 已断开
+void Timer::oledLink(float t) {
   u8g2_t *u = c_.u();
   c_.clear();
-  // 插头被拔出、向左退走
-  int bodyX = lerp(PLUGGED_X, -40, easeInOutCubic(span(t, 0.25f, 0.85f)));
-  drawSocket(false);
-  drawPlug(bodyX, ICON_Y);
-  if (t > 0.25f && t < 0.55f) {
-    // 断开的一下：接口处一个小叉
-    int cx = SOCKET_X - 4, cy = ICON_Y;
-    u8g2_DrawLine(u, cx - 3, cy - 3, cx + 3, cy + 3);
-    u8g2_DrawLine(u, cx - 3, cy + 3, cx + 3, cy - 3);
-  }
+  float alpha = 1;
   u8g2_SetFont(u, CN);
-  const char *msg = "控制器已断开";
-  u8g2_DrawUTF8(u, (128 - u8g2_GetUTF8Width(u, msg)) / 2, 52, msg);
-  c_.fade(0, 38, 128, 16, (int)(span(t, 0.1f, 0.45f) * 16));
-  float a = 1 - span(t, sec(DETACH_US) - 0.4f, sec(DETACH_US));
-  c_.fade(0, 0, 128, 64, (int)(a * 16));
+  auto center = [&](const char *msg, int y) { u8g2_DrawUTF8(u, (128 - u8g2_GetUTF8Width(u, msg)) / 2, y, msg); };
+  switch (scene_) {
+    case CONNECTING: {
+      // 插头慢慢靠近，接口的灯慢闪；下面是 3 秒的稳定进度
+      static const char *const TEXT[] = {"正在连接控制器", "正在连接控制器.", "正在连接控制器..", "正在连接控制器..."};
+      drawSocket((int)(t / 0.4f) % 2 == 0);
+      drawPlug(lerp(AWAY_X, NEAR_X, easeOutCubic(t / 3)));
+      u8g2_DrawUTF8(u, (128 - u8g2_GetUTF8Width(u, TEXT[0])) / 2, 46, TEXT[(int)(t / 0.3f) % 4]);
+      u8g2_DrawFrame(u, 24, 54, 80, 5);
+      u8g2_DrawHLine(u, 26, 56, (int)(clamp01(t / 3) * 76));
+      alpha = span(t, 0, 0.25f);
+      break;
+    }
+    case CONNECTED: {
+      // 插进去，火花，灯亮，数据流进去；然后整屏淡出，交给控制器
+      drawSocket(t >= 0.15f);
+      drawPlug(lerp(NEAR_X, PLUGGED_X, easeOutBack(span(t, 0, 0.15f))));
+      if (t >= 0.15f && t < 0.5f) drawSparks((t - 0.15f) / 0.35f);
+      if (t >= 0.15f) drawFlow(PLUGGED_X, t - 0.15f);
+      center("控制器已连接", 50);
+      alpha = 1 - span(t, 0.85f, sec(Runtime::CONFIRM_US));
+      break;
+    }
+    case ABORTED: {
+      // 没插上：插头退回去
+      drawSocket(false);
+      drawPlug(lerp(lerp(AWAY_X, NEAR_X, linkFrom_), AWAY_X, easeInOutCubic(span(t, 0.05f, 0.6f))));
+      center("连接中断", 50);
+      alpha = 1 - span(t, sec(ABORT_US) - 0.3f, sec(ABORT_US));
+      break;
+    }
+    case DETACH: {
+      // 插头被拔出、向左退走，接口处一个小叉
+      drawSocket(false);
+      drawPlug(lerp(PLUGGED_X, AWAY_X, easeInOutCubic(span(t, 0.25f, 0.85f))));
+      if (t > 0.25f && t < 0.55f) {
+        int cx = SOCKET_X - 4, cy = ICON_Y;
+        u8g2_DrawLine(u, cx - 3, cy - 3, cx + 3, cy + 3);
+        u8g2_DrawLine(u, cx - 3, cy + 3, cx + 3, cy - 3);
+      }
+      center("控制器已断开", 50);
+      c_.fade(0, 38, 128, 16, (int)(span(t, 0.1f, 0.45f) * 16));
+      alpha = 1 - span(t, sec(DETACH_US) - 0.4f, sec(DETACH_US));
+      break;
+    }
+    default:
+      break;
+  }
+  c_.fade(0, 0, 128, 64, (int)(alpha * 16));
 }
 
 }  // namespace

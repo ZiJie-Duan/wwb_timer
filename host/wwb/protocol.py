@@ -35,6 +35,7 @@ class Op(IntEnum):
     BENCH = 0x0A
     TIME = 0x0B
     RELEASE = 0x0C
+    CONNECT = 0x0D
 
     IO_READ = 0x10
     IO_CONFIG = 0x11
@@ -64,6 +65,7 @@ class Err(IntEnum):
     BAD_LEN = 2
     BAD_ARG = 3
     HW = 4
+    NOT_READY = 5  # 控制器连接还没确认（连上后要稳定 3s），不能操作外设
 
 
 class BenchTarget(IntEnum):

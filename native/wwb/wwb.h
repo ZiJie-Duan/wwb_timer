@@ -2,8 +2,13 @@
 //
 // 同一份程序编译两次：编进固件，没有控制器时在芯片上运行；编成 WebAssembly，在网页模拟器里运行。
 // 程序通过协议命令驱动外设：芯片上直接交给固件的命令处理函数（不经过串口），网页里交给模拟器，
-// 所以两边的画面、时序一致。控制器（通过 USB / UART 发协议的上位机程序）一发命令就接管设备，
-// 脱机程序照常收到输入与时间、但画面被屏蔽；控制器释放或超时后，外设恢复默认、程序重新显示。
+// 所以两边的画面、时序一致。
+//
+// 控制器（通过 USB / UART 发协议的上位机程序）的连接过程：
+//   脱机 ──收到命令──▶ 连接中（命令须持续 3s、间隔不超过 1s）──▶ 已确认（程序播放连接动画）──▶ 接管
+//   连接中断（间隔超时或 RELEASE）回到脱机；接管后 RELEASE 或 1.5s 没有命令 = 断开（程序播放断开动画）
+// 接管前控制器只能用不碰外设的命令（PING、INFO、CONNECT…），显示类命令回 NOT_READY。
+// 接管期间脱机程序照常收到输入与时间，但画面被屏蔽；交接时外设都恢复开机默认。
 #pragma once
 #include <stddef.h>
 #include <stdint.h>
@@ -25,6 +30,17 @@ class Host {
 };
 
 enum Input : uint8_t { SWITCH = 0, BOOT = 1 };
+
+// 控制器连接事件
+enum Link : uint8_t {
+  LINK_CONNECTING,  // 开始收到命令，进入 3s 稳定期
+  LINK_CONFIRMED,   // 稳定 3s，连接确认；Runtime::CONFIRM_US 后交给控制器
+  LINK_ABORTED,     // 确认前中断
+  LINK_RELEASED,    // 接管结束（程序退出或超时），设备回到脱机程序
+};
+
+// 协议 CONNECT 的回复状态
+enum LinkState : uint8_t { STATE_OFFLINE = 0, STATE_CONNECTING = 1, STATE_CONTROLLED = 2 };
 
 // OLED 画布：u8g2 全缓冲，排列与设备帧缓冲相同（8 页 × 128 列，LSB 在上）
 class Canvas {
@@ -87,8 +103,8 @@ class App {
   virtual void setup(Device &d, uint64_t now) = 0;
   // 输入变化（消抖后），t 为变化开始的时刻
   virtual void input(Device &d, Input in, bool active, uint64_t t) {}
-  // 控制器接入 / 断开
-  virtual void controller(Device &d, bool attached, uint64_t now) {}
+  // 控制器连接过程，见 Link
+  virtual void link(Device &d, Link ev, uint64_t now) {}
   // 约 60 次/秒；控制器接管时也会调用（d.visible() 为 false）
   virtual void frame(Device &d, uint64_t now) = 0;
 };
@@ -96,11 +112,14 @@ class App {
 // 由程序实现，返回新的实例
 App *createApp();
 
-// 把程序、输入、控制器接管串起来。平台负责：开机调 begin，输入变化调 input，
-// 每帧调 tick，执行控制器的每条命令前调 hostFrame，收到 RELEASE 调 release。所有调用须串行
+// 把程序、输入、控制器连接串起来。平台负责：开机调 begin，输入变化调 input，每帧调 tick，
+// 控制器的每条命令先调 hostFrame（RELEASE 调 release），再用 accepts 判断能否执行。所有调用须串行
 class Runtime {
  public:
-  static constexpr uint64_t DETACH_US = 1500000;  // 控制器这么久没有发命令就算断开
+  static constexpr uint64_t STABLE_US = 3000000;   // 命令持续这么久才确认连接
+  static constexpr uint64_t GAP_US = 1000000;      // 连接中命令间隔超过这个就算中断
+  static constexpr uint64_t CONFIRM_US = 1200000;  // 确认后播放连接动画的时间，之后交给控制器
+  static constexpr uint64_t DETACH_US = 1500000;   // 接管后这么久没有命令就算断开
 
   explicit Runtime(Host &h) : host_(h), dev_(h) {}
   ~Runtime() { delete app_; }
@@ -109,17 +128,23 @@ class Runtime {
   void hostFrame(uint64_t now);
   void release(uint64_t now);
   void tick(uint64_t now);
-  bool controlled() const { return controlled_; }
+  bool controlled() const { return state_ == CONTROLLED; }
+  bool accepts(uint8_t op) const;  // 控制器的这条命令现在能否执行
+  // CONNECT 的回复：u8 LinkState, u32 距离接管还有多少 ms
+  size_t status(uint64_t now, uint8_t *out) const;
 
  private:
+  enum State { OFFLINE, CONNECTING, CONFIRMING, CONTROLLED };
   void resetPeripherals();
-  void setControlled(bool on, uint64_t now);
+  void notify(Link ev, uint64_t now) {
+    if (app_) app_->link(dev_, ev, now);
+  }
 
   Host &host_;
   Device dev_;
   App *app_ = nullptr;
-  bool controlled_ = false;
-  uint64_t lastHostUs_ = 0;
+  State state_ = OFFLINE;
+  uint64_t lastHostUs_ = 0, sinceUs_ = 0;
 };
 
 // 七段码

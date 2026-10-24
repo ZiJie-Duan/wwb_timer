@@ -86,11 +86,14 @@ KEEPALIVE_S = 0.5  # 这么久没发命令就发一个 PING：设备 1.5s 收不
 
 
 class Device:
-    """打开即“插入控制器”：设备的脱机程序让出屏幕，外设恢复默认；close() 时释放，脱机程序恢复显示"""
+    """打开即“插入控制器”：设备确认连接（命令持续 3s）并播完连接动画后交给本程序，外设恢复默认；
+    close() 时释放，设备播放断开动画后回到脱机程序。一个程序就是一次连接"""
 
-    def __init__(self, port: str = "/dev/ttyACM0", baud: int = 921600, timeout: float = 2.0, keepalive: bool = True):
+    def __init__(self, port: str = "/dev/ttyACM0", baud: int = 921600, timeout: float = 2.0, keepalive: bool = True,
+                 connect: bool = True):
         """port 为 "sim" 或 "sim:主机:端口" 时连接网页模拟器，协议与真机完全相同。
-        keepalive：空闲时定时发 PING，保持对设备的控制"""
+        keepalive：空闲时定时发 PING，保持对设备的控制。
+        connect：等设备确认连接后再返回（约 4 秒）；否则在那之前显示类命令会回 NOT_READY"""
         self.timeout = timeout
         self.sim = port == "sim" or port.startswith("sim:")
         if self.sim:
@@ -129,6 +132,12 @@ class Device:
         self._reader.start()
         if keepalive:
             threading.Thread(target=self._keepalive_loop, name="wwb-keepalive", daemon=True).start()
+        if connect:
+            try:
+                self.connect()
+            except BaseException:
+                self.close()
+                raise
 
     # ------------------------------------------------------------ 连接
 
@@ -266,6 +275,25 @@ class Device:
         self._input_callbacks.append(callback)
 
     # ------------------------------------------------------------ 系统
+
+    def connect(self, timeout: float = 15.0):
+        """等设备确认连接：连上后命令要持续 3s 才确认，再播约 1.2s 连接动画，之后才能操作外设"""
+        deadline = time.monotonic() + timeout
+        while True:
+            try:
+                r = self.request(Op.CONNECT, timeout=1.0)
+            except DeviceError as e:
+                if e.code == Err.UNKNOWN_OP:
+                    return  # 旧固件没有连接确认
+                raise
+            except TimeoutError:
+                r = None  # 模拟器网页可能还没打开
+            if r and r[0] == 2:
+                return
+            if time.monotonic() > deadline:
+                raise TimeoutError("设备一直没有确认连接" + ("（模拟器网页打开了吗？）" if self.sim else ""))
+            wait = struct.unpack_from("<I", r, 1)[0] / 1000 if r and len(r) >= 5 else 0.1
+            time.sleep(min(max(wait, 0.02), 0.1))
 
     def ping(self, payload: bytes = b"") -> bytes:
         return self.request(Op.PING, payload)
