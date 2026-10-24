@@ -1,7 +1,7 @@
 // wwb timer：脱机计时器（没有控制器时运行）
 //
 // 开关拨上 = 计时，拨下 = 停止；时间一直累计，断电保留。开关在上面时开机 = 清零。
-// 数码管显示 时:分，OLED 显示秒。每完成一次“开 → 关”，点阵从左上角起多亮一个点（低亮度，最多 64 个）。
+// 数码管显示 时:分，OLED 显示秒和一分钟进度。每完成一次“开 → 关”，点阵从左上角起多亮一个点（低亮度，最多 64 个）。
 // 开机后每隔一段时间提示“插入控制器”，直到第一次拨开关或接入控制器。
 // 控制器连接、确认、中断、断开各有一段插头动画；接管期间计时照常按开关进行。
 #include <math.h>
@@ -24,8 +24,8 @@ constexpr uint64_t HINT_US = 5200 * MS;
 constexpr uint64_t HINT_GAP_US = 10 * S;
 constexpr uint64_t ABORT_US = 900 * MS;
 constexpr uint64_t DETACH_US = 2000 * MS;
-constexpr uint64_t START_US = 1200 * MS;
-constexpr uint64_t STOP_US = 1500 * MS;
+constexpr uint64_t START_US = 1450 * MS;
+constexpr uint64_t STOP_US = 1800 * MS;
 constexpr uint64_t FADE_IN_US = 300 * MS;
 constexpr uint64_t ROLL_US = 180 * MS;      // 换秒时数字滚动
 constexpr uint64_t SAVE_EVERY_US = 30 * S;  // 计时中定期保存，断电最多丢这么久
@@ -41,7 +41,7 @@ struct Saved {
   uint64_t totalMs;
 };
 
-const uint8_t *const SECONDS = u8g2_font_logisoso38_tn;
+const uint8_t *const SECONDS = u8g2_font_logisoso28_tn;
 const uint8_t *const SMALL = u8g2_font_logisoso16_tr;
 const uint8_t *const CN = u8g2_font_wqy12_t_gb2312b;
 const uint8_t *const TINY = u8g2_font_6x10_tf;
@@ -49,6 +49,13 @@ const uint8_t *const TINY = u8g2_font_6x10_tf;
 const uint8_t CHEVRON_UP[4] = {0x18, 0x3C, 0x66, 0xC3};
 constexpr float CHEVRON_ROW_S = 0.03f;  // 箭头每走一行的时间
 constexpr float ARROWS_S = 0.67f;       // 三个箭头全部移出画面的时间（22 行）
+constexpr float FALL_S = 0.3f;          // 停止时新的点落进格子的时间
+
+// 箭头之后，已有的点按顺序“刷刷刷”快速亮起：每点 40ms，点多时整体不超过 0.5s
+float sweepStep(uint32_t n) { return n == 0 ? 0 : fminf(0.04f, 0.5f / (n < 64 ? n : 64)); }
+float sweepS(uint32_t n) { return (n < 64 ? n : 64) * sweepStep(n); }
+// 停止时新点落地的时刻（OLED 上的次数同时 +1）
+float landS(uint32_t slot) { return ARROWS_S + sweepS(slot) + FALL_S; }
 
 float sec(uint64_t us) { return us / 1e6f; }
 float span(float t, float a, float b) { return clamp01((t - a) / (b - a)); }
@@ -71,6 +78,12 @@ void setDot(uint8_t rows[8], int r, int c) {
 
 void dots(uint8_t rows[8], uint32_t n) {
   for (uint32_t i = 0; i < n && i < SLOTS; i++) setDot(rows, i / 8, i % 8);
+}
+
+// 已有的 n 个点在 t 秒时亮到了第几个
+void sweepDots(uint8_t rows[8], uint32_t n, float t) {
+  float step = sweepStep(n);
+  dots(rows, step <= 0 ? n : (uint32_t)fminf((float)n, t / step + 1));
 }
 
 // 三个箭头依次穿过画面，t 秒；ARROWS_S 时全部移出。向下时整体上下翻转
@@ -146,6 +159,7 @@ class Timer : public App {
   void oledBoot(float t);
   void oledHint(float t);
   void oledLink(float t);
+  void ring(int cx, int cy, int r, int density);
   void drawPlug(int bodyX);
   void drawSocket(bool lit);
   void drawSparks(float s);
@@ -288,15 +302,8 @@ void Timer::drawSeg(Device &d, uint64_t now) {
     timeSegs(totalMs(now) / 1000, colon, s);
     if (scene_ == RESET) {
       on = t > 0.9f || (int)(t / 0.15f) % 2 == 0;
-    } else if (running_) {
-      if (fx_ == FX_START && now - fxAt_ < 300 * MS) level = 7;
-    } else {
-      float b = breathNow(now);
-      if (b >= 0.85f) level = 3;
-      else if (b >= 0.6f) level = 2;
-      else if (b >= 0.4f) level = 1;
-      else if (b >= 0.15f) level = 0;
-      else on = false;
+    } else if (fx_ == FX_START && now - fxAt_ < 300 * MS) {
+      level = 7;  // 开始时亮一下；停止时数码管不闪，只有 OLED 闪
     }
   }
   d.segConfig(level, on);
@@ -404,49 +411,39 @@ void Timer::drawMatrix(Device &d, uint64_t now) {
 
     case NONE:
       if (fx_ == FX_START) {
-        // 三个箭头冲上去，全部出画面后从中心炸开一圈，再落回点数
+        // 三个箭头冲上去，全部出画面后已有的点快速依次亮起，再暗下去
         float e = sec(now - fxAt_);
-        const float RING = ARROWS_S + 0.3f;
+        level = MX_BRIGHT;
         if (e < ARROWS_S) {
-          level = MX_BRIGHT;
           arrows(rows, e, true);
         } else {
-          dots(rows, cycles_);
-          if (e < RING) {
-            level = MX_BRIGHT;
-            float rad = (e - ARROWS_S) / 0.3f * 6;
-            for (int r = 0; r < 8; r++) {
-              for (int c = 0; c < 8; c++) {
-                float dist = sqrtf((r - 3.5f) * (r - 3.5f) + (c - 3.5f) * (c - 3.5f));
-                if (fabsf(dist - rad) < 0.7f) setDot(rows, r, c);
-              }
-            }
-          } else {
-            level = (uint8_t)lerp(MX_BRIGHT, MX_DIM, span(e, RING, sec(START_US)));
-          }
+          float done = ARROWS_S + sweepS(cycles_);
+          sweepDots(rows, cycles_, e - ARROWS_S);
+          if (e > done) level = (uint8_t)lerp(MX_BRIGHT, MX_DIM, span(e, done, done + 0.25f));
         }
       } else if (fx_ == FX_STOP) {
-        // 三个箭头落下、全部出画面后，新的一个点掉进自己的格子，闪两下
+        // 三个箭头落下、全部出画面后，已有的点快速依次亮起，新的一个点掉进自己的格子，闪两下
         float e = sec(now - fxAt_);
         uint32_t slot = cycles_ - 1;
-        const float LAND = ARROWS_S + 0.35f;
+        float swept = ARROWS_S + sweepS(slot), land = landS(slot);
+        level = MX_BRIGHT;
         if (e < ARROWS_S) {
-          level = MX_BRIGHT;
           arrows(rows, e, false);
+        } else if (e < swept) {
+          sweepDots(rows, slot, e - ARROWS_S);
         } else if (slot >= SLOTS) {
           // 格子已经满了：整屏闪一下
           dots(rows, SLOTS);
-          if (e < ARROWS_S + 0.2f) memset(rows, 0xFF, 8);
-          level = (uint8_t)lerp(MX_BRIGHT, MX_DIM, span(e, ARROWS_S + 0.2f, sec(STOP_US)));
-        } else if (e < LAND) {
-          level = 4;
+          if (e < swept + 0.15f) memset(rows, 0xFF, 8);
+          level = (uint8_t)lerp(MX_BRIGHT, MX_DIM, span(e, swept + 0.15f, sec(STOP_US)));
+        } else if (e < land) {
           dots(rows, slot);
-          float k = span(e, ARROWS_S, LAND);
+          float k = span(e, swept, land);
           setDot(rows, (int)(k * k * (slot / 8) + 0.5f), slot % 8);
         } else {
           dots(rows, slot);
-          if ((int)((e - LAND) / 0.07f) % 2 == 0 || e > LAND + 0.28f) setDot(rows, slot / 8, slot % 8);
-          level = (uint8_t)lerp(MX_BRIGHT, MX_DIM, span(e, LAND, sec(STOP_US)));
+          if ((int)((e - land) / 0.07f) % 2 == 0 || e > land + 0.28f) setDot(rows, slot / 8, slot % 8);
+          level = (uint8_t)lerp(MX_BRIGHT, MX_DIM, span(e, land, sec(STOP_US)));
         }
       } else {
         dots(rows, cycles_);
@@ -479,90 +476,177 @@ void Timer::drawOled(Device &d, uint64_t now) {
   d.oled(c_);
 }
 
+// 虚线圆：density 1 = 实线，越大越稀（用来做淡入淡出的圆环）
+void Timer::ring(int cx, int cy, int r, int density) {
+  if (r <= 0 || density <= 0) return;
+  int n = (int)(2 * PI * r);
+  for (int i = 0; i < n; i += density) {
+    float a = i * 2 * PI / n;
+    c_.pixel(cx + lroundf(cosf(a) * r), cy + lroundf(sinf(a) * r), true);
+  }
+}
+
+// 计时画面。开始 / 停止时：旧内容消散 → 大图标（▶ / ‖）登场、圆环扩散 / 收拢 → 图标飞到状态栏 →
+// 状态文字逐字打出、两位秒数依次滑入、一分钟进度条展开
 void Timer::oledTimer(uint64_t now, const char *label) {
   u8g2_t *u = c_.u();
   c_.clear();
   uint64_t ms = totalMs(now);
   bool blink = blinkOn(now);
   float fe = sec(now - fxAt_);
+  bool fxStart = fx_ == FX_START, fxStop = fx_ == FX_STOP;
 
-  // 状态行
-  u8g2_SetDrawColor(u, 1);
-  if (running_) {
-    if (blink) u8g2_DrawDisc(u, 4, 6, 3, U8G2_DRAW_ALL);
-    else u8g2_DrawCircle(u, 4, 6, 3, U8G2_DRAW_ALL);
-  } else {
-    u8g2_DrawBox(u, 1, 2, 3, 9);
-    u8g2_DrawBox(u, 6, 2, 3, 9);
+  // 各元素的入场进度：0 = 还没出现，1 = 就位
+  float dIn[2] = {1, 1}, statusIn = 1, countIn = 1, barIn = 1, oldFade = 0;
+  int dir = 1;  // 秒数从下面 (+1) / 上面 (-1) 滑进来
+  bool icon = true;
+  if (fxStart) {
+    oldFade = 1 - span(fe, 0, 0.25f);
+    dIn[0] = span(fe, 0.45f, 0.8f), dIn[1] = span(fe, 0.55f, 0.9f);
+    statusIn = span(fe, 0.6f, 0.85f), countIn = span(fe, 0.75f, 0.95f), barIn = span(fe, 0.65f, 1.05f);
+    icon = fe >= 0.6f;
+  } else if (fxStop) {
+    dir = -1;
+    oldFade = 1 - span(fe, 0, 0.3f);
+    dIn[0] = span(fe, 0.75f, 1.1f), dIn[1] = span(fe, 0.85f, 1.2f);
+    statusIn = span(fe, 0.8f, 1.0f), barIn = span(fe, 0.85f, 1.15f);
+    icon = fe >= 0.9f;
   }
-  u8g2_SetFont(u, CN);
-  u8g2_DrawUTF8(u, 12, 11, label ? label : running_ ? "计时中" : "已停止");
-  char buf[32];
-  snprintf(buf, sizeof buf, running_ ? "第 %u 次" : "共 %u 次", (unsigned)(running_ ? cycles_ + 1 : cycles_));
-  u8g2_DrawUTF8(u, 128 - u8g2_GetUTF8Width(u, buf), 11, buf);
+  bool entering = (fxStart || fxStop) && dIn[0] <= 0;  // 还在旧内容消散 / 大图标阶段
 
-  // 秒（时、分在数码管上）。换秒时变了的那一位往上滚
+  // ---- 秒数（时、分在数码管上）与一分钟进度条
+  const int DW = 18, H = 28, UNIT_W = 12, GAP = 2, TOP = 15, BASE = 44;
+  const int BAR_Y = 52, BAR_W = 124;
   int secNow = (int)(ms / 1000 % 60), secPrev = (secNow + 59) % 60;
   uint64_t into = ms % 1000;
   float roll = running_ && ms >= 1000 && into < ROLL_US / MS ? easeOutCubic(into / (float)(ROLL_US / MS)) : 1;
-  const int DW = 25, H = 38, UNIT_W = 12, GAP = 3;
-  int x0 = (128 - (2 * DW + GAP + UNIT_W)) / 2, base = 52;
-  if (fx_ == FX_START) base += lroundf((1 - easeOutBack(fe / 0.4f)) * 10);
-  if (fx_ == FX_STOP) base -= lroundf((1 - easeOutCubic(fe / 0.4f)) * 6);
-  bool show = !(label && sec(now - sceneAt_) < 0.9f && (int)(sec(now - sceneAt_) / 0.15f) % 2);
-  if (show) {
+  int x0 = (128 - (2 * DW + GAP + UNIT_W)) / 2;
+  float minute = (ms % 60000) / 60000.f;
+  bool flash = label && sec(now - sceneAt_) < 0.9f && (int)(sec(now - sceneAt_) / 0.15f) % 2;
+
+  auto drawSeconds = [&](bool animate) {
     u8g2_SetFont(u, SECONDS);
+    u8g2_SetClipWindow(u, 0, TOP, 128, BASE + 1);
     for (int i = 0; i < 2; i++) {
       int cur = i ? secNow % 10 : secNow / 10, prev = i ? secPrev % 10 : secPrev / 10;
       char a[2] = {(char)('0' + cur), 0}, b[2] = {(char)('0' + prev), 0};
       int x = x0 + i * DW;
+      int off = animate ? dir * lroundf((1 - easeOutBack(dIn[i])) * (H + 6)) : 0;
+      if (animate && dIn[i] <= 0) continue;
       if (roll >= 1 || cur == prev) {
-        u8g2_DrawStr(u, x, base, a);
-        continue;
+        u8g2_DrawStr(u, x, BASE + off, a);
+      } else {  // 换秒：变了的那一位往上滚
+        int dy = lroundf(roll * (H + 4));
+        u8g2_DrawStr(u, x, BASE + off - dy, b);
+        u8g2_DrawStr(u, x, BASE + off + H + 4 - dy, a);
       }
-      u8g2_SetClipWindow(u, x, base - H, x + DW, base + 1);
-      int dy = lroundf(roll * (H + 4));
-      u8g2_DrawStr(u, x, base - dy, b);
-      u8g2_DrawStr(u, x, base + H + 4 - dy, a);
-      u8g2_SetMaxClipWindow(u);
     }
+    u8g2_SetMaxClipWindow(u);
     u8g2_SetFont(u, CN);
-    u8g2_DrawUTF8(u, x0 + 2 * DW + GAP, base, "秒");
-  }
-  if (!running_ && !label) c_.fade(0, 13, 128, 41, (int)lroundf(breathNow(now) * 16));
+    u8g2_DrawUTF8(u, x0 + 2 * DW + GAP, BASE, "秒");
+    if (animate) c_.fade(x0 + 2 * DW, TOP, UNIT_W + GAP + 2, H + 2, (int)(fminf(dIn[0], dIn[1]) * 16));
+  };
+  auto drawBar = [&](float in) {
+    // 一分钟进度：外框从中间向两边展开，里面的填充跟着时间走；每 15 秒一个刻度
+    int w = lroundf(easeOutCubic(in) * 128);
+    if (w < 4) return;
+    u8g2_DrawRFrame(u, (128 - w) / 2, BAR_Y, w, 8, 2);
+    if (in < 1) return;
+    int fill = lroundf(minute * BAR_W);
+    if (fill > 0) u8g2_DrawBox(u, 2, BAR_Y + 2, fill, 4);
+    for (int q = 1; q < 4; q++) u8g2_DrawPixel(u, 2 + q * BAR_W / 4, BAR_Y + 9);
+  };
 
-  // 底部 64 格：和点阵一样，每完成一次开关多亮一格
-  const float LAND = ARROWS_S + 0.35f;  // 与点阵上新点落地同步
-  bool landing = fx_ == FX_STOP && cycles_ <= SLOTS;
-  for (int i = 0; i < SLOTS; i++) {
-    int cx = 1 + (i % 32) * 4, cy = 56 + (i / 32) * 4;
-    bool fresh = landing && (uint32_t)i == cycles_ - 1;
-    bool lit = (uint32_t)i < cycles_ && !(fresh && fe < LAND);
-    if (running_ && (uint32_t)i == cycles_ && blink) lit = true;
-    if (fresh && fe >= LAND && fe < LAND + 0.3f) {
-      u8g2_DrawBox(u, cx - 1, cy - 1, 5, 5);  // 刚加上的一格先大后小
-      continue;
+  if (entering) {
+    // 旧内容消散
+    if (oldFade > 0) {
+      if (!flash) drawSeconds(false);
+      drawBar(1);
+      c_.fade(0, 0, 128, 64, (int)(oldFade * 16));
     }
-    if (lit) u8g2_DrawBox(u, cx, cy, 3, 3);
-    else u8g2_DrawPixel(u, cx + 1, cy + 1);
-  }
-  if (landing && fe >= LAND) {
-    // “+1” 从新格子上方飘起、淡出
-    float k = span(fe, LAND, sec(STOP_US));
-    int i = cycles_ - 1, cx = 1 + (i % 32) * 4;
-    int ty = 54 - (int)(easeOutCubic(k) * 8);
-    int tx = cx - 4 < 0 ? 0 : cx - 4 > 116 ? 116 : cx - 4;
-    u8g2_SetFont(u, TINY);
-    u8g2_SetDrawColor(u, 2);
-    u8g2_DrawStr(u, tx, ty, "+1");
-    u8g2_SetDrawColor(u, 1);
-    c_.fade(tx, ty - 8, 13, 9, (int)((1 - span(k, 0.4f, 1)) * 16));
+  } else {
+    if (!flash) drawSeconds(fxStart || fxStop);
+    drawBar(barIn);
+    if (!running_ && !label && !fxStop) c_.fade(0, TOP - 2, 128, 64 - TOP + 2, (int)lroundf(breathNow(now) * 16));
   }
 
-  // 开始：一条亮带自下而上扫过；停止：自上而下
-  if ((fx_ == FX_START || fx_ == FX_STOP) && fe < 0.35f) {
-    int band = (int)(easeInOutCubic(fe / 0.35f) * 72);
-    c_.invert(0, fx_ == FX_START ? 64 - band : band - 8, 128, 6);
+  // ---- 状态行：图标、逐字打出的状态、次数
+  u8g2_SetDrawColor(u, 1);
+  if (icon) {
+    if (running_) {
+      if (blink) u8g2_DrawDisc(u, 4, 6, 3, U8G2_DRAW_ALL);
+      else u8g2_DrawCircle(u, 4, 6, 3, U8G2_DRAW_ALL);
+    } else {
+      u8g2_DrawBox(u, 1, 2, 3, 9);
+      u8g2_DrawBox(u, 6, 2, 3, 9);
+    }
+  }
+  u8g2_SetFont(u, CN);
+  const char *st = label ? label : running_ ? "计时中" : "已停止";
+  int chars = (int)ceilf(statusIn * 3);
+  if (chars > 0) {
+    char part[16];
+    memcpy(part, st, chars * 3);  // 每个汉字 3 字节
+    part[chars * 3] = 0;
+    u8g2_DrawUTF8(u, 12, 11, part);
+  }
+  if (countIn > 0) {
+    unsigned n = running_ ? cycles_ + 1 : cycles_;
+    char num[12], old[12];
+    snprintf(num, sizeof num, "%u", n);
+    snprintf(old, sizeof old, "%u", n ? n - 1 : 0);
+    const char *pre = running_ ? "第 " : "共 ", *suf = " 次";
+    int wp = u8g2_GetUTF8Width(u, pre), wn = u8g2_GetUTF8Width(u, num), ws = u8g2_GetUTF8Width(u, suf);
+    int x = 128 - wp - wn - ws;
+    u8g2_DrawUTF8(u, x, 11, pre);
+    u8g2_DrawUTF8(u, x + wp + wn, 11, suf);
+    // 停止：新的点在点阵上落地时，次数往上滚一格，旁边飘出“+1”
+    float land = fxStop ? landS(cycles_ - 1) : 0;
+    float k = fxStop ? span(fe, land, land + 0.2f) : 1;
+    u8g2_SetClipWindow(u, x + wp, 0, x + wp + wn + 1, 13);
+    if (k >= 1) {
+      u8g2_DrawUTF8(u, x + wp, 11, num);
+    } else {
+      int dy = lroundf(easeOutCubic(k) * 13);
+      u8g2_DrawUTF8(u, x + wp, 11 - dy, old);
+      u8g2_DrawUTF8(u, x + wp, 24 - dy, num);
+    }
+    u8g2_SetMaxClipWindow(u);
+    if (countIn < 1) c_.fade(x, 0, 128 - x, 13, (int)(countIn * 16));
+    if (fxStop && fe >= land) {
+      float p = span(fe, land, sec(STOP_US));
+      int ty = 26 - (int)(easeOutCubic(p) * 8);
+      u8g2_SetFont(u, TINY);
+      u8g2_DrawStr(u, x + wp + wn - 6, ty, "+1");
+      c_.fade(x + wp + wn - 6, ty - 8, 13, 9, (int)((1 - span(p, 0.4f, 1)) * 16));
+    }
+  }
+
+  // ---- 大图标
+  if (fxStart && fe < 0.6f) {
+    // ▶ 弹出来，一圈波纹扩散，然后缩小飞进状态栏
+    float pop = easeOutBack(span(fe, 0, 0.3f)), fly = easeInOutCubic(span(fe, 0.3f, 0.6f));
+    float h = 28 * pop * (1 - fly) + 7 * fly;
+    float cx = 64 + (4 - 64) * fly, cy = 32 + (6 - 32) * fly;
+    u8g2_DrawTriangle(u, lroundf(cx - h * 0.4f), lroundf(cy - h / 2), lroundf(cx - h * 0.4f), lroundf(cy + h / 2),
+                      lroundf(cx + h * 0.5f), lroundf(cy));
+    if (fe > 0.1f && fe < 0.55f) {
+      float k = span(fe, 0.1f, 0.55f);
+      ring(64, 32, 18 + lroundf(easeOutCubic(k) * 34), 1 + (int)(k * 4));
+    }
+  } else if (fxStop && fe < 0.9f) {
+    // ‖ 从上面落下来，一圈波纹向里收拢，然后缩小飞进状态栏
+    float drop = easeOutBack(span(fe, 0, 0.35f)), fly = easeInOutCubic(span(fe, 0.6f, 0.9f));
+    for (int i = 0; i < 2; i++) {
+      float bx = (i ? 67 : 53), by = -30 + 49 * drop, bw = 8, bh = 26;    // 大图标的位置
+      float sx = (i ? 6 : 1), sy = 2, sw = 3, sh = 9;                      // 状态栏图标的位置
+      u8g2_DrawBox(u, lroundf(bx + (sx - bx) * fly), lroundf(by + (sy - by) * fly), lroundf(bw + (sw - bw) * fly),
+                   lroundf(bh + (sh - bh) * fly));
+    }
+    if (fe > 0.15f && fe < 0.6f) {
+      float k = span(fe, 0.15f, 0.6f);
+      ring(64, 32, 50 - lroundf(easeInOutCubic(k) * 30), 1 + (int)((1 - k) * 4));
+    }
   }
 }
 
