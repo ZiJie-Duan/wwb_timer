@@ -3,7 +3,7 @@
 // 开关拨上 = 计时，拨下 = 停止；时间一直累计，断电保留。开关在上面时开机 = 清零。
 // 数码管显示 时:分，OLED 显示秒和一分钟进度。每完成一次“开 → 关”，点阵从左上角起多亮一个点（低亮度，最多 64 个）。
 // 开机后每隔一段时间提示“插入控制器”，直到第一次拨开关或接入控制器。
-// 控制器连接、确认、中断、断开各有一段插头动画；接管期间计时照常按开关进行。
+// 控制器连接、确认、中断、断开各有一段插头动画，断开后再亮一次标题；接管期间计时照常按开关进行。
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
@@ -142,7 +142,7 @@ class Timer : public App {
   void frame(Device &d, uint64_t now) override;
 
  private:
-  enum Scene { NONE, BOOT, RESET, HINT, CONNECTING, CONNECTED, ABORTED, DETACH };
+  enum Scene { NONE, BOOT, RESET, HINT, CONNECTING, CONNECTED, ABORTED, DETACH, TITLE };
   enum Fx { FX_NONE, FX_START, FX_STOP };
 
   uint64_t totalMs(uint64_t now) const { return baseMs_ + (running_ && now > runStart_ ? (now - runStart_) / MS : 0); }
@@ -260,7 +260,9 @@ void Timer::update(uint64_t now) {
   } else if (scene_ == HINT && el >= HINT_US) {
     setScene(NONE, now);
     nextHint_ = now + HINT_GAP_US;
-  } else if ((scene_ == DETACH && el >= DETACH_US) || (scene_ == ABORTED && el >= ABORT_US)) {
+  } else if (scene_ == DETACH && el >= DETACH_US) {
+    setScene(TITLE, now);  // 控制器断开后再亮一次标题，回到计时器
+  } else if ((scene_ == TITLE && el >= BOOT_US) || (scene_ == ABORTED && el >= ABORT_US)) {
     setScene(NONE, now);
   }
   if (scene_ == NONE && hinting_ && now >= nextHint_) setScene(HINT, now);
@@ -319,6 +321,7 @@ void Timer::drawMatrix(Device &d, uint64_t now) {
 
   switch (scene_) {
     case BOOT:
+    case TITLE:
       // 对角线扫亮、扫灭，再把已有的点逐个点亮
       level = 4;
       for (int r = 0; r < 8; r++) {
@@ -461,7 +464,8 @@ void Timer::drawMatrix(Device &d, uint64_t now) {
 void Timer::drawOled(Device &d, uint64_t now) {
   float t = sec(now - sceneAt_);
   switch (scene_) {
-    case BOOT: oledBoot(t); break;
+    case BOOT:
+    case TITLE: oledBoot(t); break;
     case HINT: oledHint(t); break;
     case CONNECTING:
     case CONNECTED:
