@@ -1,299 +1,300 @@
-# dao timer：道家赛博计时器
+**English** · [简体中文](dao.zh-CN.md)
 
-一个游戏化的计时器，清晰精致的 1 位像素风（参考元气骑士、Minit），主角是 Q 版小道士。**计时以芯片为准**：芯片里的脱机计时器 wwb timer 一直在计时、断电保存。dao timer 是控制器程序（`apps/dao/`），只负责表演：
+# dao timer: a Taoist cyber timer
 
-- 开关拨上，开一场**法事**：燃香、画符、结印、炼丹、步罡……
-- 开关拨下，进入**歇**：品茗、高卧、观云、扫叶……
+A gamified timer in crisp, polished 1-bit pixel art (inspired by Soul Knight and Minit), starring a chibi Taoist priest. **The chip is the source of truth for time**: the offline timer inside the chip, wwb timer, keeps counting at all times and survives power loss. dao timer is a controller program (`apps/dao/`) that only handles the show:
 
-OLED 和点阵用来演出，数码管显示累计时间。
+- Switch up: a **ritual** (法事) begins: burning incense, drawing talismans, forming hand seals, brewing elixirs, pacing the Dipper...
+- Switch down: the priest **rests** (歇): sipping tea, napping, watching clouds, sweeping leaves...
 
-目前有：
+The OLED and the LED matrix carry the performance; the 4-digit display shows the accumulated time.
 
-| 类别 | 数量 |
+Current content:
+
+| Category | Count |
 |---|---|
-| 法事 | 55 种 |
-| 歇 | 54 种 |
-| 起卦 | 9 种 |
-| 特殊场景（开坛、天地重开） | 2 个 |
+| Rituals | 55 |
+| Rests | 54 |
+| Omens (divination, 起卦) | 9 |
+| Special scenes (Opening the Altar, Heaven and Earth Reborn) | 2 |
 
-## 规则
+## Rules
 
-| 时机 | 条件 | 播放 | 之后 |
+| When | Condition | Plays | Then |
 |---|---|---|---|
-| 拨上 | 有未做完的法事 | 歇·退场 → 法事·恢复 → 法事·持续 | 接着做 |
-| 拨上 | 没有 | （1/3 概率起卦 →）新法事·入场 → 持续 | 开新法事 |
-| 拨下 | 本场法事累计 ≥ 10 分钟（跨暂停累加） | 法事·圆满 → 歇·入场 → 歇·持续 | 法事结束，道行 +1 |
-| 拨下 | 不满 10 分钟 | 法事·中断 → 歇·入场 → 歇·持续 | 法事保留 |
+| Switch up | An unfinished ritual exists | Rest·exit → Ritual·resume → Ritual·sustain | Continue it |
+| Switch up | None | (1/3 chance of an omen →) New ritual·enter → sustain | Start a new ritual |
+| Switch down | This ritual's total ≥ 10 minutes (accumulated across pauses) | Ritual·complete → Rest·enter → Rest·sustain | Ritual ends, Dao merit +1 |
+| Switch down | Under 10 minutes | Ritual·interrupt → Rest·enter → Rest·sustain | Ritual is kept |
 
-- **持续阶段可以无限进行。** 一轮（如一炷香烧完）结束后会“续”，比如吹走残香、再插一炷，进入下一轮。
-- **随机挑选。** 法事、歇和起卦方式都随机抽，最近用过的十几个不会重复出现。
-- **起卦的结果**（六爻）成为这场法事的卦，有些法事会把它画出来。
-- **过渡中途变卦。** 过渡动画还没播完开关又拨了，当前这段会加速（×3）播完再走新路线。不同场景之间有 0.35 秒的抖动溶解。
-- **开坛。** 程序启动、接管设备时播放，显示境界和道行。
-- **境界**按累计小时数定：凡人、练气 1h、筑基 10h、结丹 30h、元婴 80h、化神 200h、炼虚 500h、合体 1000h、大乘 2000h、渡劫 5000h。
-- **天地重开。** 开关在上时开机，芯片会清零，dao timer 随之播放天地重开，法事和道行一并清零。
-- **BOOT 键**：显示境界、道行、修行时长和当前法事。
+- **The sustain phase can run forever.** When one round ends (e.g. a stick of incense burns out), it "renews": the remains are blown away, a fresh stick goes in, and the next round starts.
+- **Random picks.** Rituals, rests and omen methods are all drawn at random; the dozen or so most recently used won't repeat.
+- **The omen's result** (a six-line hexagram) becomes this ritual's hexagram; some rituals draw it.
+- **Changing course mid-transition.** If the switch flips again before a transition finishes, the current segment plays out at ×3 speed and then takes the new route. Scene changes use a 0.35-second dithered dissolve.
+- **Opening the Altar (开坛).** Plays when the program starts and takes over the device; shows the cultivation realm and Dao merit.
+- **Realm** (境界) is set by total hours: Mortal (凡人), Qi Refining (练气) 1h, Foundation Building (筑基) 10h, Core Formation (结丹) 30h, Nascent Soul (元婴) 80h, Spirit Transformation (化神) 200h, Void Refining (炼虚) 500h, Body Integration (合体) 1000h, Great Ascension (大乘) 2000h, Tribulation (渡劫) 5000h.
+- **Heaven and Earth Reborn (天地重开).** Powering on with the switch up makes the chip reset to zero; dao timer then plays Heaven and Earth Reborn, and the ritual and Dao merit are cleared too.
+- **BOOT button**: shows realm, Dao merit, total practice time and the current ritual.
 
-## 断线、换上位机
+## Disconnects and switching hosts
 
-时间全取自芯片（协议 `APP_STATE`，开始、停止、清零时芯片主动上报）。
+All time comes from the chip (protocol `APP_STATE`; the chip pushes reports on start, stop and reset).
 
-法事进度存在芯片的控制器存储（`APP_DATA`）里，内容很少：当前是哪场法事、法事开始时的累计时间、随机种子、卦、道行、最近用过的场景。只在开新法事、圆满、清零时写一次。
+Ritual progress lives in the chip's controller storage (`APP_DATA`), and it is tiny: which ritual is current, the accumulated time when the ritual started, the random seed, the hexagram, Dao merit, and the recently used scenes. It is written only when a new ritual starts, on completion, and on reset.
 
-所以树莓派死机、拔线、换一台上位机，重新接上后都还是同一场法事、同样的变化，进度按芯片时间接上。断线期间的启停也能对上：比如断线期间满 10 分钟后停下，重连时直接圆满。
+So if the Raspberry Pi crashes, the cable is pulled, or a different host takes over, reconnecting brings back the same ritual with the same variations, with progress picked up from the chip's time. Starts and stops during a disconnect line up too: for example, if the ritual passed 10 minutes and was stopped while disconnected, it completes immediately on reconnect.
 
-## 运行
+## Running
 
-模拟器（`python -m wwb.sim`，网页右侧程序列表）里有三个入口：
+The simulator (`python -m wwb.sim`, program list on the right of the web page) has three entries:
 
-| 程序 | 用途 |
+| Program | Purpose |
 |---|---|
-| dao timer | 正式版 |
-| dao timer 快进 | 法事进度快 30 倍：10 分钟圆满变成 20 秒，审查流程用 |
-| dao timer 画廊 | 逐个播放全部场景。法事走完整流程（入场、持续快进一轮多、中断、歇、恢复、圆满）。短按 BOOT 下一幕，长按跳到下一类，开关拨下暂停；数码管显示第几幕，场景名在输出面板 |
+| dao timer | The real thing |
+| dao timer 快进 (fast-forward) | Ritual progress runs 30× faster: the 10-minute completion takes 20 seconds; for reviewing the flow |
+| dao timer 画廊 (gallery) | Plays every scene in turn. Rituals go through the full flow (enter, sustain fast-forwarded for a bit over one round, interrupt, rest, resume, complete). Short-press BOOT for the next scene, long-press to jump to the next category, switch down to pause; the 4-digit display shows the scene number and the scene name appears in the output panel |
 
 ```bash
-python -m apps.dao [--complete-after 600] [--timescale 1]    # 真机或 --port sim
-python -m apps.dao_gallery --only r2.zhufu                   # 只看一个场景
-python -m wwb.remote --deploy apps.dao                       # 部署到树莓派常驻（见 raspberrypi.md）
+python -m apps.dao [--complete-after 600] [--timescale 1]    # real device, or --port sim
+python -m apps.dao_gallery --only r2.zhufu                   # view just one scene
+python -m wwb.remote --deploy apps.dao                       # deploy to the Raspberry Pi as a resident service (see raspberrypi.md)
 ```
 
-真机要先烧录带 `APP_STATE` 的固件。
+A real device must first be flashed with firmware that supports `APP_STATE`.
 
-## 代码
+## Code
 
 ```
 apps/dao/
-  engine/      画布 gfx、像素工具 pix（精灵、描边、烟团、火星、震屏、闪白）、小道士 chars、
-               缓动 anim、易学符号 symbols、中文数字干支 cn、场景基类 scene、
-               导演 director（状态机）、运行 runtime（直播 / 画廊 / 输出）
-               （art / rig 是试过又放弃的灰度渲染，现在不用）
-  rituals/     法事（r0_incense.py 是示范，r1-r6 各一批）
-  rests/       歇（x1-x6）
-  omens/       起卦（o_*）
-  special/     开坛、天地重开
-  tools/       preview（渲染联系表 PNG）、check（异常、耗时、缺字、衔接）
-  catalog/     各批次的目录：每个场景的文化依据、出处、各阶段内容
-  assets/fonts Fusion Pixel 像素字体（12px / 8px，GBK 子集，OFL 协议）
-  AUTHORING.md 场景制作指南
+  engine/      canvas gfx, pixel tools pix (sprites, outlines, smoke puffs, sparks, screen shake, white flash), the priest chars,
+               easing anim, I Ching symbols symbols, Chinese numerals & stems/branches cn, scene base class scene,
+               director director (state machine), runtime runtime (live / gallery / output)
+               (art / rig are a grayscale renderer that was tried and abandoned; unused now)
+  rituals/     rituals (r0_incense.py is the example; r1-r6 one batch each)
+  rests/       rests (x1-x6)
+  omens/       omens (o_*)
+  special/     Opening the Altar, Heaven and Earth Reborn
+  tools/       preview (renders contact-sheet PNGs), check (exceptions, timing, missing glyphs, transitions)
+  catalog/     per-batch catalogs: each scene's cultural basis, sources, and the content of each phase
+  assets/fonts Fusion Pixel pixel font (12px / 8px, GBK subset, OFL license)
+  AUTHORING.md scene authoring guide
 ```
 
 ```bash
-conda run -n esp32 python -m apps.dao.tools.check            # 全部场景，约 70 秒
+conda run -n esp32 python -m apps.dao.tools.check            # all scenes, about 70 seconds
 conda run -n esp32 python -m apps.dao.tools.preview r1.bell --out /tmp/pv
 ```
 
-性能预算：电脑上每帧中位 ≤ 3ms、最大 ≤ 15ms，这样在树莓派 Zero 2 W 上能跑 30 帧/秒。目前全部场景中位都不到 0.7ms。
-check 还会检查文字堆叠：字与字重叠、字被画面压住都算错误（g.text 默认给字描黑边，字最后画）。
+Performance budget: on a PC, median ≤ 3 ms and max ≤ 15 ms per frame, so it runs at 30 fps on a Raspberry Pi Zero 2 W. Currently every scene's median is under 0.7 ms.
+check also checks for text stacking: characters overlapping each other, or characters covered by the artwork, count as errors (g.text outlines text in black by default, and text is drawn last).
 
-## 场景一览
+## Scene catalog
 
-（由代码里的 `name` / `desc` 生成；每个场景的依据、出处与各阶段细节见各批次目录）
+(Generated from the `name` / `desc` in the code; for each scene's basis, sources and per-phase details, see the batch catalogs.)
 
-### 法事（55）
+### Rituals (55)
 
 
-**r 示范** 
+**r Example** 
 
-| id | 名字 | 画面 |
+| id | Name | Scene |
 |---|---|---|
-| `r.incense` | 燃香 | 小道士走到供桌前捧香三拜，三炷香带着灵光飞进香炉；香随计时燃短，烟团飘升，烧完再请一炷 |
+| `r.incense` | Burning incense (燃香) | The priest walks to the offering table, holds up incense and bows three times; three sticks fly into the censer trailing spirit light. The incense burns down with the timer, smoke puffs rise, and when it burns out he offers another |
 
-**r1 香火·供奉·科仪** [目录](../apps/dao/catalog/r1.md)
+**r1 Incense, offerings and liturgy** [catalog](../apps/dao/catalog/r1.md)
 
-| id | 名字 | 画面 |
+| id | Name | Scene |
 |---|---|---|
-| `r1.bell` | 鸣钟 | 小道士拉绳撞钟：紧十八、慢十八、不紧不慢又十八，两遍一百零八响，钟身一震声波荡开，梁上小鸟吓一跳 |
-| `r1.flower` | 散花 | 小道士从花篮里拈花抛上半空，花“嘭”地盛开（散花偈十一种花），花瓣打旋飘落铺满地；一轮后旋风卷走花毯 |
-| `r1.fruit` | 供果 | 小道士一颗颗把寿桃蜜橘托上高脚果盘码成果塔，麻雀来偷吃被剑指吓飞；一轮后神明享供，果化光点升起 |
-| `r1.joss` | 化宝 | 小道士把纸元宝一锭锭抛进砖砌金炉，火舌窜出炉口、炉顶喷火星；捅炉膛、被火星吓一跳；一轮后天降新元宝 |
-| `r1.lamp` | 长明灯 | 夜殿里小道士守着琉璃长明灯：挑灯花、剑指落帘挡风；油随计时变浅，油尽提壶添油 |
-| `r1.memorial` | 焚表 | 小道士执大笔在表屏上一字字写表文，写满钤“道经师宝”印，表从下往上焚化；圆满时纸灰化鹤飞去 |
-| `r1.river` | 放河灯 | 中元夜满月下，小道士在江边跪下一盏盏放莲花灯，灯顺水漂向天边越来越小；鱼跃、萤火；一轮后纸扎法船驶过天边 |
-| `r1.sprinkle` | 洒净 | 清晨坛场，小道士柳枝蘸净水一甩，水珠扇形飞出落地溅花，绕着净水盂换方向洒；诵净天地神咒，一轮后甘露注盂 |
-| `r1.wine` | 三献酒 | 露天醮坛，长幡飘飘；小道士提执壶初献、亚献、终献，斟满的爵口飘酒香；一轮后捧爵酹酒于地 |
+| `r1.bell` | Striking the bell (鸣钟) | The priest pulls the rope to strike the bell: eighteen fast, eighteen slow, eighteen in between, twice over for 108 strikes. The bell shudders, sound waves ripple out, and a bird on the beam jumps in fright |
+| `r1.flower` | Scattering flowers (散花) | The priest plucks flowers from a basket and tosses them high; each one bursts into bloom with a "pop" (the eleven flowers of the Flower-Scattering Verse), petals spiral down and carpet the ground; after a round a whirlwind sweeps the carpet away |
+| `r1.fruit` | Offering fruit (供果) | One by one the priest stacks longevity peaches and honey tangerines onto a tall fruit stand into a tower; sparrows sneak in to steal and are scared off by his sword-finger gesture; after a round the gods accept the offering and the fruit rises as specks of light |
+| `r1.joss` | Burning joss treasure (化宝) | The priest tosses paper ingots one after another into a brick furnace; flames leap from the mouth and sparks shoot from the top. He pokes the firebox and gets startled by sparks; after a round new ingots fall from the sky |
+| `r1.lamp` | Ever-burning lamp (长明灯) | In a dark hall the priest tends a glass ever-burning lamp: trimming the wick, lowering the curtain with a sword-finger gesture to block the wind. The oil drops with the timer; when it runs dry he tops it up from a pot |
+| `r1.memorial` | Burning the memorial (焚表) | With a big brush the priest writes a memorial to heaven character by character on a screen, stamps it with the "道经师宝" (Treasure of the Dao, Scripture and Master) seal when full, and it burns from the bottom up; on completion the ashes turn into a crane and fly away |
+| `r1.river` | Floating river lanterns (放河灯) | Under the full moon of the Ghost Festival (中元) night, the priest kneels by the river releasing lotus lanterns one by one; they drift toward the horizon, growing smaller. Fish leap, fireflies glow; after a round a paper Dharma boat sails across the horizon |
+| `r1.sprinkle` | Purifying with water (洒净) | At the altar at dawn, the priest dips a willow branch in pure water and flicks it; droplets fan out and splash on the ground as he circles the water bowl, changing direction. He chants the Incantation for Purifying Heaven and Earth; after a round sweet dew pours into the bowl |
+| `r1.wine` | Three offerings of wine (三献酒) | At an open-air jiao altar with long banners fluttering, the priest lifts the ewer for the first, second and final offerings; the aroma of wine drifts from the brimming jue cup; after a round he lifts the cup and pours the wine onto the ground |
 
-**r2 符箓·咒·印** [目录](../apps/dao/catalog/r2.md)
+**r2 Talismans, incantations and seals** [catalog](../apps/dao/catalog/r2.md)
 
-| id | 名字 | 画面 |
+| id | Name | Scene |
 |---|---|---|
-| `r2.fayin` | 盖法印 | 小道士拿“道经师宝”法印在印泥里按两下，跳起来落印、左右压实，文书飘起来亮出朱印，再飞到右边叠起来 |
-| `r2.feifu` | 飞符 | 小道士从坛上抽符、扬手掷出，符翻飞着入阵绕符胆盘旋；九符齐了化作流光直上九霄，天上回应一道光 |
-| `r2.fushui` | 化符入水 | 夜里院中，小道士拈一道黄符在清水碗上方，符从末端慢慢烧向指尖，符灰打着旋落进碗里泛起涟漪，隔一阵剑指在水面画讳 |
-| `r2.ganshi` | 辰州赶尸 | 月夜山路卷动，戴斗笠的小道士高举摄魂铃在前，两位额贴黄符的客人平伸双臂一蹦一跳跟着走 |
-| `r2.jinguang` | 金光神咒 | 小道士盘坐蒲团诵《金光神咒》，每句换一个手诀，咒牌逐字写出，身后像素金光一层层长出；雷霆、小鬼、金光速现各有一出 |
-| `r2.jingxin` | 净心神咒 | 月夜湖边，小道士盘坐岸石念《净心神咒》，咒句逐字写在夜空，水面倒映远山明月，波纹一句比一句平，终至水平如镜 |
-| `r2.kaiguang` | 开光点睛 | 小道士揭去红布，左手宝镜引日光照像，右手朱笔依次点开神像的眼、耳、鼻、口、心，五官齐明时神像放光 |
-| `r2.zhenzhai` | 镇宅符 | 小道士把镇宅符“啪”地贴上宅门，守在门前；夜里小鬼飘来，门上符光一射散成点，天亮鸡鸣再入夜 |
-| `r2.zhufu` | 朱砂画符 | 小道士站在脚凳上，转身蘸朱砂、回身逐笔写出三清符头、敕令、护法纹、符胆、符脚，撞笔、剑指、盖印，符成放光 |
+| `r2.fayin` | Stamping the Dharma seal (盖法印) | The priest presses the "道经师宝" seal into the ink paste twice, leaps up to stamp it, presses left and right; the document floats up to show the red seal, then flies right onto a stack |
+| `r2.feifu` | Flying talismans (飞符) | The priest draws talismans from the altar and hurls them; they tumble into the formation and circle its talisman core. Once all nine are in place they become a streak of light shooting into the ninth heaven, and the sky answers with a beam |
+| `r2.fushui` | Dissolving a talisman in water (化符入水) | In the courtyard at night, the priest holds a yellow talisman above a bowl of clear water; it burns slowly from the tip toward his fingers, the ash spirals into the bowl and ripples spread. Every so often he traces a secret name on the water with a sword-finger |
+| `r2.ganshi` | Corpse herding of Chenzhou (辰州赶尸) | On a scrolling moonlit mountain road, the priest in a bamboo hat leads with a soul-summoning bell held high; two "guests" with yellow talismans on their foreheads hop after him, arms stretched straight out |
+| `r2.jinguang` | Golden Light Incantation (金光神咒) | Seated on a cushion, the priest recites the Golden Light Incantation, changing hand seal with each line; the incantation tablet fills in character by character as pixel golden light grows layer by layer behind him. Thunder, little ghosts, and "golden light, appear swiftly" each get their own moment |
+| `r2.jingxin` | Heart-Purifying Incantation (净心神咒) | On a moonlit lakeshore, the priest sits on a rock reciting the Heart-Purifying Incantation; each line is written across the night sky character by character. The water mirrors distant hills and the bright moon, and the ripples calm a little more with every line until the lake is flat as a mirror |
+| `r2.kaiguang` | Consecrating the statue (开光点睛) | The priest pulls off the red cloth; with a mirror in his left hand he reflects sunlight onto the statue, and with a vermilion brush in his right he dots open its eyes, ears, nose, mouth and heart in turn. When all are open, the statue glows |
+| `r2.zhenzhai` | House-guarding talisman (镇宅符) | The priest slaps a house-guarding talisman onto the door with a "pa!" and stands guard. At night little ghosts drift in; the talisman flashes and scatters them into dots. Dawn comes, the rooster crows, and night falls again |
+| `r2.zhufu` | Drawing a cinnabar talisman (朱砂画符) | Standing on a footstool, the priest turns to dip into cinnabar, turns back, and writes stroke by stroke the Three Pure Ones head, the decree (敕令), guardian patterns, talisman core and talisman foot; a brush-strike, a sword-finger, the seal, and the finished talisman glows |
 
-**r3 手诀·法器·步罡** [目录](../apps/dao/catalog/r3.md)
+**r3 Hand seals, ritual implements and Bugang** [catalog](../apps/dao/catalog/r3.md)
 
-| id | 名字 | 画面 |
+| id | Name | Scene |
 |---|---|---|
-| `r3.bugang` | 步罡踏斗 | 星夜坛场上铺开罡单，小道士掐剑诀按禹步一星一星踏过去，落脚处涟漪荡开、星被踏亮，天上北斗随之亮起 |
-| `r3.dizhong` | 摇帝钟 | 小道士高举帝钟摇响，声波荡开；一团声光随计时沿九级云阶一级级上升，到天门开 |
-| `r3.fuchen` | 挥拂尘 | 小道士执拂尘一下下挥扫，一阵阵风把满屋浮尘卷出画外；月洞窗里的太极随计时由暗转明 |
-| `r3.hulu` | 葫芦收妖 | 小道士托着大葫芦对准一团瞪眼的妖气，妖气被拉长、一粒粒螺旋吸进葫芦，小鬼被整只扯进去；随计时妖气越缩越小 |
-| `r3.lingpai` | 令牌拍案 | 小道士抓起五雷令牌高举、猛拍法案，案震尘起火星迸；五营令旗随计时一面面飞来插进旗筒 |
-| `r3.longjiao` | 吹龙角 | 小道士在山崖上鼓腮吹龙角，角声荡上天；天兵驾小云一名名降下，在右边三排云头上列阵 |
-| `r3.qixing` | 七星剑 | 小道士夜里在石坛上舞七星剑：劈、刺、挽剑花，剑气飞出；剑身随计时亮起北斗七星，天上北斗随之连成 |
-| `r3.shoujue` | 掐诀 | 小道士立掌掐诀，右边特写框里一只大号像素手依次结剑诀、灵官诀、五雷诀、三山诀，各有剑气、灵火、雷光、三山 |
-| `r3.zhaoyao` | 照妖镜 | 小道士高举铜镜照向来客，光照到的那一截显出原形（狐、白骨、蛇）；镜光随计时越张越开，原形越露越多 |
+| `r3.bugang` | Bugang (步罡踏斗, pacing the Big Dipper) | At a starlit altar a star map is laid out; forming a sword seal, the priest walks the Steps of Yu star by star. Ripples spread where he steps, each star lights up underfoot, and the Big Dipper in the sky lights up with it |
+| `r3.dizhong` | Ringing the emperor bell (摇帝钟) | The priest holds the emperor bell high and rings it; sound waves spread. A ball of sound-light climbs a nine-step cloud stair one step at a time with the timer, until the Gate of Heaven opens |
+| `r3.fuchen` | Waving the horsetail whisk (挥拂尘) | The priest sweeps with his horsetail whisk stroke after stroke, gusts carrying the room's dust out of frame; the taiji in the moon window brightens from dark to light with the timer |
+| `r3.hulu` | Gourd captures a demon (葫芦收妖) | The priest aims a big gourd at a glaring cloud of demon qi; it stretches out and spirals into the gourd bit by bit, and little ghosts get yanked in whole; the demon qi shrinks with the timer |
+| `r3.lingpai` | Slamming the command token (令牌拍案) | The priest grabs the Five Thunders command token, raises it and slams it on the altar table; the table shakes, dust flies and sparks burst. With the timer, the command flags of the Five Camps fly in one by one into the flag holder |
+| `r3.longjiao` | Blowing the dragon horn (吹龙角) | On a cliff the priest puffs his cheeks and blows the dragon horn; the sound rises to heaven. Heavenly soldiers descend one by one on little clouds and line up on three rows of clouds to the right |
+| `r3.qixing` | Seven-Star Sword (七星剑) | At night on a stone altar the priest wields the Seven-Star Sword: chop, thrust, sword flourish, sword qi flying out. With the timer the seven stars of the Dipper light up along the blade, and the Dipper in the sky connects with them |
+| `r3.shoujue` | Forming hand seals (掐诀) | The priest raises a palm and forms seals; in a close-up frame on the right a big pixel hand forms, in turn, the sword seal, Lingguan seal, Five Thunders seal and Three Mountains seal, each with its effect: sword qi, spirit fire, thunder light, three mountains |
+| `r3.zhaoyao` | Demon-revealing mirror (照妖镜) | The priest holds up a bronze mirror at a visitor; the part lit by its beam shows the true form (fox, skeleton, snake). The beam widens with the timer, revealing more and more |
 
-**r4 内丹·炼养·功法** [目录](../apps/dao/catalog/r4.md)
+**r4 Inner alchemy, cultivation and exercises** [catalog](../apps/dao/catalog/r4.md)
 
-| id | 名字 | 画面 |
+| id | Name | Scene |
 |---|---|---|
-| `r4.baduanjin` | 八段锦 | 道观院子里小道士一式一式练八段锦：托天、开弓射雕、单举、后瞧、摇头摆尾、攀足、攒拳、七颠 |
-| `r4.furnace` | 炼丹 | 小道士跪在丹灶前摇蒲扇看火，八卦炉随火候文武变化冒丹气；十分钟一转，九转丹成金丹冲天 |
-| `r4.liuzi` | 六字诀 | 小道士站在山崖上对着云海吐纳，鼻吸清气，口呼一字：嘘呵呼呬吹嘻，放大的字骑着气浪飘向云海 |
-| `r4.orbit` | 小周天 | 静室里小道士盘坐蒲团闭目，一颗光点沿督脉上行、任脉下行绕身运转，过尾闾夹脊玉枕三关时放亮 |
-| `r4.sunmoon` | 采日月 | 小道士盘坐云海孤峰顶，白天面日服日芒、夜里对月服月华，日月东升西落，一轮一昼夜 |
-| `r4.taiji` | 太极拳 | 湖边石台上小道士打太极拳，身后点画太极图缓缓转，手过处留下行云流水的轨迹；野马分鬃、白鹤亮翅、云手、单鞭 |
-| `r4.turtle` | 龟息 | 池边石上小道士闭目调息，鼻前悬一根鸿毛；池中老龟跟着伸颈吞气、缩颈闭气，心中默数到一百二十 |
-| `r4.wuqinxi` | 五禽戏 | 林间空地上小道士练五禽戏，虎鹿熊猿鹤轮流跑来蹲在旁边跟着做；虎扑震地、猿摘摘桃、鸟飞展翅 |
-| `r4.yuanying` | 结丹出神 | 小道士盘坐莲台，光从下丹田升到中、上丹田，身后圆光增到三圈、头顶三花开放，功成元婴自顶门升起 |
+| `r4.baduanjin` | Baduanjin (八段锦, Eight Brocades) | In the temple courtyard the priest practices the Eight Brocades form by form: holding up the sky, drawing the bow to shoot the eagle, single-arm raise, looking back, shaking head and wagging tail, touching the toes, clenching fists, seven heel bounces |
+| `r4.furnace` | Brewing the elixir (炼丹) | Kneeling at the elixir stove, the priest fans the fire and watches it; the bagua furnace puffs elixir vapor as the fire shifts between gentle and fierce. One turn every ten minutes; at nine turns the golden elixir is done and shoots into the sky |
+| `r4.liuzi` | Six Healing Sounds (六字诀) | On a cliff facing a sea of clouds, the priest breathes in clear qi through the nose and exhales one sound through the mouth: xu, he, hu, si, chui, xi (嘘呵呼呬吹嘻); each enlarged character rides a wave of breath toward the clouds |
+| `r4.orbit` | Microcosmic orbit (小周天) | In a quiet room the priest sits on a cushion, eyes closed; a point of light rises along the Governing Vessel and descends along the Conception Vessel around his body, flaring as it passes the three gates: Weilü, Jiaji and Yuzhen |
+| `r4.sunmoon` | Absorbing sun and moon (采日月) | On a lone peak above a sea of clouds, the priest faces the sun by day to take in its rays and the moon by night to take in its essence; sun and moon rise in the east and set in the west, one round per day and night |
+| `r4.taiji` | Taiji boxing (太极拳) | On a stone platform by the lake the priest does taiji boxing; a dotted taiji diagram slowly turns behind him and his hands leave flowing trails: Parting the Wild Horse's Mane, White Crane Spreads Its Wings, Cloud Hands, Single Whip |
+| `r4.turtle` | Turtle breathing (龟息) | On a rock by the pond the priest regulates his breath, eyes closed, a goose feather hanging before his nose; an old turtle in the pond stretches its neck to swallow air and pulls it in to hold its breath along with him, as he silently counts to 120 |
+| `r4.wuqinxi` | Five Animals Play (五禽戏) | In a forest clearing the priest practices the Five Animals Play; tiger, deer, bear, monkey and crane take turns running over to crouch beside him and follow along. The tiger pounce shakes the ground, the monkey picks peaches, the bird spreads its wings |
+| `r4.yuanying` | Forming the core, emerging spirit (结丹出神) | Seated on a lotus throne, light rises from the priest's lower dantian to the middle and upper dantian; the halo behind him grows to three rings, three flowers bloom above his head, and on success the Nascent Soul rises from the crown of his head |
 
-**r5 易象·星斗·雷法·风水** [目录](../apps/dao/catalog/r5.md)
+**r5 I Ching images, stars, thunder rites and feng shui** [catalog](../apps/dao/catalog/r5.md)
 
-| id | 名字 | 画面 |
+| id | Name | Scene |
 |---|---|---|
-| `r5.bagua` | 先天后天 | 八角卦盘上，八卦按《说卦传》“帝出乎震……成言乎艮”的次序，一卦卦从先天位飞到后天位；小道士持拂尘剑指相送 |
-| `r5.hetu` | 河图洛书 | 河中龙马负图、神龟负书浮出水面，图版上的点按河图、洛书一组组浮现；小道士在岸上剑指点数，左上写口诀 |
-| `r5.leifa` | 掌心雷 | 乌云压顶，小道士托掌引雷入掌心，推掌发出横雷劈散邪祟；一轮五雷，第五雷后五雷齐发 |
-| `r5.liangyi` | 太极化生 | 小道士静坐观想，面前太极一分为二，层层加一倍长成伏羲六十四卦次序图；扫到哪一卦，右下就画出那一卦 |
-| `r5.lidou` | 礼斗 | 斗坛前小道士举烛点七星灯，每点一盏，天上北斗便亮一颗、连一段星线；七灯俱明后灯焰升天 |
-| `r5.luopan` | 寻龙 | 小道士托罗盘翻山寻龙脉，山景横移；每站停下举盘，罗盘特写里天盘转动、磁针渐稳，定出坐向；最后插旗点穴 |
-| `r5.qiyu` | 祈雨 | 小道士登坛摇令旗，云从两边聚拢遮住烈日，龙在云间穿行，雨落旱田，禾苗随计时长高抽穗；一场雨后云开挂虹 |
-| `r5.wuxing` | 五行生克 | 五枚五行令牌围成相生之环、内含相克五角星；当令一行反白放特效，气沿外弧流向所生的一行，隔一阵相克一击 |
-| `r5.xiu` | 观星 | 观星台上小道士守着浑仪，二十八宿一宿一宿从东边升起：指认、转仪对准、展卷记录；一轮看满一周天 |
+| `r5.bagua` | Earlier and Later Heaven (先天后天) | On an octagonal bagua board, the eight trigrams fly one by one from their Earlier Heaven positions to their Later Heaven positions, in the order of the Shuogua commentary ("The Lord comes forth in Zhen ... and completes his word in Gen"); the priest sees them off with whisk and sword-finger |
+| `r5.hetu` | Hetu and Luoshu (河图洛书) | A dragon-horse bearing the Hetu and a divine turtle bearing the Luoshu rise from the river; the dots on the tablets appear group by group following the Hetu and the Luoshu. The priest counts them with a sword-finger from the bank, and the mnemonic is written at top left |
+| `r5.leifa` | Palm thunder (掌心雷) | Under heavy black clouds, the priest draws lightning into his palm and pushes it out as a horizontal bolt that blasts evil apart; five thunders per round, and after the fifth all five strike together |
+| `r5.liangyi` | Taiji gives birth (太极化生) | The priest sits in visualization; before him the taiji splits in two, doubling layer by layer into Fu Xi's sequence diagram of the 64 hexagrams; whichever hexagram the sweep reaches is drawn at bottom right |
+| `r5.lidou` | Dipper worship (礼斗) | Before the Dipper altar the priest lifts a candle to light the seven-star lamps; with each lamp, a star of the Big Dipper lights up in the sky and one more star line connects. When all seven are lit, the flames rise to heaven |
+| `r5.luopan` | Seeking the dragon (寻龙) | Holding a luopan compass, the priest crosses mountains seeking the dragon vein as the landscape scrolls; at each stop he raises the compass, and in a close-up the heaven dial turns and the needle settles to fix the orientation; finally he plants a flag to mark the spot |
+| `r5.qiyu` | Praying for rain (祈雨) | The priest mounts the altar and waves the command flag; clouds gather from both sides to cover the blazing sun, a dragon weaves through them, rain falls on the parched fields, and the seedlings grow and head out with the timer; after the rain the clouds part and a rainbow appears |
+| `r5.wuxing` | Five Phases (五行生克) | Five Phase tokens form a generating cycle around a controlling five-pointed star; the phase in season inverts and plays its effect, qi flows along the outer arc to the phase it generates, and every so often a controlling strike lands |
+| `r5.xiu` | Stargazing (观星) | On the observatory the priest tends the armillary sphere as the 28 lunar mansions rise from the east one by one: he points one out, turns the sphere to align, and unrolls a scroll to record it; one round covers the full circuit of the heavens |
 
-**r6 赛博道法** [目录](../apps/dao/catalog/r6.md)
+**r6 Cyber Daoist arts** [catalog](../apps/dao/catalog/r6.md)
 
-| id | 名字 | 画面 |
+| id | Name | Scene |
 |---|---|---|
-| `r6.binary` | 二进制卦 | 小道士在拨码面板上一个个拨开关数数，CRT 上的卦从坤（000000）数到乾（111111），溢出归零——反者道之动 |
-| `r6.codefu` | 代码符箓 | 小道士在工位上敲代码，每敲完一行，右边的绘图仪就在符纸上画出一部分；编译 0 ERR，急急如律令 |
-| `r6.gcode` | 机臂结印 | 小道士比划手诀，旁边的工业机械臂照着 G 代码一节节弯指头学：剑诀放剑气、握固收气环、掌心雷电弧四射 |
-| `r6.ledincense` | 赛博烧香 | 小道士把电子香炉插上电，三根 LED 香逐格点亮、冒数字烟；他低头敲电子木鱼“功德+1”，烧完扫码续费 |
-| `r6.livestream` | 直播祈福 | 小道士举着自拍杆在供桌前开直播，弹幕刷“福生无量天尊”，爱心往上飘，有人送火箭，香火条涨满 |
-| `r6.scope` | 示波太极 | 小道士把示波器探头夹在发髻上拧旋钮，X-Y 模式下的李萨如圆一段段长成太极：无极、太极、生阳、两仪 |
-| `r6.tesla` | 雷法除虫 | 小道士执法剑指挥特斯拉线圈，爬来的 bug 一靠近就被一道电弧劈成碎屑；蓄满五雷齐落 |
-| `r6.upload` | 云端上表 | 小道士把表文封进信封塞进笔记本，Wi-Fi 链路把小信封一个个送进云中南天门；掉线时举着手机找信号 |
-| `r6.wafer` | 晶圆炼丹 | 八卦炉改的光刻机，小道士扇炉火，圆窗里的晶圆按蛇形一颗颗曝光；九转丹成蹦出一颗印着“丹”的芯片 |
+| `r6.binary` | Binary hexagram (二进制卦) | The priest flips DIP switches one by one to count; the hexagram on the CRT counts from Kun (000000) to Qian (111111), overflows and wraps to zero: "Reversal is the movement of the Dao" |
+| `r6.codefu` | Code talisman (代码符箓) | At his workstation the priest types code; each finished line makes the plotter on the right draw part of a talisman on paper. Compiles with 0 ERR: "swiftly, as the law commands!" (急急如律令) |
+| `r6.gcode` | Robot-arm hand seals (机臂结印) | The priest gestures hand seals and an industrial robot arm beside him copies them, bending its fingers joint by joint per G-code: the sword seal fires sword qi, the fist seal draws in a qi ring, palm thunder throws arcs everywhere |
+| `r6.ledincense` | Cyber incense (赛博烧香) | The priest plugs in an electronic censer; three LED incense sticks light up segment by segment and emit digital smoke. He taps an electronic wooden fish, "功德+1" (merit +1), and when it burns out he scans a QR code to top up |
+| `r6.livestream` | Livestreamed blessing (直播祈福) | Holding a selfie stick, the priest goes live before the offering table; the danmaku fills with "福生无量天尊" (blessings, Heavenly Worthy of Boundless Life), hearts float up, someone sends a rocket, and the incense meter fills |
+| `r6.scope` | Oscilloscope taiji (示波太极) | The priest clips an oscilloscope probe to his topknot and turns the knobs; in X-Y mode a Lissajous circle grows into a taiji stage by stage: wuji, taiji, yang arising, the two modes |
+| `r6.tesla` | Thunder rite debugging (雷法除虫) | Sword in hand, the priest commands a Tesla coil; any bug that crawls close is zapped to bits by an arc; when fully charged, five thunders strike together |
+| `r6.upload` | Memorial to the cloud (云端上表) | The priest seals the memorial in an envelope and stuffs it into a laptop; a Wi-Fi link carries little envelopes one by one into the Southern Heavenly Gate in the clouds; when the connection drops he holds up his phone hunting for signal |
+| `r6.wafer` | Wafer alchemy (晶圆炼丹) | A lithography machine converted from a bagua furnace; the priest fans the fire while the wafer in the round window is exposed die by die in a serpentine path; after nine turns a chip stamped "丹" (elixir) pops out |
 
-### 歇（54）
+### Rests (54)
 
 
-**x1 睡与梦** [目录](../apps/dao/catalog/x1.md)
+**x1 Sleep and dreams** [catalog](../apps/dao/catalog/x1.md)
 
-| id | 名字 | 画面 |
+| id | Name | Scene |
 |---|---|---|
-| `x1.bubble` | 打盹冒泡 | 丹房里小道士守着丹炉打盹，鼻涕泡随呼吸一大一小，头一点一点；泡破惊醒、师父一声咳，又装认真 |
-| `x1.butterfly` | 庄周梦蝶 | 大树下小道士倚树而眠，一条梦线连着翩翩飞的蝴蝶；蝴蝶歇在花上、落上鼻尖，一闪之间人蝶互换（物化） |
-| `x1.chentuan` | 陈抟高卧 | 华山石室岩檐下，小道士侧身支颐而卧（蛰龙睡），日月轮转、四季更替，仙鹤衔诏来也被一声大鼾吹走 |
-| `x1.gaomu` | 形如槁木 | 月洞窗前小道士凭几坐忘、一动不动：草长、藤爬、蛛网结起，小鸟在他头上筑巢孵蛋；一声长嘘，万物散去 |
-| `x1.huangliang` | 黄粱一梦 | 邸舍里小道士枕青瓷枕仰卧，梦泡里走马灯演一生（登第、出将、入相、封公、八十），梦破惊醒，灶上黄粱还没熟 |
-| `x1.huaxu` | 华胥梦游 | 夜空里小道士侧卧在祥云上睡着，飘带翻飞，云海和浮在云上的仙山往后流；白鹤伴飞、华胥牌坊迎面掠过 |
-| `x1.hugong` | 壶中天 | 散了市，小道士纵身跳进肆头挂的大葫芦里睡觉，葫芦随鼾声一鼓一鼓，肚上圆窗里日月轮转；楼上有人偷看 |
-| `x1.stars` | 卧数星斗 | 夏夜山坡上小道士仰卧，抬手指着北斗一颗颗数，星名、数字一个个冒出来；数着数着睡着，流星划过又惊醒 |
-| `x1.zhenliu` | 枕石漱流 | 溪边小道士枕石仰卧，斗笠盖脸、跷着脚，一只手垂进流水里；鱼跃、漂花、蜻蜓停脚尖，浪花溅耳斗笠一跳 |
+| `x1.bubble` | Dozing with a snot bubble (打盹冒泡) | In the elixir room the priest dozes by the furnace, a snot bubble swelling and shrinking with each breath, head nodding; the bubble pops, he jolts awake, the master coughs, and he pretends to be diligent again |
+| `x1.butterfly` | Zhuangzi's butterfly dream (庄周梦蝶) | Under a big tree the priest sleeps against the trunk, a dream line linking him to a fluttering butterfly; it rests on a flower, lands on his nose, and in a flash man and butterfly swap places (the transformation of things) |
+| `x1.chentuan` | Chen Tuan's long sleep (陈抟高卧) | Under the eaves of a stone chamber on Mount Hua, the priest lies on his side, chin in hand (the hibernating-dragon sleep); sun and moon cycle, the seasons turn, and even the crane bringing an imperial summons gets blown away by one big snore |
+| `x1.gaomu` | Body like withered wood (形如槁木) | Before a moon window the priest sits at a low table in sitting-forgetting, motionless: grass grows, vines climb, spiderwebs form, a bird builds a nest on his head and hatches eggs; one long exhale and everything scatters |
+| `x1.huangliang` | Yellow Millet Dream (黄粱一梦) | In an inn the priest lies on a celadon pillow; a dream bubble plays a whole life like a lantern show (passing the exams, general, chancellor, duke, eighty years old). The dream bursts, he wakes, and the millet on the stove isn't even cooked yet |
+| `x1.huaxu` | Wandering in Huaxu (华胥梦游) | In the night sky the priest sleeps curled on an auspicious cloud, ribbons fluttering, as the sea of clouds and immortal mountains floating on it stream past; a white crane flies alongside and the Huaxu archway sweeps by |
+| `x1.hugong` | Heaven in a gourd (壶中天) | When the market closes, the priest leaps into the big gourd hanging at the shop front to sleep; the gourd swells and shrinks with his snores, and in the round window on its belly sun and moon cycle; someone upstairs is peeking |
+| `x1.stars` | Counting stars lying down (卧数星斗) | On a summer-night hillside the priest lies on his back pointing at the Dipper, counting star by star as names and numbers pop up; he dozes off mid-count, and a shooting star wakes him again |
+| `x1.zhenliu` | Pillowed on stone, rinsed by the stream (枕石漱流) | By a stream the priest lies with his head on a rock, bamboo hat over his face, feet crossed, one hand trailing in the water; fish leap, flowers drift by, a dragonfly lands on his toe, and a splash hits his ear and makes the hat jump |
 
-**x2 琴棋书画·茶酒** [目录](../apps/dao/catalog/x2.md)
+**x2 Qin, chess, calligraphy, painting, tea and wine** [catalog](../apps/dao/catalog/x2.md)
 
-| id | 名字 | 画面 |
+| id | Name | Scene |
 |---|---|---|
-| `x2.goose` | 写经换鹅 | 小道士执提斗大笔在挂起的宣纸上一字一字写《黄庭经》，池中白鹅游弋；写完两句书罢笼鹅去 |
-| `x2.lanke` | 烂柯 | 小道士把斧子靠在石边与仙童对弈，日月飞转、白胡子越长越长、斧柄朽烂长蘑菇；局终斧头落地，“何不去”，换斧再来 |
-| `x2.liushang` | 曲水流觞 | 清溪蜿蜒，羽觞顺水漂流打转，停在小道士面前他就取觞饮酒、提笔赋诗，作不出就罚酒三觥 |
-| `x2.moon` | 邀月 | 月下梅边，小道士坐石独酌，举杯邀明月、对影成三人（影子实时投在地上）；不时起舞，月徘徊、影零乱 |
-| `x2.paint` | 丹青 | 小道士捏剑指驱笔作画：远山、皴峰、飞瀑、松、渔舟一笔笔画出，画成后画中活了；每三幅画一条龙，点睛即破纸飞去 |
-| `x2.qin` | 抚琴 | 月下松边，小道士坐在琴后抚七弦琴，右手勾挑、左手按徽吟猱，弦振音飘；不时高山、流水、无弦琴 |
-| `x2.slips` | 读经 | 夜读竹简：小道士扶着简卷一字一字读《道德经》《庄子》，读完一枚简往右卷一格；蠹鱼啃字，三食神仙字化为脉望飘去 |
-| `x2.tea` | 煮茶 | 小道士盘坐风炉前摇扇煮茶：鱼目、连珠、鼓浪三沸，出水、环激、投末、止沸，斟一碗捧着喝，一碗一句七碗茶歌 |
-| `x2.xiao` | 吹箫引凤 | 高台入云，小道士倚栏吹箫，箫声荡开；凤凰拖着长尾飞来绕一圈，落在望柱上点头，再飞走 |
+| `x2.goose` | Trading scripture for geese (写经换鹅) | With a huge brush the priest writes the Huangting Jing character by character on hanging xuan paper while white geese swim in the pond; after two lines he finishes, cages a goose, and leaves |
+| `x2.lanke` | The rotten axe handle (烂柯) | The priest leans his axe on a rock and plays go with an immortal boy; sun and moon whirl past, his white beard grows longer and longer, and the axe handle rots and sprouts mushrooms. The game ends, the axe head drops: "why not go?" He swaps in a new axe and starts again |
+| `x2.liushang` | Floating wine cups (曲水流觞) | A clear stream winds along; feathered wine cups drift and spin with the current, and when one stops in front of the priest he drinks and writes a poem; if he can't, the penalty is three cups |
+| `x2.moon` | Inviting the moon (邀月) | Beside plum blossoms under the moon, the priest drinks alone on a rock, raising his cup to invite the moon, making three with his shadow (the shadow is cast on the ground in real time); now and then he dances, the moon lingers, the shadow scatters |
+| `x2.paint` | Painting (丹青) | The priest guides a brush with a sword-finger: distant hills, textured peaks, a waterfall, pines and a fishing boat appear stroke by stroke, and the finished painting comes to life; every third painting is a dragon, and when its eyes are dotted it bursts through the paper and flies away |
+| `x2.qin` | Playing the qin (抚琴) | By a pine under the moon, the priest plays the seven-string qin: right hand plucking, left hand pressing the markers with vibrato and slides, strings humming and notes drifting; now and then High Mountains, Flowing Water, or the stringless qin |
+| `x2.slips` | Reading scripture (读经) | Reading bamboo slips at night: steadying the scroll, the priest reads the Daodejing and the Zhuangzi character by character, rolling one slip to the right each time he finishes one; a bookworm nibbles the text, and after eating "神仙" (immortal) three times it becomes a Maiwang and floats away |
+| `x2.tea` | Brewing tea (煮茶) | Seated before a wind stove, the priest fans and brews tea: three boils (fish eyes, strings of pearls, surging waves), then ladling out, swirling, adding the tea powder, stilling the boil; he pours a bowl and drinks, one line of the Seven Bowls of Tea song per bowl |
+| `x2.xiao` | Calling the phoenix with the flute (吹箫引凤) | On a tower reaching into the clouds, the priest leans on the rail playing the xiao flute; the sound spreads, a phoenix with a long tail flies in, circles once, lands on a post, nods, and flies off |
 
-**x3 山水天象** [目录](../apps/dao/catalog/x3.md)
+**x3 Landscapes and skies** [catalog](../apps/dao/catalog/x3.md)
 
-| id | 名字 | 画面 |
+| id | Name | Scene |
 |---|---|---|
-| `x3.cloud` | 坐看云起 | 小道士坐在崖头，看像素云朵一朵朵从山谷里冒出来、长大、升高、散去；倦鸟归山，小云飘到跟前被他一指点散 |
-| `x3.dawn` | 紫气东来 | 云海日出，光芒旋转，三缕紫气从日边流进西边的函谷关；小道士在山石上朝日拱手；不时老子骑青牛走进关门 |
-| `x3.falls` | 观瀑 | 两道断崖夹着瀑布，水纹往下冲、潭底白沫翻滚水珠四溅；小道士坐在潭边石上看，落叶翻下崖口、燕子穿雾、水雾里出虹 |
-| `x3.fish` | 濠梁观鱼 | 濠水石梁上，小道士（庄子）扶栏看鱼、戴冠的惠子在旁；五尾鯈鱼从容游动，两人一来一回辩“鱼之乐” |
-| `x3.moon` | 望月 | 江边小亭里小道士凭栏望月，月相按今晚真实的月龄画；星闪、月影碎银，举杯邀月，薄云掠月，雁过月前 |
-| `x3.pine` | 松风 | 崖头老松一枝长臂探向山谷，松下小道士盘坐听风；大风时松盖整排压弯回弹、松针飘落；松果落下、松鼠出来啃果 |
-| `x3.rain` | 听雨 | 檐廊下小道士盘坐听雨：檐口水珠一滴滴落在石上溅花，芭蕉被雨打得一颤一颤；喝茶、蛙鸣、远雷，蜗牛爬柱 |
-| `x3.snow` | 寒江独钓 | 千山覆雪，小道士戴笠披蓑坐在孤舟上垂钓；雪分三层飘落、斗笠积雪渐厚抖落，浮子一点，提竿多是空钩 |
-| `x3.tide` | 观潮 | 站在钱塘江鱼鳞石塘上看潮：一线潮从天边斜推过江面，越近越高，扫到塘下浪花溅起；三成潮头上立着举旗的弄潮儿 |
+| `x3.cloud` | Watching clouds rise (坐看云起) | The priest sits on a cliff edge watching pixel clouds emerge from the valley one by one, grow, rise and disperse; tired birds return to the mountain, and a little cloud drifts up to him and gets poked apart with a finger |
+| `x3.dawn` | Purple qi from the east (紫气东来) | Sunrise over a sea of clouds, rays rotating; three wisps of purple qi flow from the sun into Hangu Pass to the west. The priest salutes the sun from a rock; now and then Laozi rides his green ox through the gate |
+| `x3.falls` | Watching the waterfall (观瀑) | A waterfall between two cliffs, water patterns rushing down, white foam churning in the pool and spray flying; the priest watches from a rock by the pool as leaves tumble over the edge, swallows dart through the mist, and a rainbow forms in the spray |
+| `x3.fish` | Watching fish from the Hao bridge (濠梁观鱼) | On the stone bridge over the Hao River, the priest (as Zhuangzi) leans on the rail watching fish, with the capped Huizi beside him; five minnows swim at ease while the two go back and forth debating "the joy of fish" |
+| `x3.moon` | Gazing at the moon (望月) | In a small pavilion by the river, the priest leans on the rail gazing at the moon, drawn with tonight's real lunar phase; stars twinkle, the moon's reflection shatters into silver, he raises a cup to it, thin clouds drift across, geese fly past |
+| `x3.pine` | Wind in the pines (松风) | An old pine on the cliff stretches one long branch over the valley; the priest sits beneath it listening to the wind. In strong gusts the whole canopy bends and springs back and needles fall; a pine cone drops and a squirrel comes out to gnaw it |
+| `x3.rain` | Listening to rain (听雨) | Seated under the eaves, the priest listens to the rain: drops fall from the eaves one by one and splash on the stones, the banana leaves quiver under the rain; he drinks tea, frogs croak, distant thunder rolls, a snail climbs the pillar |
+| `x3.snow` | Fishing alone on the cold river (寒江独钓) | A thousand mountains under snow; in hat and straw cape the priest fishes from a lone boat. Snow falls in three layers, snow piles up on his hat until he shakes it off; the float bobs, and he mostly pulls up an empty hook |
+| `x3.tide` | Watching the tidal bore (观潮) | Standing on the fish-scale stone seawall of the Qiantang River: a single line of tide pushes diagonally across from the horizon, rising higher as it nears, and splashes up when it hits the wall; on three tenths of the waves a tide-rider stands holding a flag |
 
-**x4 仙踪灵兽** [目录](../apps/dao/catalog/x4.md)
+**x4 Immortal traces and spirit beasts** [catalog](../apps/dao/catalog/x4.md)
 
-| id | 名字 | 画面 |
+| id | Name | Scene |
 |---|---|---|
-| `x4.cicada` | 蝉蜕 | 老树干上一只大蝉一阵阵鸣唱，树下小道士听着打瞌睡；不时演一回金蝉脱壳 |
-| `x4.crane` | 鹤归华表 | 丹顶鹤立在华表顶上梳羽长鸣；小道士路过仰望，鹤腾空绕城楼盘旋，空中写出丁令威的诗，再落回柱顶 |
-| `x4.deer` | 白鹿衔芝 | 老松下的 Q 版白鹿与小道士：鹿眨眼抖耳翘尾、低头啃草；灵芝破土，小道士采来喂鹿，鹿衔芝而立，化光入身 |
-| `x4.firefly` | 腐草为萤 | 夏夜草边，小道士盘坐看萤；大萤火虫扑翅绕飞、落在他指尖，小萤火不时聚成离卦 |
-| `x4.fox` | 紫狐拜斗 | 夜里野狐坐在残碑前，击尾出火；顶着髑髅人立拜北斗，髑髅不坠就噗地化成一个露着尾巴的小道士 |
-| `x4.kunpeng` | 鲲鹏 | 北冥大鱼在水下游、拱出水面，跃出化为巨鹏，展翼垂天、水击三千里，扶摇而上，又坠海化鲲 |
-| `x4.qingniu` | 青牛西去 | 小道士骑着正脸大头的 Q 版青牛慢慢往西走，远山松云后退；读《道德经》、停下啃草、哞一声、蝴蝶落牛角 |
-| `x4.toad` | 刘海戏金蟾 | 小道士扮刘海挑着一串铜钱逗正脸的三足金蟾：眼珠跟钱转、喉囊鼓、吐舌卷虫；一挑竿，金蟾一跃咬住铜钱悠两下 |
-| `x4.turtle` | 曳尾涂中 | 小道士坐在濮水边垂钓，乌龟在泥滩上一步一顿地爬、拖出一道尾痕；它想起庙堂里供着的龟甲，摇摇头——吾将曳尾于涂中 |
+| `x4.cicada` | Cicada shell (蝉蜕) | A big cicada on an old tree trunk sings in bursts while the priest below listens and nods off; now and then it performs "the golden cicada sheds its shell" |
+| `x4.crane` | The crane returns to the pillar (鹤归华表) | A red-crowned crane stands atop a ceremonial pillar, preening and calling; the priest passes by and looks up, the crane takes off and circles the city tower, writing Ding Lingwei's poem in the air, then lands back on top |
+| `x4.deer` | White deer with lingzhi (白鹿衔芝) | A chibi white deer and the priest under an old pine: the deer blinks, flicks its ears, flips its tail, lowers its head to graze; a lingzhi mushroom breaks through the soil, the priest picks it and feeds the deer, the deer stands holding it, and it turns to light and enters its body |
+| `x4.firefly` | Rotting grass becomes fireflies (腐草为萤) | At the edge of the grass on a summer night, the priest sits watching fireflies; a big firefly flaps around and lands on his fingertip, and little fireflies now and then gather into the Li (☲) trigram |
+| `x4.fox` | Purple fox worships the Dipper (紫狐拜斗) | At night a wild fox sits before a broken stele and strikes its tail to make fire; wearing a skull, it stands up and bows to the Dipper, and if the skull doesn't fall, poof, it turns into a little priest with its tail still showing |
+| `x4.kunpeng` | Kun and Peng (鲲鹏) | The great fish of the Northern Darkness swims underwater, breaches the surface, leaps out and becomes the giant Peng bird; wings spread like clouds hanging from the sky, it beats the water for three thousand li, rides the whirlwind up, then plunges back into the sea as the Kun |
+| `x4.qingniu` | Green ox heads west (青牛西去) | The priest rides a big-headed, front-facing chibi green ox slowly westward as distant hills, pines and clouds recede; reading the Daodejing, stopping to graze, a "moo", a butterfly landing on a horn |
+| `x4.toad` | Liu Hai plays with the golden toad (刘海戏金蟾) | Dressed as Liu Hai, the priest dangles a string of coins to tease a front-facing three-legged golden toad: its eyes follow the coins, its throat sac puffs, its tongue snaps up a bug; one flick of the pole and the toad leaps, bites the coins and swings a couple of times |
+| `x4.turtle` | Dragging its tail in the mud (曳尾涂中) | The priest fishes by the Pu River while a turtle crawls across the mudflat step by halting step, dragging a tail trail; it recalls the turtle shell enshrined in the temple and shakes its head: "I'd rather drag my tail in the mud" |
 
-**x5 道观日常** [目录](../apps/dao/catalog/x5.md)
+**x5 Temple daily life** [catalog](../apps/dao/catalog/x5.md)
 
-| id | 名字 | 画面 |
+| id | Name | Scene |
 |---|---|---|
-| `x5.chop` | 劈柴 | 后院劈柴：搬木、抡斧、一顿、劈下，木屑飞溅、两半飞上柴垛；劈完擦汗喝水，再扛一捆回来 |
-| `x5.cook` | 烧火 | 斋堂砖灶前跪坐烧火：抽柴送进灶膛、拿吹火筒鼓腮吹三口，火苗蹿高；偶尔倒烟熏成花脸，锅盖噗噗直跳 |
-| `x5.garden` | 抱瓮灌园 | 井边桔槔不用，小道士蹲下沉瓮舀水、抱瓮浇菜，菜一趟趟长大；风吹桔槔吱呀，他摇摇头——羞而不为 |
-| `x5.hens` | 喂鸡 | 端着葫芦瓢撒谷子，三只母鸡一只公鸡跑来一粒粒啄；公鸡伸脖子打鸣，或者定住成了木鸡 |
-| `x5.herbs` | 采药 | 悬崖石台上背篓采药：药锄刨石缝、连根拔起甩进背篓，偶得灵芝；一团云涌来把他吞没——云深不知处 |
-| `x5.mend` | 补衲 | 夜里油灯下盘坐补衲衣：眯眼穿针、一针一针拉长线，咬断线头举起来对灯一照——大成若缺 |
-| `x5.mill` | 推磨 | 豆腐坊推石磨：推着磨杠绕磨一圈圈走，绕到磨后只露出上半身；豆浆一滴滴流进木桶，满了提出去换空桶 |
-| `x5.sweep` | 扫叶 | 银杏树下扫落叶：竹扫帚一推一收，叶子扫成堆，一阵风又全卷走——损之又损，以至于无为 |
-| `x5.water` | 挑水 | 挑着扁担两只木桶走山路：远山松树往后退，扁担一颤一颤、桶里水面晃荡；青蛙从桶里跳出来，小鸟落在扁担头 |
+| `x5.chop` | Chopping wood (劈柴) | Chopping wood in the backyard: setting the log, swinging the axe, a pause, the split; chips fly and the two halves land on the woodpile; done, he wipes his sweat, drinks water, and carries in another bundle |
+| `x5.cook` | Tending the stove (烧火) | Kneeling at the brick stove in the dining hall: feeding sticks into the firebox, puffing his cheeks to blow three times through a blowpipe, flames leaping up; sometimes the smoke blows back and blackens his face, and the pot lid rattles |
+| `x5.garden` | Watering with a jar (抱瓮灌园) | The well sweep by the well goes unused; the priest crouches, sinks a jar to scoop water and carries it in his arms to water the vegetables, which grow with each trip; the wind creaks the well sweep and he shakes his head: ashamed to use a machine |
+| `x5.hens` | Feeding the chickens (喂鸡) | Scattering grain from a gourd ladle; three hens and a rooster run over to peck grain by grain; the rooster stretches its neck to crow, or freezes into a "wooden rooster" |
+| `x5.herbs` | Gathering herbs (采药) | On a cliff ledge with a basket on his back, gathering herbs: digging in the rock cracks with a hoe, pulling plants out by the roots and tossing them in, sometimes finding a lingzhi; a cloud rolls in and swallows him: "deep in the clouds, none knows where" |
+| `x5.mend` | Mending the robe (补衲) | At night under an oil lamp, seated, mending a patched robe: squinting to thread the needle, pulling a long thread stitch by stitch, biting off the end and holding it up to the lamp: "great perfection seems flawed" |
+| `x5.mill` | Turning the millstone (推磨) | At the tofu mill, pushing the stone mill: walking circles around it pushing the bar, only his upper body showing when he's behind it; soy milk drips into a wooden bucket, and when full he carries it out and swaps in an empty one |
+| `x5.sweep` | Sweeping leaves (扫叶) | Sweeping fallen leaves under a ginkgo: the bamboo broom pushes and pulls, the leaves go into a pile, and a gust blows them all away: "decrease and decrease again, until you reach non-action" |
+| `x5.water` | Carrying water (挑水) | Walking a mountain path with two wooden buckets on a shoulder pole: distant hills and pines recede, the pole bounces, the water sloshes; a frog jumps out of a bucket and a bird lands on the end of the pole |
 
-**x6 赛博歇** [目录](../apps/dao/catalog/x6.md)
+**x6 Cyber rest** [catalog](../apps/dao/catalog/x6.md)
 
-| id | 名字 | 画面 |
+| id | Name | Scene |
 |---|---|---|
-| `x6.buzheng` | 不争 | 断网小恐龙的跑酷里，背葫芦拄杖的小道士慢慢走，从不跳，仙人掌直接从身上穿过；小恐龙冲上来一路跳、最后撞上仙人掌 GAME OVER——夫唯不争，故无尤 |
-| `x6.charge` | 插电 | 小道士背上插着电线坐在蒲团上充电，头顶电池充到 99% 卡住，他睁一只眼——插头自己蹦了出来：持而盈之，不如其已 |
-| `x6.defrag` | 归根 | 小道士端着茶坐在老电脑前看磁盘碎片整理：方块一齐散开（万物并作），读写头一格格扫过去把它们搬回原位（吾以观复），最后整整齐齐（归根曰静） |
-| `x6.dvd` | 太极屏保 | 小道士盘坐在老电视前，看太极屏保斜着弹来弹去；差一点进角他就探身，真撞进角落时他跳起来欢呼——众妙之门 |
-| `x6.fan` | 散热 | 小道士盘坐在台扇前纳凉，满头大汗，温度一点点降下来、风扇慢慢停；每隔一阵杂念一起又热起来——躁胜寒，静胜热 |
-| `x6.ping` | 问天 | 小道士坐在小电脑前 ping 天庭：数据包飞进云里的南天门，散了，“请求超时”；改 ping 本心，包绕一圈回到自己胸口，屏幕上一颗心开始跳——不出户，知天下 |
-| `x6.standby` | 待机 | 夜里小道士合上笔记本，坐在矮几前打盹；本子前沿的呼吸灯七秒一息，他也跟着一呼一吸；隔一阵盖子缝里有眼睛偷看、飞蛾绕灯 |
-| `x6.xinzhai` | 心斋 | 墙上一排杂念文件（名、利、怒、忧……），小道士一个个摘下来扛到回收站扔掉；清空后盘坐，题“唯道集虚，虚者心斋”；新的杂念又“叮”地冒出来 |
-| `x6.zuowang` | 坐忘 | 小道士在蒲团上打坐，旁边“卸载”进度条倒着走：仁义、礼乐两字从头顶飘散，身子一层层化成像素飞走，只剩蒲团——同于大通；再聚形，复归于朴 |
+| `x6.buzheng` | Not contending (不争) | In the offline-dinosaur runner game, the priest with gourd and staff walks slowly and never jumps; cacti pass right through him. The little dinosaur rushes up, jumping all the way, and finally hits a cactus: GAME OVER. "Because he does not contend, he is free from blame" |
+| `x6.charge` | Plugged in (插电) | The priest sits on a cushion charging, a cable plugged into his back; the battery over his head reaches 99% and stalls, he opens one eye, and the plug pops out on its own: "Better to stop than to fill to the brim" |
+| `x6.defrag` | Returning to the root (归根) | Holding tea, the priest sits before an old computer watching disk defragmentation: the blocks all scatter ("the ten thousand things arise together"), the read head sweeps cell by cell moving them back ("I watch their return"), and finally all is neat ("returning to the root is called stillness") |
+| `x6.dvd` | Taiji screensaver (太极屏保) | Seated before an old TV, the priest watches a taiji screensaver bounce diagonally; when it nearly hits a corner he leans in, and when it truly lands in the corner he jumps up cheering: "the gate of all mysteries" |
+| `x6.fan` | Cooling down (散热) | The priest sits before a desk fan cooling off, drenched in sweat; the temperature drops bit by bit and the fan slowly stops; every so often a stray thought arises and he heats up again: "Movement overcomes cold, stillness overcomes heat" |
+| `x6.ping` | Asking heaven (问天) | At a small computer the priest pings the Heavenly Court: the packets fly into the Southern Heavenly Gate in the clouds, scatter, "Request timed out"; he pings his own heart instead, the packet loops around back into his chest, and a heart on the screen starts beating: "Without going out the door, know the whole world" |
+| `x6.standby` | Standby (待机) | At night the priest closes his laptop and dozes at a low table; the breathing light on the laptop's front edge takes one breath every seven seconds, and he breathes in and out along with it; now and then eyes peek out of the lid gap, and a moth circles the lamp |
+| `x6.xinzhai` | Fasting of the heart (心斋) | A row of stray-thought files hangs on the wall (fame, profit, anger, worry...); the priest takes them down one by one and carries them to the recycle bin; once it's emptied he sits and writes "唯道集虚，虚者心斋" (only the Dao gathers in emptiness; emptiness is the fasting of the heart); then a new stray thought pops up with a "ding" |
+| `x6.zuowang` | Sitting in forgetfulness (坐忘) | The priest meditates on a cushion while an "uninstall" progress bar beside him runs backward: the characters for benevolence and righteousness (仁义), then rites and music (礼乐), drift off his head, his body dissolves layer by layer into flying pixels until only the cushion is left: "one with the Great Thoroughfare"; then he reassembles, returning to simplicity |
 
-### 起卦（9）
+### Omens (9)
 
 
-**o 起卦** [目录](../apps/dao/catalog/o.md)
+**o Omens (divination)** [catalog](../apps/dao/catalog/o.md)
 
-| id | 名字 | 画面 |
+| id | Name | Scene |
 |---|---|---|
-| `o.cezi` | 测字 | 立轴展开，小道士抡大笔写一个字；剑光一劈字分左右，数笔画：左为上卦、右为下卦，全画取动爻 |
-| `o.coins` | 金钱课 | 小道士摇响三枚方孔钱一扬手抛起，铜钱翻转落地弹跳迸火星；看背字定单拆重交，六掷成卦 |
-| `o.dayan` | 大衍筮 | 小道士盘坐案前揲蓍：五十取一，分二挂一，揲四归奇，系辞逐句打出；十八变快进成卦 |
-| `o.fuji` | 扶乩 | 小道士扶起桃木乩笔，另一岔灵光自起；乩笔颤动降笔，在沙盘上自下而上划出六爻，沙粒四溅，乩示卦名 |
-| `o.guijia` | 龟卜 | 龟腹甲立在木架上，小道士举燃烧的荆条灼钻窝；烧红冒烟，啪地炸裂出卜形兆纹，六兆成卦 |
-| `o.jiaobei` | 掷筊 | 小道士合捧一对新月木筊额前一拜，扬手掷出，筊翻滚落地摇晃；圣筊、笑筊、阴筊定爻，六掷成卦 |
-| `o.luopan` | 罗盘 | 大罗盘磁针乱转后定子午；小道士剑指两拨，天盘飞转火星四溅，咔地停住，指标所对得上卦、下卦 |
-| `o.meihua` | 观梅占 | 老梅花开，小道士树下赏梅；二雀争枝扭打坠地惊飞，小道士掐指以年月日时起数，八除定卦、六除定爻 |
-| `o.qian` | 求签 | 小道士跪在蒲团上摇签筒，签子哗哗抖动，一支跳出翻落；立起放大现出签号，第几签即第几卦 |
+| `o.cezi` | Character divination (测字) | A hanging scroll unrolls and the priest writes one character with a big brush; a flash of sword light splits it left and right, and the strokes are counted: left gives the upper trigram, right the lower, and the total gives the moving line |
+| `o.coins` | Coin divination (金钱课) | The priest shakes three square-holed coins and tosses them up; they flip, land and bounce in sparks; the backs decide young yang, young yin, old yang or old yin, and six throws make the hexagram |
+| `o.dayan` | Yarrow-stalk divination (大衍筮) | Seated at a table the priest sorts yarrow stalks: set aside one of fifty, divide in two, hang one, count off by fours, return the remainder, with the Xici commentary typed out line by line; the eighteen changes fast-forward into a hexagram |
+| `o.fuji` | Spirit writing (扶乩) | The priest raises the peachwood planchette and its other fork lifts by itself with spirit light; the planchette trembles as the spirit descends, tracing six lines bottom to top in the sand tray with sand flying, and the oracle names the hexagram |
+| `o.guijia` | Turtle-shell divination (龟卜) | A turtle plastron stands on a wooden rack; the priest burns the drilled hollows with a flaming thorn branch; it glows red, smokes, and cracks with a snap into a 卜-shaped omen crack; six cracks make the hexagram |
+| `o.jiaobei` | Throwing divination blocks (掷筊) | The priest holds a pair of crescent wooden blocks to his forehead and bows, then throws them; they tumble, land and rock. Holy (圣筊), laughing (笑筊) or yin (阴筊) results decide each line; six throws make the hexagram |
+| `o.luopan` | Luopan compass (罗盘) | The needle of a big luopan spins wildly then settles on north-south; the priest gives two flicks with his sword-finger, the heaven dial whirls with sparks flying, clicks to a stop, and the indicator gives the upper and lower trigrams |
+| `o.meihua` | Plum blossom divination (观梅占) | An old plum tree in bloom, the priest admiring it beneath; two sparrows fight over a branch, tumble to the ground and fly off in alarm; the priest counts on his fingers from the year, month, day and hour, divides by eight for the trigrams and by six for the moving line |
+| `o.qian` | Drawing a fortune stick (求签) | Kneeling on a cushion, the priest shakes the stick cylinder, the sticks rattle, and one jumps out and flips to the ground; it stands up enlarged to show its number, and stick number N is hexagram N |
 
-### 特殊场景（2）
+### Special scenes (2)
 
 
-**s 特殊** [目录](../apps/dao/catalog/o.md)
+**s Special** [catalog](../apps/dao/catalog/o.md)
 
-| id | 名字 | 画面 |
+| id | Name | Scene |
 |---|---|---|
-| `s.boot` | 开坛 | 小道士踩祥云飞来一跃落地，闪白震屏火星四溅，身后光环旋转；dao timer 逐字砸下，写出境界、道行，落印 |
-| `s.reset` | 天地重开 | 混沌如鸡子，小道士蜷睡其中；惊醒抽斧一劈，蛋分上下：轻清上升为满天星，重浊下沉为群山，小道士撑天，书“天地重开” |
-
+| `s.boot` | Opening the Altar (开坛) | The priest flies in on an auspicious cloud and leaps down; white flash, screen shake, sparks everywhere, a halo spinning behind him; "dao timer" slams down letter by letter, then the realm and Dao merit are written and the seal is stamped |
+| `s.reset` | Heaven and Earth Reborn (天地重开) | Chaos like a hen's egg with the priest curled asleep inside; he jolts awake, draws an axe and splits it, and the egg separates: the light and clear rises to become a sky full of stars, the heavy and murky sinks to become mountains; the priest holds up the sky and writes "天地重开" (Heaven and Earth Reborn) |

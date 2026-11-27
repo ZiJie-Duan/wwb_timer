@@ -1,5 +1,7 @@
-# 外壳
+**English** · [简体中文](README.zh-CN.md)
 
-`timer.f3z` 是 Fusion 360 的源文件（文件 → 打开 → 从我的计算机打开）。里面除了打印件，还放了每个器件的参考模型（ESP32-C3 SuperMini、OLED、TM1637、MAX7219、18650 电池盒、CD42、钮子开关、船型开关），方便核对开孔和位置；参考模型不用打印。
+# Enclosure
 
-打印件、打印建议和装配见[复刻指南第 4 节](../../docs/build.md#4-外壳3d-打印)。
+`timer.f3z` is the Fusion 360 source (File → Open → Open from my computer). Besides the printed parts it contains reference models of every component (ESP32-C3 SuperMini, OLED, TM1637, MAX7219, 18650 holder, CD42, toggle switch, rocker switch) for checking cutouts and positions; the reference models are not meant to be printed.
+
+Printed parts, print settings and assembly are in [section 4 of the build guide](../../docs/build.md#4-enclosure-3d-printed).

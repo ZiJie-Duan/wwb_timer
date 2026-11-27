@@ -1,126 +1,128 @@
-# 性能极限实测
+**English** · [简体中文](benchmarks.zh-CN.md)
 
-2026-10-24，固件 0.1.0，USB 连接，板子 `80:53:e0:b4:3e:5c`。复跑：`python -m wwb.bench`（结果存 `results/`）。
+# Performance limits, measured
 
-## 测试方法：两类数字不要混用
+2026-10-24, firmware 0.1.0, USB connection, board `80:53:e0:b4:3e:5c`. To rerun: `python -m wwb.bench` (results are saved to `results/`).
 
-芯片里烧的只有一个固件：通用驱动 + 串口 API，**没有任何演示逻辑**。所有测试分两类：
+## Methodology: don't mix the two kinds of numbers
 
-| 类别 | 怎么测 | 测的是什么 | 对应 |
+The chip runs a single firmware: generic drivers + a serial API, **with no demo logic at all**. All tests fall into two categories:
+
+| Category | How it is measured | What it measures | Tools |
 |---|---|---|---|
-| **端到端（上位机驱动）** | 电脑上的 Python 每一帧现场生成内容，经 USB 用协议命令逐帧发给芯片，芯片只负责执行；速率用芯片 `STATS` 里“实际推到屏幕”的计数算 | 上位机 → USB → 固件 → 屏幕整条链路的真实能力，也就是将来上位机程序能拿到的速度 | `wwb.maxdemo`、`wwb.bench e2e`、USB 链路测试 |
-| **设备端自测** | 上位机发一条 `BENCH` 命令，芯片在本地连续驱动外设 N 次并计时，不经过 USB | 单个外设在当前接线下的硬件极限（I²C/SPI 时钟、TM1637 时序） | `wwb.bench oled / seg / mx` |
+| **End-to-end (host-driven)** | Python on the computer generates every frame on the fly and sends it frame by frame over USB as protocol commands; the chip only executes them. Rates are computed from the chip's `STATS` counters of frames "actually pushed to the screen" | Real capability of the whole host → USB → firmware → screen chain, i.e. the speed future host programs will get | `wwb.maxdemo`, `wwb.bench e2e`, USB link tests |
+| **On-device self-test** | The host sends one `BENCH` command; the chip drives the peripheral N times locally and times it, bypassing USB | Hardware limit of a single peripheral with the current wiring (I²C/SPI clock, TM1637 timing) | `wwb.bench oled / seg / mx` |
 
-例如“限速 320”测试中：OLED 每帧由电脑用 PIL 画好（1KB，拆成 4 条 `OLED_BLIT` 发出），数码管每帧由电脑算出帧序号发 4 字节段码（`SEG_RAW`），点阵每帧由电脑算出指针位置发 8 字节（`MX_FRAME`）。
+For example, in the "capped at 320" test: each OLED frame is drawn on the computer with PIL (1KB, split into 4 `OLED_BLIT` commands), each 7-segment frame is a frame number computed on the computer and sent as 4 bytes of segment codes (`SEG_RAW`), and each dot-matrix frame is a pointer position computed on the computer and sent as 8 bytes (`MX_FRAME`).
 
-## 总表：每个环节的极限与瓶颈
+## Summary: limits and bottlenecks at each stage
 
-| 环节 | 极限 | 瓶颈 | 当前默认 |
+| Stage | Limit | Bottleneck | Current default |
 |---|---|---|---|
-| USB 往返（空包） | 0.28 ms，约 3600 次/s | USB 帧调度 | — |
-| USB 上行（主机→设备） | 约 460 KiB/s | USB-Serial/JTAG 的 OUT 端点只有单个 64B 缓冲 | — |
-| USB 下行（设备→主机） | 约 740 KiB/s | — | — |
-| OLED 整帧（硬件） | 95 fps @1.1MHz（2.6MHz 设定虽有 ACK，但目测花屏错位） | I²C 时钟 + 上拉电阻 | 1.1MHz |
-| OLED 整帧（端到端） | 约 90 fps | 同上（USB 每秒可送 420+ 帧，屏幕只能推 95） | |
-| OLED 局部 4 页 × 96 列 | 约 236 fps | 推送字节数 | |
-| 数码管整屏 | 约 390 次/s（2.55 ms） | 信号上升沿约 43µs，每字节 9 个时钟 | CLK 50µs / 下降 2µs / DIO 5µs |
-| 数码管只变一位 | 约 800 次/s | 同上，只发 2 字节 | 自动 |
-| 点阵（硬件） | 32000 帧/s @10MHz；20MHz 目测也正常 | SPI 时钟 | 10MHz |
-| 点阵（端到端） | 逐条 8800 帧/s，32 条一批 19800 帧/s | 逐条时是上位机发送速度 | |
-| **三屏同时全速** | **OLED 91 fps + 数码管 666/s + 点阵 14730/s** | 点阵分到 OLED 用剩的 USB 上行带宽 | `python -m wwb.maxdemo` |
+| USB round trip (empty packet) | 0.28 ms, about 3600/s | USB frame scheduling | — |
+| USB upstream (host→device) | about 460 KiB/s | The USB-Serial/JTAG OUT endpoint has only a single 64B buffer | — |
+| USB downstream (device→host) | about 740 KiB/s | — | — |
+| OLED full frame (hardware) | 95 fps @1.1MHz (a 2.6MHz setting still gets ACKs, but visibly garbles and shifts) | I²C clock + pull-up resistors | 1.1MHz |
+| OLED full frame (end-to-end) | about 90 fps | Same as above (USB can deliver 420+ frames/s, the screen can only push 95) | |
+| OLED partial, 4 pages × 96 columns | about 236 fps | Bytes pushed | |
+| 7-segment full refresh | about 390/s (2.55 ms) | Signal rising edge about 43µs, 9 clocks per byte | CLK 50µs / fall 2µs / DIO 5µs |
+| 7-segment, one digit changed | about 800/s | Same as above, only 2 bytes sent | automatic |
+| Dot matrix (hardware) | 32000 frames/s @10MHz; 20MHz also looks fine | SPI clock | 10MHz |
+| Dot matrix (end-to-end) | 8800 frames/s one at a time, 19800 frames/s in batches of 32 | One at a time, it's the host's send rate | |
+| **Three displays at full speed** | **OLED 91 fps + 7-segment 666/s + dot matrix 14730/s** | The dot matrix gets whatever USB upstream bandwidth the OLED leaves | `python -m wwb.maxdemo` |
 
-人眼可感知的上限远低于这些数字：SSD1306 面板自身刷新约 90–110Hz，MAX7219 内部扫描约 800Hz。所以**真正受限的只有数码管**（硬件上升沿太慢），OLED 刚好够到面板刷新率。
+What the human eye can perceive is far below these numbers: the SSD1306 panel itself refreshes at about 90–110Hz, and the MAX7219 scans internally at about 800Hz. So **only the 7-segment display is truly limited** (its hardware rising edge is too slow), and the OLED just about reaches the panel refresh rate.
 
-## 三屏同时全速（`python -m wwb.maxdemo`）
+## Three displays at full speed (`python -m wwb.maxdemo`)
 
-每块屏按自己的极限节奏推送：OLED 每秒 100 帧（每帧都在上位机现场渲染，显示上一秒三屏实测速率），数码管每秒 2000 次计数，剩余带宽全部给点阵（每轮 128 帧）。同一测试里单独跑一块屏作对照：
+Each display is pushed at its own limiting pace: OLED at 100 frames/s (every frame rendered live on the host, showing the three displays' measured rates over the previous second), 7-segment counting at 2000/s, and all remaining bandwidth goes to the dot matrix (128 frames per round). In the same test each display is also run alone for comparison:
 
-| | 单独 | 三屏同时 | 保持 |
+| | Alone | All three together | Retained |
 |---|---|---|---|
-| OLED（整帧，每帧全变） | 95.0 fps | 91.3 fps | 96% |
-| 数码管（计数器，每次 2–3 位变化） | 760 /s | 666 /s | 88% |
-| 点阵（光点扫描，每帧 1–2 行变化） | 27252 /s | 14730 /s | 54%，USB 上行已用到 353 KiB/s |
+| OLED (full frame, every frame fully changes) | 95.0 fps | 91.3 fps | 96% |
+| 7-segment (counter, 2–3 digits change each time) | 760 /s | 666 /s | 88% |
+| Dot matrix (scanning dot, 1–2 rows change per frame) | 27252 /s | 14730 /s | 54%, USB upstream already at 353 KiB/s |
 
-零错误（数码管 ACK、OLED I²C、USB CRC 均为 0）。
+Zero errors (7-segment ACK, OLED I²C and USB CRC all 0).
 
-优化过程（每一步都是测出来的瓶颈）：
+Optimization history (each step targets a measured bottleneck):
 
-| 版本 | OLED | 数码管 | 点阵 | 瓶颈与改法 |
+| Version | OLED | 7-seg | Dot matrix | Bottleneck and fix |
 |---|---|---|---|---|
-| 初版（每轮三屏各一条） | 84 | 231 | 406 | 测试方法本身：被 OLED 整帧拖着走 → 各屏按自己的节奏发 |
-| 各按节奏发 | 68 | 278 | 6813 | 关掉点阵 OLED 回到 94 → 点阵命令在高优先级接收任务里执行，I²C 驱动每 32 字节要回推送任务补 FIFO，被压住 → **OLED 推送任务提到接收任务之上**；**点阵只写变化的行** |
-| 上述两项 | 94.7 | 335 | 6399 | 点阵越多数码管越慢：数码管等上升沿时 CPU 原地空转（每次约 1.2ms） → **改为硬件定时器中断逐边沿执行**，等待期间 CPU 空闲 |
-| 定时器中断 | 93.3 | 109–443 | 6773–14718 | 数码管任务优先级低，刷新之间排队 → **数码管任务提到接收任务之上**（它只排步骤、几乎不占 CPU）；测试程序把数码管命令穿插在点阵帧之间 |
-| 最终 | 91.3 | 666 | 14730 | 点阵受 USB 上行带宽限制 |
+| First version (one command per display per round) | 84 | 231 | 406 | The test method itself: everything dragged along by the OLED full frame → each display sends at its own pace |
+| Each at its own pace | 68 | 278 | 6813 | With the dot matrix off, OLED goes back to 94 → dot-matrix commands run in the high-priority RX task, while the I²C driver must return to the push task every 32 bytes to refill the FIFO and gets starved → **raise the OLED push task above the RX tasks**; **dot matrix writes only changed rows** |
+| Both of the above | 94.7 | 335 | 6399 | The more dot-matrix traffic, the slower the 7-segment: while waiting for rising edges the 7-segment busy-waits the CPU (about 1.2ms each time) → **switch to executing edge by edge from a hardware timer interrupt**, leaving the CPU idle while waiting |
+| Timer interrupt | 93.3 | 109–443 | 6773–14718 | The 7-segment task has low priority and queues between refreshes → **raise the 7-segment task above the RX tasks** (it only schedules steps and uses almost no CPU); the test program interleaves 7-segment commands between dot-matrix frames |
+| Final | 91.3 | 666 | 14730 | Dot matrix limited by USB upstream bandwidth |
 
-## 数码管、点阵限速 320 帧/s + OLED 全速（`python -m wwb.maxdemo --rate 320`）
+## 7-segment and dot matrix capped at 320 frames/s + OLED at full speed (`python -m wwb.maxdemo --rate 320`)
 
-全速时数码管、点阵的刷新远超人眼和器件能呈现的速度（点阵看起来是一片微亮），没有意义。限速到 320 帧/s，并让每帧内容可验证：
+At full speed, the 7-segment and dot-matrix refresh far exceeds what the eye or the devices can show (the dot matrix just looks like a faint glow), which is pointless. So they are capped at 320 frames/s, with each frame's content made verifiable:
 
-- 数码管显示帧序号：跑满 320/s 时百位每秒跳 3.2 下
-- 点阵显示指针，每帧转 1/320 圈：跑满 320/s 时正好一秒一圈
+- The 7-segment shows the frame number: at a full 320/s the hundreds digit ticks 3.2 times per second
+- The dot matrix shows a pointer that turns 1/320 of a revolution per frame: at a full 320/s it makes exactly one revolution per second
 
-| | 目标 | 实测（20 s） | 发出 / 实际刷新 |
+| | Target | Measured (20 s) | Sent / actually refreshed |
 |---|---|---|---|
-| OLED | 全速 | 96.2 fps | — |
-| 数码管 | 320 /s | 319.7 /s（每秒 319–321） | 6386 / 6386，零丢帧 |
-| 点阵 | 320 /s | 319.7 /s（每秒 319–321） | 6386 / 6386，零丢帧 |
+| OLED | full speed | 96.2 fps | — |
+| 7-segment | 320 /s | 319.7 /s (319–321 per second) | 6386 / 6386, zero dropped frames |
+| Dot matrix | 320 /s | 319.7 /s (319–321 per second) | 6386 / 6386, zero dropped frames |
 
-达到这个结果前修掉的问题：
+Problems fixed before reaching this result:
 
-| 现象 | 原因 | 改法 |
+| Symptom | Cause | Fix |
 |---|---|---|
-| 数码管每秒丢约 10 帧（310/s） | 设备每秒补发配置并整屏重写（约 3.9ms > 3.1ms 帧间隔）；上位机迟到后补发的两帧挤在一起，设备只保留后一帧 | 固件：只在空闲满 1 秒时补发配置（连续刷新期间模块掉电，ACK 失败会触发重发）；上位机：补发时两帧至少隔半个周期 |
-| 上位机只发出 272/s | OLED 每帧上位机渲染 2ms + 写出 1KB 阻塞 2.2ms，卡住同一循环里的节拍 | 分线程：OLED 渲染后拆成 4 条局部更新（只有最后一条推送），单次占用串口 ≤0.6ms；数码管和点阵由独立节拍线程发送 |
+| 7-segment dropped about 10 frames per second (310/s) | Every second the device resent the configuration and rewrote the full display (about 3.9ms > the 3.1ms frame interval); when the host fell behind and sent two catch-up frames back to back, the device kept only the later one | Firmware: resend configuration only after a full 1 second idle (if the module loses power during continuous refreshing, the ACK failure triggers a resend); host: catch-up frames are spaced at least half a period apart |
+| Host only sent 272/s | Per OLED frame, 2ms of host rendering + 2.2ms blocking to write 1KB stalled the tick in the same loop | Split into threads: after rendering, the OLED frame is split into 4 partial updates (only the last one pushes), each holding the serial port ≤0.6ms; the 7-segment and dot matrix are sent from a separate tick thread |
 
-## USB 链路
+## USB link
 
-| 包大小 | 往返中位 | p99 |
+| Packet size | Median round trip | p99 |
 |---|---|---|
 | 0 B | 0.278 ms | 0.735 ms |
 | 64 B | 0.904 ms | 1.221 ms |
 | 256 B | 1.308 ms | 1.768 ms |
 | 1024 B | 3.980 ms | 4.395 ms |
 
-上行：64B 帧 165 KiB/s（2644 帧/s），1024B 帧 459 KiB/s。下行 741 KiB/s。
+Upstream: 165 KiB/s with 64B frames (2644 frames/s), 459 KiB/s with 1024B frames. Downstream 741 KiB/s.
 
-**上行瓶颈排查**：把设备端读块从 512B 加到 2048B、接收环形缓冲从 8KB 加到 16KB，速度不变；上位机编码 1KB 帧只需 0.18ms（每秒可编 5000+ 帧），也不是瓶颈。结论是 USB-Serial/JTAG 硬件单缓冲 OUT 端点：每个 64B 包都要等固件读走才能收下一个，约 6400 包/s。
+**Tracking down the upstream bottleneck**: increasing the device-side read chunk from 512B to 2048B and the RX ring buffer from 8KB to 16KB made no difference; encoding a 1KB frame on the host takes only 0.18ms (5000+ frames/s), so that isn't the bottleneck either. Conclusion: the USB-Serial/JTAG hardware has a single-buffered OUT endpoint — each 64B packet must be read by the firmware before the next can be received, about 6400 packets/s.
 
-**可靠性**：IDF 的 `usb_serial_jtag_is_connected()` 在高负载下会误报“未连接”（4 分钟压力测试 74661 次回复中误报 22 次）。早期固件据此丢弃回复，导致上位机偶发超时；现在只计数（`STATS` 里的 `tx_not_connected`）照常发送，同样的压力测试零超时、零丢包。
+**Reliability**: IDF's `usb_serial_jtag_is_connected()` falsely reports "not connected" under heavy load (22 false reports out of 74661 replies in a 4-minute stress test). Early firmware dropped replies based on it, causing occasional host timeouts; now it only counts them (`tx_not_connected` in `STATS`) and sends anyway — the same stress test has zero timeouts and zero lost packets.
 
-**固件侧**：USB 改用 IDF 原生 `usb_serial_jtag` 驱动（Arduino 的 HWCDC 每个字节一次队列操作），并关闭所有日志输出（会混进数据流）。
+**Firmware side**: USB now uses IDF's native `usb_serial_jtag` driver (Arduino's HWCDC does one queue operation per byte), and all log output is disabled (it would get mixed into the data stream).
 
-## OLED（SSD1306，I²C）
+## OLED (SSD1306, I²C)
 
-设备端连续推 60 整帧（1024B + 窗口命令）：
+60 consecutive full frames pushed on the device (1024B + window commands):
 
-| I²C 设定 | 每帧 | fps | 错误 |
+| I²C setting | Per frame | fps | Errors |
 |---|---|---|---|
 | 400 kHz | 23.76 ms | 42.1 | 0 |
 | 800 kHz | 13.05 ms | 76.6 | 0 |
 | 1000 kHz | 11.19 ms | 89.4 | 0 |
 | **1100 kHz** | **10.49 ms** | **95.4** | **0** |
-| 1150–1400 kHz | — | — | 全部失败（立即返回） |
-| 1700–2200 kHz | — | — | 全部超时 |
+| 1150–1400 kHz | — | — | all fail (return immediately) |
+| 1700–2200 kHz | — | — | all time out |
 | 2300–2400 kHz | 9.55 ms | 104.7 | 0 |
 | 2600–2800 kHz | 9.31 ms | 107.4 | 0 |
-| ≥3500 kHz | — | — | 全部失败 |
+| ≥3500 kHz | — | — | all fail |
 
-1.15–2.2MHz 是 IDF 新版 I²C 驱动换算分频时的不可用区间。2.3MHz 以上的设定之所以又能工作，是因为 ESP32 主机会等 SCL 真正升高才继续，实际时钟被上拉电阻的上升沿限制在约 1.2MHz。每字节都有 ACK，但**目测 2.6MHz 设定下棋盘格出现雪花和错位**（2026-10-24），ACK 不代表数据正确。默认取 1.1MHz，这就是当前硬件的 OLED 极限。
+1.15–2.2MHz is an unusable range where the new IDF I²C driver computes its clock divider. Settings above 2.3MHz work again because the ESP32 master waits for SCL to actually go high before continuing, so the real clock is limited to about 1.2MHz by the pull-up rising edge. Every byte is ACKed, but **at the 2.6MHz setting a checkerboard visibly shows snow and misalignment** (2026-10-24) — ACK does not mean the data is correct. The default is 1.1MHz, which is the OLED limit of the current hardware.
 
-推送开销：1.1MHz 理论 8.4ms/帧，实测 10.5ms，多出的约 2ms 是驱动每 32 字节补一次硬件 FIFO 的间隙。
+Push overhead: at 1.1MHz the theoretical time is 8.4ms/frame, measured 10.5ms; the extra ~2ms is the gaps where the driver refills the hardware FIFO every 32 bytes.
 
-**提速手段**：局部更新（`OLED_BLIT` 或只改一部分再 `FLUSH`，设备按脏矩形推送）。4 页 × 96 列区域可达 236 fps。
+**How to go faster**: partial updates (`OLED_BLIT`, or change only part and then `FLUSH`; the device pushes by dirty rectangle). A 4 pages × 96 columns region reaches 236 fps.
 
-## 数码管（TM1637，软件时序）
+## 7-segment display (TM1637, software timing)
 
-关键发现：**慢上升沿会造成假 ACK**。DIO 释放后要靠上拉电阻慢慢升高，如果读 ACK 时它还没升起来，读到的低电平看起来就和 TM1637 拉低的 ACK 一样。第一次扫描时，等待越短反而“越成功”（1µs 时零失败），就是这个原因。
+Key finding: **a slow rising edge produces false ACKs**. After DIO is released it relies on the pull-up resistor to rise slowly; if it hasn't risen yet when the ACK is read, the low level looks just like the TM1637 pulling ACK low. That's why, in the first sweep, shorter waits appeared "more successful" (zero failures at 1µs).
 
-解决：自测时读 ACK 前额外等 150µs（严格 ACK）。校准：已知可靠的 50µs 配置在严格模式下零失败；1µs 配置在严格模式下 100% 失败（识破假 ACK）。
+Fix: during self-test, wait an extra 150µs before reading ACK (strict ACK). Calibration: the known-reliable 50µs configuration has zero failures in strict mode; the 1µs configuration fails 100% in strict mode (false ACKs exposed).
 
-严格 ACK 下，CLK 上升等待扫描（下降 2µs、DIO 5µs，每档 1500 字节）：
+Under strict ACK, sweeping the CLK rise wait (fall 2µs, DIO 5µs, 1500 bytes per step):
 
-| CLK 上升等待 | ACK 失败 |
+| CLK rise wait | ACK failures |
 |---|---|
 | 50 µs | 0 |
 | 46 µs | 0 |
@@ -129,22 +131,22 @@
 | 42 µs | 1255–1377 |
 | 40 µs | 1500 |
 
-上升时间约 43µs，默认取 50µs（留约 13% 余量）。下降沿：1µs 失败、2µs 可靠。DIO 上升等待可以压到 0（它只需赶在 CLK 升起之前到位），默认留 5µs。
+The rise time is about 43µs; the default is 50µs (about 13% margin). Falling edge: 1µs fails, 2µs is reliable. The DIO rise wait can be pushed down to 0 (it only needs to settle before CLK rises); the default leaves 5µs.
 
-| 时序 | 整屏一次 | 次/s |
+| Timing | One full refresh | Per second |
 |---|---|---|
-| 初版：上升/下降都 50µs | 5.53 ms | 181 |
-| 下降 2µs | 2.79 ms | 358 |
-| 再加 DIO 5µs | 2.55 ms | 392 |
-| 只发变化的位（单独一位） | 约 1.25 ms | 约 800 |
+| First version: rise/fall both 50µs | 5.53 ms | 181 |
+| Fall 2µs | 2.79 ms | 358 |
+| Plus DIO 5µs | 2.55 ms | 392 |
+| Only changed digits sent (single digit) | about 1.25 ms | about 800 |
 
-正常时序（上升 50µs ≥ 实际 43µs）下 ACK 判定是可信的，固件据此在出错时重发整屏。
+With normal timing (rise 50µs ≥ actual 43µs) the ACK check is trustworthy, and the firmware uses it to resend the full display on error.
 
-**提速手段**：硬件。去掉模块上的滤波电容或换更强的电平转换方案，上升沿降到几 µs 后，同样的代码可以到每秒几千次。
+**How to go faster**: hardware. Remove the filter capacitors on the module or use a stronger level-shifting scheme; once the rising edge drops to a few µs, the same code can reach thousands of refreshes per second.
 
-## 点阵（MAX7219，硬件 SPI）
+## Dot matrix (MAX7219, hardware SPI)
 
-| SPI | 每帧（8 行） | 帧/s |
+| SPI | Per frame (8 rows) | Frames/s |
 |---|---|---|
 | 1 MHz | 154.7 µs | 6466 |
 | 2 MHz | 86.5 µs | 11555 |
@@ -152,21 +154,21 @@
 | 8 MHz | 34.7 µs | 28840 |
 | 10 MHz | 31.1 µs | 32192 |
 
-目测（`python -m wwb.visual` 循环显示当前 MHz 数字并高速重绘）：1–20MHz 全部正确。默认取 MAX7219 规格上限 10MHz，比 20MHz 每帧只慢 7µs，留一倍余量。
-没有回读手段（DOUT 未接）；若想自动验证，可把模块 DOUT 经分压接到一个空闲 GPIO 做回环。
+Visual check (`python -m wwb.visual` cycles through displaying the current MHz number while redrawing at high speed): 1–20MHz all correct. The default is the MAX7219 spec maximum of 10MHz, only 7µs per frame slower than 20MHz, leaving 2× headroom.
+There is no readback (DOUT is not connected); for automatic verification, the module's DOUT could be wired through a voltage divider to a spare GPIO as a loopback.
 
-## 端到端（上位机推流 → 屏幕）
+## End-to-end (host streaming → screen)
 
-各推 4 秒，`NOREPLY` 发送，设备 `STATS` 计数：
+4 seconds each, sent with `NOREPLY`, counted by the device's `STATS`:
 
-| 场景 | 上位机发送 | 实际上屏 |
+| Scenario | Host sent | Actually on screen |
 |---|---|---|
-| OLED 整帧 | 423/s | 89.5 fps |
-| OLED 局部 4×96 | 901/s | 235.7 fps |
-| 数码管末位变化 | 9143/s | 803/s |
-| 数码管四位全变 | 9074/s | 351/s |
-| 点阵逐条（1MHz → 10MHz） | 8985/s | 5983/s → 8786/s（= 上位机发送速度） |
-| 点阵 32 条一批（1MHz → 10MHz） | — | 5940/s → 19760/s |
-| 三屏同时（每轮各一条） | 407 轮/s | OLED 88 fps / 数码管 248/s / 点阵 407/s |
+| OLED full frame | 423/s | 89.5 fps |
+| OLED partial 4×96 | 901/s | 235.7 fps |
+| 7-segment, last digit changes | 9143/s | 803/s |
+| 7-segment, all four digits change | 9074/s | 351/s |
+| Dot matrix one at a time (1MHz → 10MHz) | 8985/s | 5983/s → 8786/s (= host send rate) |
+| Dot matrix in batches of 32 (1MHz → 10MHz) | — | 5940/s → 19760/s |
+| All three together (one command each per round) | 407 rounds/s | OLED 88 fps / 7-segment 248/s / dot matrix 407/s |
 
-发送快于屏幕时，设备只保留最新内容（OLED、数码管），不会堆积延迟。
+When sending faster than the screen can refresh, the device keeps only the latest content (OLED, 7-segment), so latency does not pile up.

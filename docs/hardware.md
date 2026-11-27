@@ -1,80 +1,82 @@
-# wwb_timer 硬件记录
+**English** · [简体中文](hardware.zh-CN.md)
 
-一台由 ESP32-C3 驱动的交互设备：1 个开关 + 0.96 寸 OLED + 四位数码管 + 8×8 点阵，另预留一组 UART。
-本文记录器件、接线、供电和实测结论。性能数据见 [benchmarks.md](benchmarks.md)，通信协议见 [protocol.md](protocol.md)。
+# wwb_timer hardware notes
 
-## 1. 器件
+An interactive device driven by an ESP32-C3: 1 switch + 0.96" OLED + 4-digit 7-segment display + 8×8 LED matrix, plus one spare UART.
+This document records the parts, wiring, power and measured results. Performance data is in [benchmarks.md](benchmarks.md); the communication protocol is in [protocol.md](protocol.md).
 
-| 器件 | 型号 / 规格 | 实测确认 |
+## 1. Parts
+
+| Part | Model / spec | Verified |
 |---|---|---|
-| 主控 | ESP32-C3 Super Mini，芯片 ESP32-C3FN4（QFN32，rev v0.4），内置 4MB Flash，160MHz 单核 RISC-V | esptool 读出 |
-| OLED | 0.96 寸白色、4 针 I²C | 驱动 **SSD1306 128×64**，地址 **0x3C**（2026-10-19 用 SSD1306/SH1106 两种驱动画边框对比确认） |
-| 数码管 | TM1637，0.56 寸四位红色，带冒号 | 冒号为第 2 位段码 bit7；不是标准 I²C，需软件时序 |
-| 点阵 | MAX7219 单块 8×8 | 设备数 1；模块 IN 端接入，OUT 端不接 |
-| 开关 | 普通两脚机械开关 | 内部上拉，闭合（开启）= 低电平 |
-| 板载 | 蓝色 LED（GPIO8，低电平亮）、BOOT 键（GPIO9，按下为低） | 固件已接入 API |
+| MCU | ESP32-C3 Super Mini, chip ESP32-C3FN4 (QFN32, rev v0.4), 4MB embedded flash, 160MHz single-core RISC-V | Read out with esptool |
+| OLED | 0.96" white, 4-pin I²C | Driver **SSD1306 128×64**, address **0x3C** (confirmed 2026-10-19 by drawing a border with both the SSD1306 and SH1106 drivers and comparing) |
+| 7-segment display | TM1637, 0.56" 4-digit red, with colon | The colon is bit7 of digit 2's segment byte; not standard I²C, needs bit-banged timing |
+| LED matrix | Single MAX7219 8×8 | Device count 1; the module's IN side is connected, OUT side left unconnected |
+| Switch | Plain 2-pin mechanical switch | Internal pull-up; closed (on) = low |
+| On-board | Blue LED (GPIO8, active low), BOOT button (GPIO9, low when pressed) | Exposed through the firmware API |
 
-板子有两块：2026-10-19 首次测试用的是 MAC `80:53:e0:b4:3e:40`，2026-10-24 起在用的是 `80:53:e0:b4:3e:5c`（`/dev/serial/by-id/` 里能看到）。两块接线相同。
+There are two boards: the 2026-10-19 first test used MAC `80:53:e0:b4:3e:40`; the one in use since 2026-10-24 is `80:53:e0:b4:3e:5c` (visible under `/dev/serial/by-id/`). Both are wired identically.
 
-## 2. GPIO 分配
+## 2. GPIO assignment
 
-下表均为 **GPIO 编号**（程序里写的数字），不是排针顺序。定义在 `firmware/src/board.h`。
+All numbers below are **GPIO numbers** (the numbers used in code), not header pin order. Defined in `firmware/src/board.h`.
 
-| 外设 | 外设引脚 | GPIO | 用途 |
+| Peripheral | Peripheral pin | GPIO | Purpose |
 |---|---|---|---|
-| OLED | SDA | 0 | I²C 数据 |
-| OLED | SCL | 1 | I²C 时钟 |
-| TM1637 | DIO | 3 | 双向数据（开漏） |
-| TM1637 | CLK | 4 | 时钟（开漏） |
-| 开关 | 一端 | 5 | 输入，内部上拉；另一端接 GND |
+| OLED | SDA | 0 | I²C data |
+| OLED | SCL | 1 | I²C clock |
+| TM1637 | DIO | 3 | Bidirectional data (open-drain) |
+| TM1637 | CLK | 4 | Clock (open-drain) |
+| Switch | One side | 5 | Input, internal pull-up; other side to GND |
 | MAX7219 | DIN | 6 | SPI MOSI |
 | MAX7219 | CLK | 7 | SPI SCK |
-| 板载 LED | — | 8 | 低电平亮 |
-| BOOT 键 | — | 9 | 按下为低 |
-| MAX7219 | CS/LOAD | 10 | 锁存（上升沿） |
-| UART | 对方 TX → | 20 | ESP32 RX |
-| UART | 对方 RX ← | 21 | ESP32 TX |
+| On-board LED | — | 8 | Active low |
+| BOOT button | — | 9 | Low when pressed |
+| MAX7219 | CS/LOAD | 10 | Latch (rising edge) |
+| UART | Peer TX → | 20 | ESP32 RX |
+| UART | Peer RX ← | 21 | ESP32 TX |
 
-避开了 GPIO2/8/9 的启动绑定功能（8、9 只在启动后使用）。所有 I²C/SPI/UART 引脚都在程序里显式指定，不依赖库默认值。
+The strapping functions of GPIO2/8/9 are avoided (8 and 9 are only used after boot). All I²C/SPI/UART pins are set explicitly in code rather than relying on library defaults.
 
-## 3. 供电与电平
+## 3. Power and logic levels
 
-ESP32-C3 的 GPIO 是 3.3V 电平；TM1637 和 MAX7219 按 5V 供电。
+The ESP32-C3's GPIOs are 3.3V logic; the TM1637 and MAX7219 are powered at 5V.
 
-| 器件 | 供电 | 信号 |
+| Part | Supply | Signals |
 |---|---|---|
-| ESP32-C3 | **只用 USB 供电** | 3.3V |
-| OLED | 3.3V（开发板 3V3） | SDA/SCL 上拉到 3.3V |
-| TM1637 | 外部 5V | CLK、DIO 经电平转换器；DIO 必须双向 |
-| MAX7219 | 外部 5V | DIN、CLK、CS 经 3.3V→5V 电平转换 |
-| 开关 | 无需供电 | GPIO5 ↔ GND |
+| ESP32-C3 | **USB power only** | 3.3V |
+| OLED | 3.3V (board's 3V3) | SDA/SCL pulled up to 3.3V |
+| TM1637 | External 5V | CLK, DIO through a level shifter; DIO must be bidirectional |
+| MAX7219 | External 5V | DIN, CLK, CS through a 3.3V→5V level shifter |
+| Switch | No supply needed | GPIO5 ↔ GND |
 
-开发时的接法（2026-10-19 起）：**外部 5V 只给模块和电平转换器高压侧，不接开发板的 5V 引脚**；开发板由 USB 供电；所有 GND 连通。这样 USB 可以一直插着调试，不会出现两路 5V 并联倒灌。
+Development wiring (since 2026-10-19): **external 5V feeds only the modules and the level shifter's high side, not the board's 5V pin**; the board is powered over USB; all grounds are tied together. This way USB can stay plugged in for debugging without two 5V supplies back-feeding into each other.
 
-原因：MAX7219 要求高电平 ≥3.5V；TM1637 高电平门限 0.7×VDD，5V 供电时也是 3.5V，3.3V 直驱不能保证符合规格。
+Why: the MAX7219 requires a high level ≥3.5V; the TM1637's high threshold is 0.7×VDD, which is also 3.5V at 5V supply, so driving them directly from 3.3V isn't guaranteed to meet spec.
 
-**装进外壳后的成品**改为电池供电：18650 → CD42 充放电升压模块（5V）→ 侧面的船型开关 → 5V 总线（开发板 5V 引脚、数码管、点阵、电平转换器高压侧）。分线和电平转换都焊在一块手工蚀刻的覆铜板上，没有留图纸。复刻用的简化接法（不需要电平转换）见 [build.md](build.md)。
+**The finished unit inside the enclosure** runs on battery instead: 18650 → CD42 charge/discharge boost module (5V) → rocker switch on the side → 5V bus (board 5V pin, 7-segment display, LED matrix, level shifter high side). The power distribution and level shifting are soldered onto a hand-etched copper-clad board, with no schematic kept. A simplified wiring for building your own (no level shifter needed) is in [build.md](build.md).
 
-电平转换器型号未记录。实测它在 TM1637 线路上的**上升沿约 43µs**（见下），说明是上拉电阻型（如 BSS138 方案），再加上数码管模块自带的滤波电容。
+The level shifter's model wasn't recorded. Its **rising edge on the TM1637 lines measures about 43µs** (see below), which indicates a pull-up-resistor type (e.g. a BSS138 design), combined with the filter capacitors on the 7-segment module.
 
-## 4. 实测结论（影响驱动参数）
+## 4. Measured results (affecting driver parameters)
 
-| 项目 | 结论 | 来源 |
+| Item | Result | Source |
 |---|---|---|
-| 点阵方向 | 当前安装方向需**顺时针旋转 90°**（固件默认 `rotation = 1`；2026-10-24 用户反馈 1–20 数字都能看清）；2026-10-19 时 0° 正向，之后安装方向有变 | 用户目测 |
-| TM1637 上升沿 | CLK 释放后需等 **≥44µs** 才可靠，取 50µs；下降沿 2µs 足够；DIO 只需略早于 CLK（5µs） | 严格 ACK 扫描 |
-| TM1637 ACK | 上升沿太慢时，释放后的 DIO 还没升起来也会读成低电平，**被误判为 ACK**；判断时序是否可靠必须用“严格 ACK”（读 ACK 前多等 150µs） | 2026-10-24 发现 |
-| OLED I²C | 1.1MHz 零错误（约 95fps 整帧），为当前极限；1.15–2.2MHz 设定落入驱动分频的不可用区间；2.3–2.8MHz 设定有 ACK 但**目测花屏错位** | 时钟扫描 + 目测 |
-| MAX7219 SPI | 1–20MHz 目测全部正确；默认 10MHz（规格上限），每帧 31µs | 时钟扫描 + 目测 |
-| USB 上行 | 约 400 KiB/s 封顶：USB-Serial/JTAG 的 OUT 端点只有单个 64B 缓冲，固件读走后才能收下一个包 | 加大读块无变化 |
+| Matrix orientation | The current mounting needs a **90° clockwise rotation** (firmware default `rotation = 1`; on 2026-10-24 the user reported digits 1–20 all readable); on 2026-10-19 it was upright at 0°, the mounting changed afterwards | User visual check |
+| TM1637 rising edge | After releasing CLK, wait **≥44µs** to be reliable; 50µs is used; 2µs is enough for the falling edge; DIO only needs to lead CLK slightly (5µs) | Strict ACK sweep |
+| TM1637 ACK | When the rising edge is too slow, a released DIO that hasn't risen yet also reads low and **is mistaken for an ACK**; judging whether timing is reliable requires a "strict ACK" (wait an extra 150µs before reading ACK) | Found 2026-10-24 |
+| OLED I²C | 1.1MHz with zero errors (about 95fps full frame), the current limit; settings of 1.15–2.2MHz fall into an unusable range of the driver's clock divider; 2.3–2.8MHz settings get ACKs but **visibly show garbled, shifted output** | Clock sweep + visual check |
+| MAX7219 SPI | 1–20MHz all visually correct; default 10MHz (spec maximum), 31µs per frame | Clock sweep + visual check |
+| USB upstream | Caps at about 400 KiB/s: the USB-Serial/JTAG OUT endpoint has a single 64B buffer, and the next packet can only be received after the firmware reads it out | Larger read chunks made no difference |
 
-### 可能的硬件提速
+### Possible hardware speedups
 
-- **TM1637**：去掉模块上 CLK/DIO 的滤波电容，或把电平转换器换成更强的上拉 / 推挽方案，上升沿能从约 43µs 降到几 µs，刷新速度可提高约 10 倍。
-- **OLED**：在 SDA/SCL 上加 2.2kΩ 上拉，可能稳定工作在更高的 I²C 时钟。
+- **TM1637**: remove the filter capacitors on CLK/DIO on the module, or replace the level shifter with a stronger pull-up / push-pull design; the rising edge could drop from about 43µs to a few µs, making refresh about 10× faster.
+- **OLED**: adding 2.2kΩ pull-ups on SDA/SCL may allow stable operation at a higher I²C clock.
 
-## 5. 编译与烧录
+## 5. Building and flashing
 
-- 固件：`cd firmware && pio run -t upload`（自动找串口；找不到时加 `--upload-port`）；也可以用 Releases 里的合并镜像，见 [build.md](build.md#6-刷固件)。
-- 上位机默认串口：环境变量 `WWB_PORT`；否则 `/dev/ttyACM0`；再否则自动找乐鑫 VID（0x303A）的 USB 串口（macOS、Windows）。
-- Linux 上用户要在 `dialout` 组才能打开串口。
+- Firmware: `cd firmware && pio run -t upload` (finds the serial port automatically; add `--upload-port` if it can't); you can also use the merged image from Releases, see [build.md](build.md#6-flashing-the-firmware).
+- Default serial port for the host side: the `WWB_PORT` environment variable; otherwise `/dev/ttyACM0`; otherwise auto-detect a USB serial port with Espressif's VID (0x303A) (macOS, Windows).
+- On Linux the user must be in the `dialout` group to open the serial port.

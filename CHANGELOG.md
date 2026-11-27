@@ -1,4 +1,47 @@
+# Changelog
+
+English · [简体中文](#更新记录)
+
+## Unreleased
+
+- All docs are bilingual, English first (`*.md`), Chinese in `*.zh-CN.md`; English wiring diagram.
+- README: roomier "What it does" layout.
+
+## v0.2.0 (2026-11-27)
+
+First public release: build documentation, plus the offline timer and dao timer.
+
+**Build docs**
+- New [build guide](docs/build.md): BOM, wiring diagram, desk / battery power, enclosure, assembly, flashing, troubleshooting. The simplified wiring needs no level shifter.
+- Enclosure Fusion 360 source in `hardware/enclosure/`.
+- README with photos, demo GIF and dao timer scenes.
+- Releases ship a merged firmware image, flashed at address 0 with esptool or from the browser.
+
+**Firmware and programs**
+- Offline timer wwb timer: written in C++, compiled into the firmware and to WebAssembly; switch timing, persistent across power loss, session dots on the matrix, controller connect / disconnect animations.
+- Controller takeover: commands must continue for 3 s to confirm a connection; 1.5 s without commands means unplugged; the device is handed back when a program exits.
+- Raspberry Pi as a UART controller (`wwb.remote`, autostart service `wwbctl`).
+- dao timer: Taoist cyber timer with 55 rituals, 54 rests and 9 omens in 1-bit pixel art; reconnects after link loss, retries saves.
+- Web simulator: three displays + switch + program list; opened on its own it is an online demo running only the offline timer.
+
+**Host**
+- Serial port auto-detection (`WWB_PORT` → `/dev/ttyACM0` → Espressif USB serial), no manual port on macOS or Windows.
+- HUPCL also disabled on macOS so closing the port does not reset the chip.
+- `platformio.ini` no longer pins the upload port.
+
+## v0.1.0 (2026-10-24)
+
+- ESP32-C3 device API: binary serial protocol for the OLED, TM1637, MAX7219 and switch, shared by USB and UART.
+- Measured performance limits (`docs/benchmarks.md`).
+
+---
+
 # 更新记录
+
+## 未发布
+
+- 文档改为中英双语、英文优先（`*.md` 是英文，`*.zh-CN.md` 是中文）；接线图出了英文版。
+- README“它能做什么”一节排版放宽。
 
 ## v0.2.0（2026-11-27）
 

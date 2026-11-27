@@ -1,108 +1,110 @@
-# 树莓派作上位机（UART）
+**English** · [简体中文](raspberrypi.zh-CN.md)
 
-上位机不一定是电脑。树莓派用 GPIO 上的硬件串口接 ESP32 的 UART1，就能运行全部 Python 程序（`wwb` 命令行、`apps/`、showcase、maxdemo）。程序在电脑上写，用 `python -m wwb.remote` 通过 WiFi 推送到树莓派上运行。协议、命令、控制器接管流程和 USB 完全相同，只是端口换成 `/dev/serial0`。
+# Raspberry Pi as the host (UART)
 
-实测用的是 Raspberry Pi Zero 2 W（Debian 13 trixie，aarch64）。
+The host doesn't have to be a computer. A Raspberry Pi connected to the ESP32's UART1 through the hardware serial port on its GPIO header can run all the Python programs (the `wwb` CLI, `apps/`, showcase, maxdemo). Programs are written on the computer and pushed over WiFi to run on the Pi with `python -m wwb.remote`. The protocol, commands and controller takeover flow are exactly the same as over USB; only the port changes to `/dev/serial0`.
 
-## 接线
+Tested on a Raspberry Pi Zero 2 W (Debian 13 trixie, aarch64).
 
-| 树莓派 | | ESP32-C3 |
+## Wiring
+
+| Raspberry Pi | | ESP32-C3 |
 |---|---|---|
-| GPIO14 TXD（物理脚 8） | → | GPIO20（UART1 RX） |
-| GPIO15 RXD（物理脚 10） | ← | GPIO21（UART1 TX） |
-| GND（物理脚 6） | — | GND |
+| GPIO14 TXD (physical pin 8) | → | GPIO20 (UART1 RX) |
+| GPIO15 RXD (physical pin 10) | ← | GPIO21 (UART1 TX) |
+| GND (physical pin 6) | — | GND |
 
-两边都是 3.3V 电平，可以直连。开发板仍用 USB 供电（见 [hardware.md](hardware.md)），**两边必须共地**。
+Both sides are 3.3V logic and can be connected directly. The dev board is still powered over USB (see [hardware.md](hardware.md)); **the two sides must share ground**.
 
-## 树莓派系统设置
+## Raspberry Pi system setup
 
-`/boot/firmware/config.txt` 末尾加：
+Append to the end of `/boot/firmware/config.txt`:
 
 ```
 enable_uart=1
 dtoverlay=miniuart-bt
 ```
 
-`/boot/firmware/cmdline.txt` 里删掉 `console=serial0,115200`，否则内核和登录终端会占用这个串口。然后重启。重启后 `/dev/serial0 → ttyAMA0`。
+Remove `console=serial0,115200` from `/boot/firmware/cmdline.txt`; otherwise the kernel and the login console will occupy this serial port. Then reboot. After rebooting, `/dev/serial0 → ttyAMA0`.
 
-`miniuart-bt` 把 PL011 硬件串口换到 GPIO14/15，蓝牙改用 mini UART。不用 mini UART 有两个原因：
+`miniuart-bt` moves the PL011 hardware UART to GPIO14/15 and switches Bluetooth to the mini UART. There are two reasons not to use the mini UART:
 
-- 它的波特率跟着 GPU 核心时钟走；
-- 它的 FIFO 很小，921600 波特率下容易丢字节。
+- its baud rate follows the GPU core clock;
+- its FIFO is tiny and easily drops bytes at 921600 baud.
 
-如果用不到蓝牙，也可以改用 `dtoverlay=disable-bt`。用户 `pi` 默认在 `dialout` 组，不需要 sudo 就能打开串口。
+If you don't need Bluetooth, you can use `dtoverlay=disable-bt` instead. The user `pi` is in the `dialout` group by default, so it can open the serial port without sudo.
 
-## 安装（树莓派上只需要运行环境）
+## Installation (the Pi only needs a runtime)
 
-开发和测试都在电脑上做（可以先在网页模拟器里跑）。树莓派只负责运行：电脑把代码同步过去，它通过 UART 驱动设备。
+Development and testing all happen on the computer (you can try things in the web simulator first). The Pi only runs things: the computer syncs the code over, and the Pi drives the device over UART.
 
 ```bash
-# 树莓派上执行一次：Miniforge + 只含依赖的 conda 环境
+# Run once on the Pi: Miniforge + a conda environment with just the dependencies
 curl -fsSL -o Miniforge3.sh https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-aarch64.sh
 bash Miniforge3.sh -b -p ~/miniforge3 && rm Miniforge3.sh
 ~/miniforge3/bin/conda create -y -n wwb python=3.12 pyserial numpy pillow
 ```
 
-电脑上配好 ssh 公钥登录（`ssh-copy-id pi@raspberrypi.local`）。另外建议关掉树莓派的 WiFi 省电，否则空闲一会儿后延迟会跳到几百毫秒：
+Set up ssh public-key login from the computer (`ssh-copy-id pi@raspberrypi.local`). It's also recommended to turn off the Pi's WiFi power saving; otherwise latency jumps to several hundred milliseconds after it's been idle for a while:
 
 ```bash
-sudo nmcli con modify <连接名> 802-11-wireless.powersave 2
+sudo nmcli con modify <connection-name> 802-11-wireless.powersave 2
 ```
 
-## 使用（在电脑上执行）
+## Usage (run on the computer)
 
 ```bash
 conda activate esp32
-python -m wwb.remote apps.stopwatch          # 同步 host/wwb 和 apps/，在树莓派上运行
+python -m wwb.remote apps.stopwatch          # sync host/wwb and apps/, run on the Pi
 python -m wwb.remote wwb.showcase --seconds 30
-python -m wwb.remote wwb info                # 命令行也可以
-python -m wwb.remote --sync                  # 只同步
+python -m wwb.remote wwb info                # the CLI works too
+python -m wwb.remote --sync                  # sync only
 ```
 
-- 第一次同步会传全部代码，以后 rsync 只传有改动的文件。
-- 程序的输出实时显示在电脑上。
-- Ctrl+C 会停止树莓派上的程序，程序照常发 `RELEASE` 交还设备。
-- ssh 断开时，程序会收到 SIGHUP，同样正常退出。
+- The first sync transfers all the code; after that rsync only sends changed files.
+- The program's output is shown live on the computer.
+- Ctrl+C stops the program on the Pi, and the program sends `RELEASE` as usual to hand back the device.
+- If ssh disconnects, the program receives SIGHUP and likewise exits cleanly.
 
-`wwb.remote` 的配置都用环境变量：
+`wwb.remote` is configured entirely through environment variables:
 
-| 变量 | 作用 | 默认值 |
+| Variable | Purpose | Default |
 |---|---|---|
-| `WWB_REMOTE` | 目标机器 | `pi@raspberrypi.local` |
-| `WWB_REMOTE_DIR` | 树莓派上的代码目录 | `~/wwb_timer` |
-| `WWB_REMOTE_PYTHON` | 树莓派上的 Python | `~/miniforge3/envs/wwb/bin/python` |
-| `WWB_REMOTE_PORT` | 树莓派上的串口 | `/dev/serial0` |
+| `WWB_REMOTE` | Target machine | `pi@raspberrypi.local` |
+| `WWB_REMOTE_DIR` | Code directory on the Pi | `~/wwb_timer` |
+| `WWB_REMOTE_PYTHON` | Python on the Pi | `~/miniforge3/envs/wwb/bin/python` |
+| `WWB_REMOTE_PORT` | Serial port on the Pi | `/dev/serial0` |
 
-树莓派上运行时：
-- `PYTHONPATH` 指向同步过去的 `host/`，不需要 `pip install`；
-- `WWB_PORT` 设成串口，所有程序默认就用它。程序的 `--port` 默认值取自 `WWB_PORT`，没设时为 `/dev/ttyACM0`。
+When running on the Pi:
+- `PYTHONPATH` points to the synced `host/`, so no `pip install` is needed;
+- `WWB_PORT` is set to the serial port, so every program uses it by default. A program's `--port` default comes from `WWB_PORT`, falling back to `/dev/ttyACM0` when unset.
 
-## 常驻程序（开机自启）
+## Resident program (start on boot)
 
-树莓派上用 systemd 用户服务 `wwb.service` 常驻一个程序（如 dao timer），崩溃 3 秒后自动重启，停止时程序照常交还设备。
+On the Pi, the systemd user service `wwb.service` keeps one program resident (e.g. dao timer). It restarts automatically 3 seconds after a crash, and when stopped the program hands back the device as usual.
 
 ```bash
-# 电脑上
-python -m wwb.remote --deploy apps.dao       # 同步代码，设为常驻程序并启动
-python -m wwb.remote --deploy                # 代码更新后：同步并重启常驻程序
-python -m wwb.remote --svc status            # 状态、常驻程序、最近日志
-python -m wwb.remote --svc logs -f           # 跟随日志
+# On the computer
+python -m wwb.remote --deploy apps.dao       # sync code, set as the resident program and start it
+python -m wwb.remote --deploy                # after code changes: sync and restart the resident program
+python -m wwb.remote --svc status            # status, resident program, recent logs
+python -m wwb.remote --svc logs -f           # follow logs
 python -m wwb.remote --svc stop | start | restart | enable | disable
 
-# 树莓派上（--deploy 后会装好 ~/.local/bin/wwbctl）
+# On the Pi (--deploy installs ~/.local/bin/wwbctl)
 wwbctl status
-wwbctl use apps.dao_fast                     # 换常驻程序
+wwbctl use apps.dao_fast                     # switch the resident program
 wwbctl logs -f
 ```
 
-常驻程序在运行时，用 `wwb.remote` 临时运行别的程序会先停掉它，结束后再启动（串口同一时间只能给一个程序）。
-没登录也要开机运行，需要执行一次 `sudo loginctl enable-linger pi`。
+While the resident program is running, temporarily running another program with `wwb.remote` stops it first and starts it again afterwards (the serial port can only serve one program at a time).
+To have it run on boot without anyone logged in, run `sudo loginctl enable-linger pi` once.
 
-## 注意
+## Notes
 
-- 波特率默认 921600，和固件一致。改波特率用 `UART_BAUD` 命令：设备先按旧波特率回复，再切到新波特率。重启后恢复 921600。
-- USB 和 UART 可以同时连着，但**同一时间只应有一个控制器程序**在运行。两边的命令都算作控制器的命令，两个程序同时画屏会互相覆盖。
-- UART 没有 DTR/RTS，打开或关闭串口都不会复位芯片。
-- Zero 2 W 性能有限：
-  - 实测 showcase 在 Zero 2 W 上 OLED 约 120–160 帧/s、点阵约 120 帧/s，瓶颈是树莓派上的 Python 渲染。
-  - 921600 波特率下 OLED 整帧约 11ms。
+- The baud rate defaults to 921600, matching the firmware. Change it with the `UART_BAUD` command: the device replies at the old baud rate first, then switches to the new one. It reverts to 921600 after a reboot.
+- USB and UART can be connected at the same time, but **only one controller program should be running at a time**. Commands from either side count as controller commands, and two programs drawing at once will overwrite each other.
+- UART has no DTR/RTS, so opening or closing the serial port never resets the chip.
+- The Zero 2 W has limited performance:
+  - Measured showcase on the Zero 2 W: OLED about 120–160 fps, matrix about 120 fps; the bottleneck is Python rendering on the Pi.
+  - At 921600 baud, a full OLED frame takes about 11ms.

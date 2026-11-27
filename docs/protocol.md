@@ -1,171 +1,173 @@
-# wwb 串口协议 v1
+**English** · [简体中文](protocol.zh-CN.md)
 
-设备把开关、OLED、数码管、点阵封装成一套二进制命令。**USB 与 UART 走完全相同的协议和命令处理**，只有物理层不同：
+# wwb serial protocol v1
 
-| 通道 | 设备端 | 上位机端 | 参数 |
+The device wraps the switch, OLED, 7-segment display and dot matrix into a single set of binary commands. **USB and UART use exactly the same protocol and command handling**; only the physical layer differs:
+
+| Channel | Device side | Host side | Parameters |
 |---|---|---|---|
-| USB | ESP32-C3 内置 USB-Serial/JTAG | `/dev/ttyACM0` 一类 | 波特率无意义 |
-| UART | UART1，GPIO20 = RX，GPIO21 = TX | USB 转 TTL（3.3V 电平）或树莓派 `/dev/serial0`（[raspberrypi.md](raspberrypi.md)） | 默认 921600 8N1，可用 `UART_BAUD` 改，最高 5M |
+| USB | ESP32-C3 built-in USB-Serial/JTAG | something like `/dev/ttyACM0` | baud rate is irrelevant |
+| UART | UART1, GPIO20 = RX, GPIO21 = TX | USB-to-TTL adapter (3.3V levels) or Raspberry Pi `/dev/serial0` ([raspberrypi.md](raspberrypi.md)) | default 921600 8N1, changeable with `UART_BAUD`, up to 5M |
 
-两条通道可同时使用：回复回到发出请求的通道；事件按各通道的订阅设置发送。
+Both channels can be used at the same time: a reply goes back on the channel the request came from; events are sent according to each channel's subscription settings.
 
-参考实现：设备端 `firmware/src/proto.h` + `main.cpp`，上位机 `host/wwb/`。
+Reference implementation: device side `firmware/src/proto.h` + `main.cpp`, host side `host/wwb/`.
 
-## 1. 分帧
+## 1. Framing
 
 ```
-线上：COBS(帧) 0x00 COBS(帧) 0x00 ...
-帧：  op u8 | flags u8 | seq u16 | payload (0–1100 B) | crc16 u16
+Wire:  COBS(frame) 0x00 COBS(frame) 0x00 ...
+Frame: op u8 | flags u8 | seq u16 | payload (0–1100 B) | crc16 u16
 ```
 
-- 多字节字段一律**小端**。
-- `crc16` = CRC-16/CCITT-FALSE（多项式 0x1021，初值 0xFFFF，不反射，无异或输出），覆盖 `op..payload`。Python 可用 `binascii.crc_hqx(data, 0xFFFF)`。
-- COBS 编码后帧内不含 0x00，因此 0x00 就是帧边界；收到乱码或半帧时，丢到下一个 0x00 即可重新同步。开机时 ROM 会往 USB 打印启动信息，上位机按 CRC 失败丢弃即可。
-- payload 最大 1100 字节，足够放一整帧 OLED（1024B）。
+- All multi-byte fields are **little-endian**.
+- `crc16` = CRC-16/CCITT-FALSE (polynomial 0x1021, init 0xFFFF, no reflection, no final XOR), covering `op..payload`. In Python: `binascii.crc_hqx(data, 0xFFFF)`.
+- After COBS encoding a frame contains no 0x00, so 0x00 is the frame boundary; on garbage or a partial frame, discard up to the next 0x00 to resync. At boot the ROM prints startup messages over USB; the host simply drops them as CRC failures.
+- Payload is at most 1100 bytes, enough for a full OLED frame (1024B).
 
 ### flags
 
-| 位 | 名称 | 方向 | 含义 |
+| Bit | Name | Direction | Meaning |
 |---|---|---|---|
-| 0x01 | NOREPLY | 请求 | 成功时不回复（出错仍回复）。高速推流时用，靠 USB/串口自身的流控限速 |
-| 0x02 | RESP | 回复 | 设备的回复，`op`、`seq` 与请求相同 |
-| 0x04 | EVENT | 事件 | 设备主动上报 |
-| 0x08 | ERR | 回复 | 出错，payload = 1 字节错误码 |
-| 0x10 | FLUSH | 请求 | OLED 绘制类命令：执行后立即推送到屏幕 |
+| 0x01 | NOREPLY | request | No reply on success (errors are still replied). Used for high-rate streaming, rate-limited by USB/serial flow control itself |
+| 0x02 | RESP | reply | Reply from the device; `op` and `seq` match the request |
+| 0x04 | EVENT | event | Unsolicited report from the device |
+| 0x08 | ERR | reply | Error; payload = 1-byte error code |
+| 0x10 | FLUSH | request | OLED drawing commands: push to the screen right after executing |
 
-### 错误码
+### Error codes
 
-| 码 | 名称 | 含义 |
+| Code | Name | Meaning |
 |---|---|---|
-| 1 | UNKNOWN_OP | 未知操作码 |
-| 2 | BAD_LEN | payload 长度不对 |
-| 3 | BAD_ARG | 参数越界 |
-| 4 | HW | 外设无响应（如 OLED I²C 失败） |
-| 5 | NOT_READY | 控制器连接还没确认（连上后要稳定 3 秒），不能操作外设 |
+| 1 | UNKNOWN_OP | Unknown opcode |
+| 2 | BAD_LEN | Wrong payload length |
+| 3 | BAD_ARG | Argument out of range |
+| 4 | HW | Peripheral not responding (e.g. OLED I²C failure) |
+| 5 | NOT_READY | Controller connection not yet confirmed (must be steady for 3 seconds after connecting); peripherals cannot be driven |
 
-## 2. 命令
+## 2. Commands
 
-payload 列出字段顺序；“→”后为回复 payload（无则为空）。
+The payload column lists fields in order; the reply column gives the reply payload (empty if none).
 
-### 系统 0x0_
+### System 0x0_
 
-| op | 名称 | payload | 回复 |
+| op | Name | payload | Reply |
 |---|---|---|---|
-| 0x01 | PING | 任意 | 原样回显 |
-| 0x02 | INFO | — | JSON：固件版本、芯片、MAC、各外设当前配置、字体列表 |
-| 0x03 | SINK | 任意 | u32 累计收到的字节（测上行吞吐） |
-| 0x04 | SOURCE | u32 总字节, u16 块大小 | 先发若干 EVENT 帧（op=0x04，payload 为数据），最后回复 u32 已发字节、u32 设备耗时 µs |
-| 0x05 | STATS | — | JSON：各通道收发计数、CRC 错误、每个外设的请求/实际刷新次数与耗时 |
+| 0x01 | PING | anything | echoed back |
+| 0x02 | INFO | — | JSON: firmware version, chip, MAC, current configuration of each peripheral, font list |
+| 0x03 | SINK | anything | u32 total bytes received (measures upstream throughput) |
+| 0x04 | SOURCE | u32 total bytes, u16 chunk size | First sends a number of EVENT frames (op=0x04, payload is data), then replies with u32 bytes sent, u32 device time in µs |
+| 0x05 | STATS | — | JSON: per-channel RX/TX counters, CRC errors, requested/actual refresh counts and timings for each peripheral |
 | 0x06 | STATS_RESET | — | |
-| 0x07 | REBOOT | — | 回复后重启 |
-| 0x08 | UART_BAUD | u32 baud | 先按旧波特率回复，再切换 |
-| 0x09 | SUBSCRIBE | u8 掩码（bit0 = 输入事件，bit1 = 脱机程序状态） | 作用于发出请求的通道；默认两条通道都订阅输入事件 |
-| 0x0A | BENCH | 见下 | JSON：设备端外设自测结果 |
-| 0x0B | TIME | — | u64 设备时间 µs（与事件时间戳同一时钟） |
-| 0x0C | RELEASE | — | 控制器释放设备，脱机程序立即恢复显示 |
-| 0x0D | CONNECT | — | u8 连接状态（0 脱机 / 1 连接中 / 2 已接管）、u32 距离接管还有 ms |
-| 0x0E | APP_STATE | — | 脱机程序的状态（格式见下）；订阅 bit1 后状态变化时以事件主动上报 |
-| 0x0F | APP_DATA | u8 0 → 读；u8 1 + 数据（≤256B，空 = 清除）→ 写 | 控制器存储：存在芯片 flash（NVS）里、断电保留，与脱机程序的数据分开。不要频繁写 |
+| 0x07 | REBOOT | — | Reboots after replying |
+| 0x08 | UART_BAUD | u32 baud | Replies at the old baud rate, then switches |
+| 0x09 | SUBSCRIBE | u8 mask (bit0 = input events, bit1 = offline app state) | Applies to the channel the request came from; by default both channels subscribe to input events |
+| 0x0A | BENCH | see below | JSON: on-device peripheral self-test results |
+| 0x0B | TIME | — | u64 device time in µs (same clock as event timestamps) |
+| 0x0C | RELEASE | — | The controller releases the device; the offline app resumes the displays immediately |
+| 0x0D | CONNECT | — | u8 connection state (0 offline / 1 connecting / 2 taken over), u32 ms remaining until takeover |
+| 0x0E | APP_STATE | — | Offline app state (format below); after subscribing to bit1, it is reported as an event whenever it changes |
+| 0x0F | APP_DATA | u8 0 → read; u8 1 + data (≤256B, empty = clear) → write | Controller storage: kept in chip flash (NVS), survives power loss, separate from the offline app's data. Don't write it frequently |
 
-**控制器与脱机程序**：没有上位机时，芯片里的脱机程序（计时器）驱动外设。上位机的请求**持续 3 秒**（间隔不超过 1 秒）才确认连接，再播 1.2 秒连接动画后由上位机接管；在那之前显示类命令回 `NOT_READY`，用 `CONNECT` 轮询状态。接管后发 `RELEASE` 或 **1.5 秒没有任何请求**就交还给脱机程序，所以控制器空闲时要定时发请求。`wwb.Device` 全部自动处理（打开时等接管、每 0.5 秒 `PING`、关闭时 `RELEASE`）。详见 [offline.md](offline.md)。
+**Controller and offline app**: when no host is attached, the offline app (the timer) on the chip drives the peripherals. Host requests must **continue for 3 seconds** (at most 1 second apart) before the connection is confirmed; then a 1.2-second connect animation plays and the host takes over. Until then, display commands return `NOT_READY`; poll the state with `CONNECT`. After takeover, sending `RELEASE` or **1.5 seconds without any request** hands control back to the offline app, so an idle controller must send requests periodically. `wwb.Device` handles all of this automatically (waits for takeover on open, sends `PING` every 0.5 seconds, `RELEASE` on close). See [offline.md](offline.md).
 
-**计时以芯片为准**：脱机计时器 wwb timer 在控制器接管期间照常计时。`APP_STATE` 回 24 字节：
+**The chip is the source of truth for timing**: the offline timer wwb timer keeps counting while a controller has taken over. `APP_STATE` returns 24 bytes:
 
 ```
-u8 种类(1 = 计时器)  u8 标志(bit0 = 计时中)  u16 0
-u32 清零次数（开关在上开机清零时 +1）  u32 完成的“开 → 关”次数
-u64 累计 ms（含进行中这一段）  u32 本次已计 ms（停止时为 0）
+u8 kind (1 = timer)  u8 flags (bit0 = running)  u16 0
+u32 reset count (+1 each time it boots with the switch up and resets)  u32 completed "on → off" count
+u64 total ms (including the segment in progress)  u32 ms in current segment (0 when stopped)
 ```
 
-开始、停止、清零时芯片以 `APP_STATE` 事件主动上报（需订阅 bit1）。`wwb.Device`：`timer()` 读状态、
-`on_timer(回调)` + `subscribe(timer=True)` 收事件、`app_data()` / `set_app_data()` 读写控制器存储。
-dao timer（`apps/dao`）就是这样做的：时间全取自芯片，法事进度存在控制器存储里，换上位机、断线重连都接得上。
+On start, stop and reset the chip reports an `APP_STATE` event (requires subscribing to bit1). In `wwb.Device`: `timer()` reads the state,
+`on_timer(callback)` + `subscribe(timer=True)` receives events, `app_data()` / `set_app_data()` read and write controller storage.
+dao timer (`apps/dao`) works exactly this way: all time comes from the chip and ritual progress is kept in controller storage, so it picks up seamlessly after switching hosts or reconnecting.
 
-**BENCH**：`u8 目标, u16 次数, 参数…`，直接在设备上反复驱动外设计时，不经过 USB，用来测外设本身的极限。
+**BENCH**: `u8 target, u16 count, args…`. Drives a peripheral repeatedly on the device itself and times it, bypassing USB, to measure the peripheral's own limits.
 
-| 目标 | 参数 | 说明 |
+| Target | Args | Notes |
 |---|---|---|
-| 1 OLED | u32 I²C Hz（0 = 当前） | 推整帧；结束后恢复原时钟 |
-| 2 SEG | u8 CLK上升µs, u8 下降µs, [u8 DIO上升µs, u8 读ACK前等待µs] | 写 4 位；`ack_fails` 为未收到 ACK 的字节数。判断时序可靠性时读 ACK 前等待要给足（150），否则慢上升沿会造成假 ACK |
-| 3 MX | u32 SPI Hz | 写 8 行 |
+| 1 OLED | u32 I²C Hz (0 = current) | Pushes full frames; restores the original clock afterwards |
+| 2 SEG | u8 CLK rise µs, u8 fall µs, [u8 DIO rise µs, u8 wait before reading ACK µs] | Writes 4 digits; `ack_fails` is the number of bytes with no ACK. When judging timing reliability, give the wait before reading ACK enough time (150), otherwise a slow rising edge produces false ACKs |
+| 3 MX | u32 SPI Hz | Writes 8 rows |
 
-### 输入与板载灯 0x1_
+### Inputs and onboard LED 0x1_
 
-| op | 名称 | payload | 回复 |
+| op | Name | payload | Reply |
 |---|---|---|---|
-| 0x10 | IO_READ | — | 每个输入 13B：u8 状态, u32 变化次数, u64 最近变化时刻 µs；顺序为 开关（1 = 开启/闭合）、BOOT（1 = 按下） |
-| 0x11 | IO_CONFIG | u32 消抖 µs（默认 20000） | |
-| 0x12 | LED | u8 0/1 | 开机时 LED 常亮表示两条通道都就绪 |
-| 0x18 | EV_INPUT（事件） | u8 输入（0 开关 / 1 BOOT）, u8 状态, u32 次数, u64 时刻 µs | — |
+| 0x10 | IO_READ | — | 13B per input: u8 state, u32 change count, u64 last change time µs; order is switch (1 = on/closed), BOOT (1 = pressed) |
+| 0x11 | IO_CONFIG | u32 debounce µs (default 20000) | |
+| 0x12 | LED | u8 0/1 | At boot the LED stays lit to indicate both channels are ready |
+| 0x18 | EV_INPUT (event) | u8 input (0 switch / 1 BOOT), u8 state, u32 count, u64 time µs | — |
 
-输入用边沿中断记下**抖动开始的时刻**，消抖确认后以该时刻上报，所以事件时间戳不受消抖延迟影响，可直接用于计时。
+Inputs use an edge interrupt to record **the moment bouncing starts**, and once debounce confirms the change it is reported with that timestamp, so event timestamps are not affected by the debounce delay and can be used directly for timing.
 
-### OLED 0x2_（SSD1306 128×64）
+### OLED 0x2_ (SSD1306 128×64)
 
-帧缓冲排列：8 页 × 128 列，第 `page*128 + x` 字节表示 `x` 列、`page*8 .. page*8+7` 行，**LSB 在上**。
+Framebuffer layout: 8 pages × 128 columns; byte `page*128 + x` holds column `x`, rows `page*8 .. page*8+7`, **LSB on top**.
 
-所有绘制先写入设备上的帧缓冲并记录脏矩形；推送任务只把脏区域推到屏幕。推送进行中到达的新绘制会合并到下一次推送（只保留最新画面），所以上位机可以不管屏幕速度、尽管发；`STATS` 里 `commits - pushes` 就是被合并掉的帧数。
+All drawing goes into a framebuffer on the device and records a dirty rectangle; the push task only sends the dirty region to the screen. New drawing that arrives while a push is in progress is merged into the next push (only the latest image is kept), so the host can send as fast as it likes without caring about screen speed; `commits - pushes` in `STATS` is the number of merged frames.
 
-| op | 名称 | payload | 说明 |
+| op | Name | payload | Notes |
 |---|---|---|---|
-| 0x20 | OLED_FRAME | 1024B | 整帧 |
-| 0x21 | OLED_BLIT | u8 起始页, u8 起始列, u8 页数, u8 列数, 数据 | 局部更新，数据按页排列（页数×列数 字节）。局部推送更快 |
-| 0x22 | OLED_TEXT | i16 x, i16 y（基线）, u8 字体, u8 颜色, UTF-8 文本 | 颜色 0 清除 / 1 点亮 / 2 反色 |
-| 0x23 | OLED_CLEAR | [u8 颜色] | |
-| 0x24 | OLED_RECT | i16 x, y, w, h, u8 模式 | 0 填充清除 / 1 填充 / 2 边框 / 3 反色 |
-| 0x25 | OLED_CMD | SSD1306 命令字节 | 如对比度 `81 xx`、反色 `A7`、关显示 `AE` |
-| 0x26 | OLED_CONFIG | u32 I²C Hz | 默认 1.1MHz，即当前硬件极限；更高设定会花屏 |
-| 0x2F | OLED_FLUSH | — | 推送 |
+| 0x20 | OLED_FRAME | 1024B | Full frame |
+| 0x21 | OLED_BLIT | u8 start page, u8 start column, u8 page count, u8 column count, data | Partial update; data is page-ordered (pages × columns bytes). Partial pushes are faster |
+| 0x22 | OLED_TEXT | i16 x, i16 y (baseline), u8 font, u8 color, UTF-8 text | Color 0 clear / 1 set / 2 invert |
+| 0x23 | OLED_CLEAR | [u8 color] | |
+| 0x24 | OLED_RECT | i16 x, y, w, h, u8 mode | 0 fill clear / 1 fill / 2 outline / 3 invert |
+| 0x25 | OLED_CMD | SSD1306 command bytes | e.g. contrast `81 xx`, invert `A7`, display off `AE` |
+| 0x26 | OLED_CONFIG | u32 I²C Hz | Default 1.1MHz, the current hardware limit; higher settings garble the display |
+| 0x2F | OLED_FLUSH | — | Push |
 
-绘制类命令（FRAME/BLIT/TEXT/CLEAR/RECT）带 `FLUSH` 标志时，执行后立即推送；不带时只改帧缓冲，可以连续画多样东西再一次 `OLED_FLUSH`。
+Drawing commands (FRAME/BLIT/TEXT/CLEAR/RECT) with the `FLUSH` flag push immediately after executing; without it they only modify the framebuffer, so you can draw several things and then issue a single `OLED_FLUSH`.
 
-字体编号：0 `6x10`、1 `9x15`、2 `logisoso16`、3 `logisoso24`（仅数字）、4 `logisoso32`（仅数字）、5 `wqy12`（含常用中文）。
+Font IDs: 0 `6x10`, 1 `9x15`, 2 `logisoso16`, 3 `logisoso24` (digits only), 4 `logisoso32` (digits only), 5 `wqy12` (includes common Chinese characters).
 
-### 数码管 0x3_（TM1637）
+### 7-segment display 0x3_ (TM1637)
 
-| op | 名称 | payload | 说明 |
+| op | Name | payload | Notes |
 |---|---|---|---|
-| 0x30 | SEG_RAW | 4B 段码 | bit0=a … bit6=g；第 2 位（下标 1）bit7 = 冒号 |
-| 0x31 | SEG_TEXT | 文本 | 数字、部分字母、`-` `_` `=`；`:` 点亮冒号；右对齐 |
-| 0x32 | SEG_CONFIG | u8 亮度 0–7, u8 开/关, u8 CLK上升µs, u8 下降µs, [u8 DIO上升µs] | 默认 3 / 开 / 50 / 2 / 5 |
+| 0x30 | SEG_RAW | 4B segment codes | bit0=a … bit6=g; bit7 of digit 2 (index 1) = colon |
+| 0x31 | SEG_TEXT | text | Digits, some letters, `-` `_` `=`; `:` lights the colon; right-aligned |
+| 0x32 | SEG_CONFIG | u8 brightness 0–7, u8 on/off, u8 CLK rise µs, u8 fall µs, [u8 DIO rise µs] | Default 3 / on / 50 / 2 / 5 |
 
-刷新由独立任务完成，时序由硬件定时器中断逐边沿执行（等慢上升沿时 CPU 空闲），同样只保留最新内容；并且**只写发生变化的那几位**（单独一位变化只需 2 个字节，速度约为整屏的 2.3 倍）。空闲满 1 秒时自动补发配置并整屏重写；连续刷新期间若出现 ACK 失败，下一次也会补发，所以模块单独断电重上电后能自动恢复。
+Refreshing is done by a dedicated task, with timing executed edge by edge from a hardware timer interrupt (the CPU is idle while waiting for slow rising edges); likewise only the latest content is kept, and **only the digits that changed are written** (a single-digit change needs just 2 bytes, about 2.3× faster than a full refresh). After a full 1 second idle it automatically resends the configuration and rewrites the whole display; if an ACK fails during continuous refreshing, the next refresh also resends it, so the module recovers automatically after being power-cycled on its own.
 
-固定帧率推送时，两帧到达间隔要大于一次刷新耗时（单独一位约 1.3ms），否则设备只保留后一帧。
+When pushing at a fixed frame rate, frames must arrive further apart than one refresh takes (about 1.3ms for a single digit), otherwise the device keeps only the later frame.
 
-### 点阵 0x4_（MAX7219）
+### Dot matrix 0x4_ (MAX7219)
 
-| op | 名称 | payload | 说明 |
+| op | Name | payload | Notes |
 |---|---|---|---|
-| 0x40 | MX_FRAME | 8B | 逻辑方向：第 0 字节为最上一行，bit7 为最左；设备按旋转设置换算 |
-| 0x41 | MX_CONFIG | u8 亮度 0–15, u8 旋转 0–3（×90° 顺时针）, u8 标志（bit0 显示测试, bit1 关断）, [u32 SPI Hz] | 默认 1 / 1 / 0 / 10MHz |
-| 0x42 | MX_RAW | (寄存器, 值) 对 | 直接写 MAX7219 寄存器 |
+| 0x40 | MX_FRAME | 8B | Logical orientation: byte 0 is the top row, bit7 is leftmost; the device converts according to the rotation setting |
+| 0x41 | MX_CONFIG | u8 brightness 0–15, u8 rotation 0–3 (×90° clockwise), u8 flags (bit0 display test, bit1 shutdown), [u32 SPI Hz] | Default 1 / 1 / 0 / 10MHz |
+| 0x42 | MX_RAW | (register, value) pairs | Writes MAX7219 registers directly |
 
-MX_FRAME 在命令处理中同步写出，只写与上次不同的行（10MHz 整屏约 31µs），配置寄存器每秒自动补发一次。
+MX_FRAME is written out synchronously during command handling, writing only rows that differ from last time (about 31µs for a full frame at 10MHz); configuration registers are automatically resent once per second.
 
-## 3. 并发模型（设备端）
+## 3. Concurrency model (device side)
 
 ```
-USB 接收任务 ─┐                   ┌─ OLED 推送任务（优先级 7，I²C 中断驱动）
-（优先级 5）  ├─ dispatch()（互斥）┼─ 数码管任务（优先级 6，硬件定时器中断逐边沿执行时序）
-UART 接收任务 ┤                   └─ 点阵：命令内同步写 SPI，只写变化的行
-脱机程序任务 ─┘（优先级 4，约 60 帧/秒，命令直接调用 execute()）
-输入中断 → 输入任务（优先级 6）→ 事件广播 + 交给脱机程序
+USB RX task ─────┐                       ┌─ OLED push task (priority 7, I²C interrupt-driven)
+(priority 5)     ├─ dispatch() (mutex) ──┼─ 7-seg task (priority 6, timing run edge by edge from hardware timer interrupt)
+UART RX task ────┤                       └─ dot matrix: SPI written synchronously inside the command, changed rows only
+Offline app task ┘ (priority 4, ~60 fps, calls execute() directly for commands)
+Input interrupt → input task (priority 6) → event broadcast + handed to offline app
 ```
 
-显示类命令只更新“期望状态”并唤醒对应任务，立即返回；各外设并行刷新，互不阻塞。
-OLED 与数码管任务优先级高于接收任务，但几乎不占 CPU（大部分时间在等硬件），这样大量命令涌入时它们也能保持满速。实测见 benchmarks.md 的“三屏同时全速”。
+Display commands only update the "desired state" and wake the corresponding task, then return immediately; the peripherals refresh in parallel without blocking each other.
+The OLED and 7-segment tasks have higher priority than the RX tasks but use almost no CPU (they spend most of their time waiting on hardware), so they keep running at full speed even when a flood of commands arrives. For measurements see "Three displays at full speed" in benchmarks.md.
 
-## 4. 例子
+## 4. Examples
 
-PING，seq = 1，payload 为空：
+PING, seq = 1, empty payload:
 
 ```
-帧：       01 00 01 00 45 C1        （crc16(01 00 01 00) = 0xC145，小端写出）
-COBS+0x00：02 01 02 01 03 45 C1 00
+Frame:      01 00 01 00 45 C1        (crc16(01 00 01 00) = 0xC145, written little-endian)
+COBS+0x00:  02 01 02 01 03 45 C1 00
 ```
 
-Python：
+Python:
 
 ```python
 from wwb import Device, Font

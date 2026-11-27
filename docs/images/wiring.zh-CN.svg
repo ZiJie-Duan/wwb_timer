@@ -1,0 +1,184 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 860" width="1000" height="860" font-family="PingFang SC, Microsoft YaHei, Noto Sans CJK SC, Helvetica, Arial, sans-serif">
+  <style>
+    .box { fill: #f8fafc; stroke: #334155; stroke-width: 1.5; }
+    .mcu { fill: #e0f2fe; stroke: #0369a1; stroke-width: 2; }
+    .pwr { fill: #fef2f2; stroke: #b91c1c; stroke-width: 1.5; }
+    .title { font-size: 16px; font-weight: 700; fill: #0f172a; }
+    .sub { font-size: 12px; fill: #475569; }
+    .pin { font-size: 13px; fill: #0f172a; }
+    .muted { font-size: 12px; fill: #94a3b8; }
+    .w { fill: none; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
+    .dot { stroke: #0f172a; stroke-width: 1; fill: #fff; }
+    .v5 { fill: #dc2626; font-weight: 700; }
+    .v33 { fill: #d97706; font-weight: 700; }
+    .gnd { fill: #111827; font-weight: 700; }
+  </style>
+
+  <rect x="0" y="0" width="1000" height="860" rx="16" fill="#ffffff"/>
+
+  <text x="40" y="48" font-size="24" font-weight="700" fill="#0f172a">wwb timer 接线图（简化版）</text>
+  <text x="40" y="76" class="sub">信号线全部直连，不需要电平转换。引脚是 GPIO 编号，焊之前请对照板子丝印。灰色引脚不用接（8 = 板载灯，9 = BOOT 键）。</text>
+  <text x="40" y="98" class="sub"><tspan class="v5">红 = 5V</tspan>　<tspan class="v33">橙 = 3V3</tspan>　<tspan class="gnd">黑 = GND</tspan>　所有 GND 连在一起。</text>
+
+  <!-- ================= ESP32-C3 SuperMini ================= -->
+  <rect class="mcu" x="420" y="150" width="180" height="330" rx="10"/>
+  <text x="510" y="176" class="title" text-anchor="middle">ESP32-C3</text>
+  <text x="510" y="194" class="sub" text-anchor="middle">SuperMini</text>
+  <rect x="488" y="140" width="44" height="14" rx="3" fill="#94a3b8"/>
+  <text x="510" y="134" class="muted" text-anchor="middle">USB-C</text>
+
+  <!-- left pins -->
+  <g class="pin">
+    <text x="432" y="214"><tspan class="v5">5V</tspan></text>
+    <text x="432" y="248"><tspan class="gnd">GND</tspan></text>
+    <text x="432" y="282"><tspan class="v33">3V3</tspan></text>
+    <text x="432" y="316">GPIO4</text>
+    <text x="432" y="350">GPIO3</text>
+    <text x="432" y="384" fill="#94a3b8">GPIO2</text>
+    <text x="432" y="418">GPIO1</text>
+    <text x="432" y="452">GPIO0</text>
+  </g>
+  <!-- right pins -->
+  <g class="pin" text-anchor="end">
+    <text x="588" y="214">GPIO5</text>
+    <text x="588" y="248">GPIO6</text>
+    <text x="588" y="282">GPIO7</text>
+    <text x="588" y="316" fill="#94a3b8">GPIO8</text>
+    <text x="588" y="350" fill="#94a3b8">GPIO9</text>
+    <text x="588" y="384">GPIO10</text>
+    <text x="588" y="418">GPIO20</text>
+    <text x="588" y="452">GPIO21</text>
+  </g>
+
+  <!-- 5V pin note -->
+  <path class="w" stroke="#dc2626" d="M420 210 H372"/>
+  <text x="366" y="206" class="pin" text-anchor="end"><tspan class="v5">5V</tspan></text>
+  <text x="366" y="222" class="muted" text-anchor="end">USB 或电池</text>
+
+  <!-- ================= TM1637 ================= -->
+  <rect class="box" x="60" y="226" width="200" height="136" rx="8"/>
+  <text x="72" y="256" class="title">TM1637</text>
+  <text x="72" y="276" class="sub">四位数码管</text>
+  <text x="72" y="294" class="sub">VCC 接 3V3</text>
+  <g class="pin" text-anchor="end">
+    <text x="250" y="248"><tspan class="gnd">GND</tspan></text>
+    <text x="250" y="282"><tspan class="v33">VCC</tspan></text>
+    <text x="250" y="316">CLK</text>
+    <text x="250" y="350">DIO</text>
+  </g>
+
+  <!-- ================= OLED ================= -->
+  <rect class="box" x="60" y="394" width="200" height="142" rx="8"/>
+  <text x="72" y="424" class="title">OLED</text>
+  <text x="72" y="444" class="sub">0.96 寸 SSD1306</text>
+  <text x="72" y="462" class="sub">I²C 地址 0x3C</text>
+  <g class="pin" text-anchor="end">
+    <text x="250" y="418">SCL</text>
+    <text x="250" y="452">SDA</text>
+    <text x="250" y="486"><tspan class="v33">VCC → 3V3</tspan></text>
+    <text x="250" y="520"><tspan class="gnd">GND → GND</tspan></text>
+  </g>
+
+  <!-- left wires (straight) -->
+  <path class="w" stroke="#111827" d="M260 244 H420"/>
+  <path class="w" stroke="#d97706" d="M260 278 H420"/>
+  <path class="w" stroke="#2563eb" d="M260 312 H420"/>
+  <path class="w" stroke="#7c3aed" d="M260 346 H420"/>
+  <path class="w" stroke="#0891b2" d="M260 414 H420"/>
+  <path class="w" stroke="#16a34a" d="M260 448 H420"/>
+
+  <!-- ================= Toggle switch ================= -->
+  <rect class="box" x="760" y="166" width="200" height="76" rx="8"/>
+  <text x="948" y="196" class="title" text-anchor="end">钮子开关</text>
+  <text x="948" y="216" class="sub" text-anchor="end">两脚，不分正反</text>
+  <g class="pin">
+    <text x="772" y="194">脚 1</text>
+    <text x="772" y="226">脚 2 → <tspan class="gnd">GND</tspan></text>
+  </g>
+
+  <!-- ================= MAX7219 ================= -->
+  <rect class="box" x="760" y="276" width="200" height="144" rx="8"/>
+  <text x="948" y="306" class="title" text-anchor="end">MAX7219</text>
+  <text x="948" y="326" class="sub" text-anchor="end">8×8 点阵</text>
+  <text x="948" y="344" class="sub" text-anchor="end">接 IN 端</text>
+  <g class="pin">
+    <text x="772" y="300"><tspan class="v5">VCC → 5V</tspan></text>
+    <text x="772" y="326"><tspan class="gnd">GND → GND</tspan></text>
+    <text x="772" y="352">DIN</text>
+    <text x="772" y="378">CS</text>
+    <text x="772" y="404">CLK</text>
+  </g>
+
+  <!-- ================= Controller ================= -->
+  <text x="760" y="482" class="title">控制器（可选）</text>
+  <text x="760" y="500" class="sub">树莓派 GPIO 排针，物理脚号</text>
+  <rect class="box" x="760" y="510" width="200" height="118" rx="8"/>
+  <g class="pin">
+    <text x="772" y="534">TXD（8 脚）</text>
+    <text x="772" y="562">RXD（10 脚）</text>
+    <text x="772" y="590"><tspan class="gnd">GND（6 脚）</tspan></text>
+    <text x="772" y="618"><tspan class="v5">5V（4 脚）</tspan><tspan class="muted"> 可不接</tspan></text>
+  </g>
+
+  <!-- right wires -->
+  <!-- GPIO5 -> switch -->
+  <path class="w" stroke="#ca8a04" d="M600 210 H700 V190 H760"/>
+  <!-- GPIO6 -> DIN -->
+  <path class="w" stroke="#db2777" d="M600 244 H650 V348 H760"/>
+  <!-- GPIO7 -> CLK -->
+  <path class="w" stroke="#0f766e" d="M600 278 H630 V400 H760"/>
+  <!-- GPIO10 -> CS (hops over GPIO7) -->
+  <path class="w" stroke="#65a30d" d="M600 380 H621 A9 9 0 0 1 639 380 H720 V374 H760"/>
+  <!-- GPIO20 <- Pi TXD -->
+  <path class="w" stroke="#4f46e5" d="M600 414 H700 V530 H760"/>
+  <!-- GPIO21 -> Pi RXD -->
+  <path class="w" stroke="#be123c" d="M600 448 H670 V558 H760"/>
+  <text x="604" y="408" class="muted">RX</text>
+  <text x="604" y="442" class="muted">TX</text>
+
+  <!-- pin dots -->
+  <g class="dot">
+    <circle cx="420" cy="210" r="4"/><circle cx="420" cy="244" r="4"/><circle cx="420" cy="278" r="4"/>
+    <circle cx="420" cy="312" r="4"/><circle cx="420" cy="346" r="4"/><circle cx="420" cy="380" r="4"/>
+    <circle cx="420" cy="414" r="4"/><circle cx="420" cy="448" r="4"/>
+    <circle cx="600" cy="210" r="4"/><circle cx="600" cy="244" r="4"/><circle cx="600" cy="278" r="4"/>
+    <circle cx="600" cy="312" r="4"/><circle cx="600" cy="346" r="4"/><circle cx="600" cy="380" r="4"/>
+    <circle cx="600" cy="414" r="4"/><circle cx="600" cy="448" r="4"/>
+    <circle cx="260" cy="244" r="4"/><circle cx="260" cy="278" r="4"/><circle cx="260" cy="312" r="4"/>
+    <circle cx="260" cy="346" r="4"/><circle cx="260" cy="414" r="4"/><circle cx="260" cy="448" r="4"/>
+    <circle cx="760" cy="190" r="4"/><circle cx="760" cy="348" r="4"/><circle cx="760" cy="374" r="4"/>
+    <circle cx="760" cy="400" r="4"/><circle cx="760" cy="530" r="4"/><circle cx="760" cy="558" r="4"/>
+  </g>
+
+  <!-- ================= Power ================= -->
+  <line x1="40" y1="660" x2="960" y2="660" stroke="#e2e8f0" stroke-width="2"/>
+  <text x="40" y="692" class="title">供电（二选一）</text>
+
+  <rect class="box" x="40" y="708" width="250" height="110" rx="8"/>
+  <text x="54" y="734" class="title">A. 桌面版</text>
+  <text x="54" y="758" class="pin">只插 SuperMini 的 USB-C。</text>
+  <text x="54" y="780" class="pin">板子的 <tspan class="v5">5V</tspan> 脚就是 USB 5V，</text>
+  <text x="54" y="802" class="pin">直接给点阵供电。</text>
+
+  <text x="320" y="734" class="title">B. 电池版（原机）</text>
+  <rect class="pwr" x="320" y="748" width="110" height="56" rx="8"/>
+  <text x="375" y="772" class="pin" text-anchor="middle">18650</text>
+  <text x="375" y="792" class="sub" text-anchor="middle">单节电池盒</text>
+  <rect class="pwr" x="470" y="748" width="130" height="56" rx="8"/>
+  <text x="535" y="772" class="pin" text-anchor="middle">CD42 模块</text>
+  <text x="535" y="792" class="sub" text-anchor="middle">充电 + 升压 5V</text>
+  <rect class="pwr" x="640" y="748" width="110" height="56" rx="8"/>
+  <text x="695" y="772" class="pin" text-anchor="middle">船型开关</text>
+  <text x="695" y="792" class="sub" text-anchor="middle">电源总开关</text>
+  <rect class="pwr" x="790" y="748" width="170" height="56" rx="8"/>
+  <text x="875" y="772" class="pin" text-anchor="middle"><tspan class="v5">5V</tspan> 总线</text>
+  <text x="875" y="792" class="sub" text-anchor="middle">SuperMini 5V 脚 + 点阵</text>
+  <g stroke="#dc2626" stroke-width="3" fill="none" stroke-linecap="round">
+    <path d="M430 776 H470"/><path d="M600 776 H640"/><path d="M750 776 H790"/>
+  </g>
+  <text x="450" y="768" class="muted" text-anchor="middle">BAT</text>
+  <text x="620" y="768" class="muted" text-anchor="middle">OUT</text>
+  <path d="M535 748 V724" stroke="#dc2626" stroke-width="3" fill="none"/>
+  <text x="545" y="726" class="sub">IN ← 5V 充电（USB 充电口或树莓派 5V）</text>
+  <text x="40" y="844" font-size="13" font-weight="700" fill="#b91c1c">⚠ 电池版：插 USB 调试前先关船型开关，否则电脑的 USB 5V 和 CD42 的输出会接在一起。</text>
+</svg>

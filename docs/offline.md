@@ -1,91 +1,93 @@
-# 脱机程序与 wwb timer
+**English** · [简体中文](offline.zh-CN.md)
 
-设备有两种状态：
+# Offline program and wwb timer
 
-- **脱机**：没有控制器时，芯片里的脱机程序驱动外设。现在的脱机程序是计时器 wwb timer（`native/timer/`）。
-- **控制器接管**：上位机程序（Python，`wwb.Device`）连上后，命令要**持续 3 秒**才确认连接（防止接触不良时反复连上断开），播完连接动画后设备交给它。程序退出（发 `RELEASE`）或 1.5 秒没有任何命令，就算控制器拔出，脱机程序播放断开动画后恢复显示。**一个程序就是一次连接**：程序结束，连接就结束，即使串口还插着。
+The device has two states:
 
-脱机程序是 C++，**同一份源码编译两次**：编进固件在芯片上运行（原生性能，不经过串口），编成 WebAssembly 在网页模拟器里运行。所以在网页上看到的就是芯片上的效果。
+- **Offline**: with no controller attached, the offline program in the chip drives the peripherals. The current offline program is the timer wwb timer (`native/timer/`).
+- **Controller takeover**: once a host program (Python, `wwb.Device`) connects, commands must **continue for 3 seconds** before the connection is confirmed (so a flaky contact doesn't connect and disconnect repeatedly); after the connect animation plays, the device is handed over to it. When the program exits (sends `RELEASE`) or no command arrives for 1.5 seconds, the controller counts as unplugged; the offline program plays the disconnect animation and resumes its display. **One program is one connection**: when the program ends, the connection ends, even if the serial cable is still plugged in.
+
+The offline program is C++, and **the same source is compiled twice**: into the firmware to run on the chip (native performance, not going through the serial port), and into WebAssembly to run in the web simulator. So what you see in the browser is exactly what the chip does.
 
 ## wwb timer
 
-| 操作 | 效果 |
+| Action | Effect |
 |---|---|
-| 开关拨上 | 开始计时。点阵：三个箭头冲上去，全部出画面后已有的点依次快速亮起。OLED：旧画面消散，大 ▶ 弹出、一圈波纹扩散，▶ 缩小飞进状态栏，“计时中”逐字打出，两位秒数依次从下面滑入，进度条从中间展开。数码管亮一下 |
-| 开关拨下 | 停止。点阵：三个箭头落下，已有的点依次亮起，新的一个点掉进自己的格子、闪两下。OLED：大 ‖ 从上面落下、一圈波纹向里收拢，‖ 飞进状态栏，秒数从上面滑入；新点落地时次数往上滚一格，飘出“+1” |
-| 停止时 | 数码管常亮；OLED 上的秒数和进度条缓慢呼吸闪烁（亮 1.8s → 渐暗 → 灭 0.4s → 渐亮） |
-| 计时时 | 数码管冒号每秒闪一次；点阵上“下一个格子”跟着闪 |
-| 开关在**下面**时开机 | 接着上次的累计时间 |
-| 开关在**上面**时开机 | 清零（时间和点数），清零提示后直接开始计时 |
+| Switch up | Start timing. Matrix: three arrows shoot upward; once fully off-screen, the existing dots light up one by one in quick succession. OLED: the old screen dissolves, a big ▶ pops out with a ripple spreading outward, the ▶ shrinks and flies into the status bar, “计时中” (“timing”) is typed out character by character, the two seconds digits slide in from below one after the other, and the progress bar unfolds from the middle. The 7-segment display flashes once |
+| Switch down | Stop. Matrix: three arrows fall down, the existing dots light up one by one, and a new dot drops into its cell and blinks twice. OLED: a big ‖ drops from above with a ripple contracting inward, the ‖ flies into the status bar, and the seconds slide in from above; as the new dot lands, the count rolls up by one and a “+1” floats out |
+| While stopped | The 7-segment display stays lit; the seconds and progress bar on the OLED slowly breathe (on 1.8s → fade out → off 0.4s → fade in) |
+| While timing | The 7-segment colon blinks once per second; the "next cell" on the matrix blinks along |
+| Power on with the switch **down** | Continue from the previous accumulated time |
+| Power on with the switch **up** | Reset (time and dot count); after the reset notice, timing starts immediately |
 
-- **数码管**：`时:分`，不足 10 小时首位空白；100 小时起显示 `123h`，1000 小时起只显示小时数（这块数码管只有中间的冒号，没有小数点）。
-- **OLED**：状态（计时中 / 已停止）、第几次、**秒**（时、分在数码管上），换秒时变了的那一位往上滚；底部是**一分钟进度条**（每 15 秒一个刻度）。
-- **点阵**：每完成一次“开 → 关”，从左上角起多亮一个点，按行排，最多 64 个；常态亮度 1（最低档之上一档）。
-- **开机**：老显示器式开机动画，亮出标题“wwb timer”。之后提示“插入控制器 / 解锁更多功能”：OLED 和点阵上插头滑进插座。每隔 10 秒重复，直到第一次拨开关或接入控制器为止；之后再也不提示，直到下次开机。
-- **控制器连接**（OLED 与点阵都是插头动画）：
-  - 连接中（3 秒）：插头慢慢靠近插座，插座的灯慢闪，“正在连接控制器…”加 3 秒进度条。
-  - 确认：插头“咔”地插进去，火花、点阵闪一下，“控制器已连接”，数据沿线流进去，1.2 秒后淡出、交给控制器。
-  - 连接中断（3 秒内断了）：插头退回去，“连接中断”，回到计时画面。
-  - 断开：插头被拔出、退走，“控制器已断开”，再播一次开机的标题动画“wwb timer”，回到计时画面。
-- **控制器接管期间**计时照常按开关进行（画面不显示），开关事件同时上报给控制器。
-- **断电保留**：芯片存在 NVS 里（计时中每 30 秒存一次，开关拨动时立即存），网页存在 localStorage。板子没有时钟电池，断电期间不计时；计时中突然断电，最多丢最后 30 秒。
+- **7-segment display**: `hours:minutes`, with the first digit blank below 10 hours; from 100 hours it shows `123h`, and from 1000 hours only the hour count (this display has only the middle colon, no decimal points).
+- **OLED**: status (计时中 “timing” / 已停止 “stopped”), the session number, and **seconds** (hours and minutes are on the 7-segment display); when the second changes, the digit that changed rolls upward. At the bottom is a **one-minute progress bar** (a tick every 15 seconds).
+- **Matrix**: each completed "on → off" lights one more dot, starting from the top-left and filling row by row, up to 64; normal brightness is 1 (one step above the lowest).
+- **Boot**: an old-monitor-style boot animation reveals the title “wwb timer”. Then a hint “插入控制器 / 解锁更多功能” (“plug in a controller / unlock more features”) is shown: a plug slides into a socket on both the OLED and the matrix. It repeats every 10 seconds until the switch is flipped for the first time or a controller connects; after that it is never shown again until the next power-on.
+- **Controller connection** (plug animation on both the OLED and the matrix):
+  - Connecting (3 seconds): the plug slowly approaches the socket, the socket's light blinks slowly, “正在连接控制器…” (“connecting to controller…”) plus a 3-second progress bar.
+  - Confirmed: the plug clicks in, sparks fly, the matrix flashes once, “控制器已连接” (“controller connected”), data flows in along the cable, and after 1.2 seconds it fades out and hands over to the controller.
+  - Connection interrupted (dropped within the 3 seconds): the plug backs off, “连接中断” (“connection interrupted”), and it returns to the timer screen.
+  - Disconnected: the plug is pulled out and backs away, “控制器已断开” (“controller disconnected”), the boot title animation “wwb timer” plays again, and it returns to the timer screen.
+- **During controller takeover**, timing still follows the switch as usual (not shown on screen), and switch events are also reported to the controller.
+- **Persistence across power loss**: the chip stores to NVS (every 30 seconds while timing, and immediately when the switch is flipped); the web page stores to localStorage. The board has no RTC battery, so no time is counted while powered off; a sudden power loss while timing loses at most the last 30 seconds.
 
-## 怎么写脱机程序
+## Writing an offline program
 
 ```
 native/
-  wwb/wwb.h, wwb.cpp   框架：Device（输出带缓存，只发变化）、Canvas（u8g2 画布）、App、Runtime（控制器接管）
+  wwb/wwb.h, wwb.cpp   framework: Device (buffered output, sends only changes), Canvas (u8g2 canvas), App, Runtime (controller takeover)
   timer/timer.cpp      wwb timer
-  web/main.cpp         WebAssembly 的运行环境（命令交给模拟器）
-  build_web.py         编译成 web/js/native.js
-firmware/src/offline.* 芯片上的运行环境（命令直接交给 execute()，存储用 NVS，约 60 帧/秒的任务）
+  web/main.cpp         WebAssembly runtime (passes commands to the simulator)
+  build_web.py         compiles to web/js/native.js
+firmware/src/offline.* on-chip runtime (commands go straight to execute(), storage in NVS, ~60 fps task)
 ```
 
-程序实现 `wwb::App`，并提供 `wwb::createApp()`：
+A program implements `wwb::App` and provides `wwb::createApp()`:
 
 ```cpp
 class MyApp : public wwb::App {
-  void setup(Device &d, uint64_t now) override;                      // 开机；d.input(SWITCH) 为开机时的开关状态
-  void input(Device &d, Input in, bool active, uint64_t t) override;  // 开关 / BOOT 变化，t 为变化时刻 µs
-  void controller(Device &d, bool attached, uint64_t now) override;  // 控制器接入 / 断开
-  void frame(Device &d, uint64_t now) override;                      // 约 60 次/秒，接管期间也调用（d.visible() 为 false）
-  size_t report(uint64_t now, uint8_t *out, size_t cap) override;    // 可选：给控制器的状态（协议 APP_STATE）
+  void setup(Device &d, uint64_t now) override;                      // boot; d.input(SWITCH) is the switch state at boot
+  void input(Device &d, Input in, bool active, uint64_t t) override;  // switch / BOOT change, t is the change time in µs
+  void controller(Device &d, bool attached, uint64_t now) override;  // controller attached / detached
+  void frame(Device &d, uint64_t now) override;                      // ~60 times/s, also called during takeover (d.visible() is false)
+  size_t report(uint64_t now, uint8_t *out, size_t cap) override;    // optional: state for the controller (protocol APP_STATE)
 };
 wwb::App *wwb::createApp() { return new MyApp(); }
 ```
 
-- **OLED**：在 `Canvas` 上用 u8g2 的 C 接口画（`u8g2_DrawStr(c.u(), …)`，字体用 `u8g2_font_*`），然后 `d.oled(canvas)`；只发变化的区域（`OLED_BLIT`）。`fade()` 做有序抖动淡入淡出，`invert()` 反色。
-- **数码管**：`d.seg(段码[4])`、`d.segConfig(亮度, 开/关)`；`wwb::segDigit()` 给数字段码。
-- **点阵**：`d.mx(行[8])`（行 0 在上，bit7 在左）、`d.mxIntensity(0-15)`。
-- **存储**：`d.load()` / `d.save()`，一小块二进制。
-- **上报**：`report()` 返回给控制器的状态，状态变了调 `d.changed()`，订阅了的控制器会收到 `APP_STATE` 事件。wwb timer 上报计时状态（格式见 [protocol.md](protocol.md)），控制器程序（如 dao timer）据此表演，时间始终以芯片为准。
-- 时间都是设备的 µs 时钟（与输入事件同一时钟）。不要用 `millis()` 之类平台函数，也不要用全局状态，模拟器重启设备时会重新 `createApp()`。
+- **OLED**: draw on a `Canvas` with u8g2's C API (`u8g2_DrawStr(c.u(), …)`, fonts from `u8g2_font_*`), then `d.oled(canvas)`; only the changed region is sent (`OLED_BLIT`). `fade()` does ordered-dither fade in/out, `invert()` inverts colors.
+- **7-segment display**: `d.seg(segments[4])`, `d.segConfig(brightness, on/off)`; `wwb::segDigit()` gives the segment byte for a digit.
+- **Matrix**: `d.mx(rows[8])` (row 0 at the top, bit7 on the left), `d.mxIntensity(0-15)`.
+- **Storage**: `d.load()` / `d.save()`, a small binary blob.
+- **Reporting**: `report()` returns the state for the controller; call `d.changed()` when the state changes, and subscribed controllers receive an `APP_STATE` event. wwb timer reports its timing state (format in [protocol.md](protocol.md)), and controller programs (such as dao timer) perform based on it, with the chip always being the source of truth for time.
+- All times are the device's µs clock (the same clock as input events). Don't use platform functions like `millis()`, and don't use global state: when the simulator restarts the device it calls `createApp()` again.
 
-换程序：改 `firmware/platformio.ini` 的 `build_src_filter` 和 `native/build_web.py` 的参数。
+To switch programs: change `build_src_filter` in `firmware/platformio.ini` and the arguments in `native/build_web.py`.
 
-## 编译
+## Building
 
 ```bash
-# 芯片
+# Chip
 conda activate esp32
 cd firmware && pio run -t upload
 
-# 网页（生成 web/js/native.js，单文件，内嵌 wasm）
+# Web (generates web/js/native.js, a single file with embedded wasm)
 conda run -n emsdk python native/build_web.py
 ```
 
-`emsdk` 环境：`conda create -n emsdk -c conda-forge emscripten=4.0.9`。conda-forge 的这个包带的 binaryen 是 117，而 emcc 4.0.9 需要 123，要从 [binaryen 发布页](https://github.com/WebAssembly/binaryen/releases/tag/version_123) 下载 `binaryen-version_123-x86_64-linux.tar.gz`，把 `bin/`、`lib/` 拷进环境覆盖。
+`emsdk` environment: `conda create -n emsdk -c conda-forge emscripten=4.0.9`. The binaryen bundled with this conda-forge package is version 117, but emcc 4.0.9 needs 123: download `binaryen-version_123-x86_64-linux.tar.gz` from the [binaryen release page](https://github.com/WebAssembly/binaryen/releases/tag/version_123) and copy its `bin/` and `lib/` into the environment, overwriting the existing files.
 
-## 控制器协议
+## Controller protocol
 
 ```
-脱机 ──任何命令──▶ 连接中 ──命令持续 3s（间隔都不超过 1s）──▶ 已确认（连接动画 1.2s）──▶ 接管
-          ▲          │ 间隔超过 1s 或 RELEASE                    │ 同左                      │ RELEASE 或 1.5s 没有命令
-          └──────────┴─────────────── 连接中断 ◀────────────────┘                           ▼
-          └──────────────────────────────────────────────────────────────────────────── 断开（断开动画）
+Offline ──any command──▶ Connecting ──commands for 3s (no gap over 1s)──▶ Confirmed (connect animation 1.2s)──▶ Takeover
+          ▲          │ gap over 1s or RELEASE                        │ same as left               │ RELEASE or no command for 1.5s
+          └──────────┴─────────────── Interrupted ◀─────────────────┘                            ▼
+          └──────────────────────────────────────────────────────────────────────────── Disconnected (disconnect animation)
 ```
 
-- 接管之前，控制器只能用不碰外设的命令（PING、INFO、TIME、STATS、IO_READ、SUBSCRIBE、CONNECT…）；显示类（0x2_/0x3_/0x4_）、LED、IO_CONFIG、BENCH 回 `NOT_READY`（5）。
-- `CONNECT`（0x0D）查询连接状态：回 `u8 状态`（0 脱机 / 1 连接中 / 2 已接管）、`u32 距离接管还有多少 ms`。
-- 进入接管时外设先恢复开机默认：OLED 清屏、正常显示、对比度 0xCF；数码管亮度 3、清空；点阵亮度 1、旋转 1、10MHz、清空；消抖 20ms。交还时同样恢复默认，脱机程序重新画全部内容。
-- `wwb.Device` 打开时轮询 `CONNECT`，等到已接管才返回（约 4.2 秒，`connect=False` 可跳过）；空闲时每 0.5 秒发一次 `PING` 保持控制；`close()` 时发 `RELEASE`。状态机在 `native/wwb/wwb.cpp` 的 `Runtime` 里，芯片和网页共用。
+- Before takeover, the controller may only use commands that don't touch the peripherals (PING, INFO, TIME, STATS, IO_READ, SUBSCRIBE, CONNECT…); display commands (0x2_/0x3_/0x4_), LED, IO_CONFIG and BENCH return `NOT_READY` (5).
+- `CONNECT` (0x0D) queries the connection state: replies `u8 state` (0 offline / 1 connecting / 2 taken over) and `u32 ms remaining until takeover`.
+- On entering takeover, the peripherals are first reset to their power-on defaults: OLED cleared, normal display, contrast 0xCF; 7-segment brightness 3, cleared; matrix brightness 1, rotation 1, 10MHz, cleared; debounce 20ms. On hand-back the defaults are restored the same way, and the offline program redraws everything.
+- `wwb.Device` polls `CONNECT` on open and only returns once taken over (about 4.2 seconds; `connect=False` skips this); while idle it sends a `PING` every 0.5 seconds to keep control; `close()` sends `RELEASE`. The state machine lives in `Runtime` in `native/wwb/wwb.cpp`, shared by the chip and the web page.
