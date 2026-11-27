@@ -105,8 +105,24 @@ def image_to_frame(img) -> bytes:
 
 
 SIM_ADDR = "127.0.0.1:8766"  # python -m wwb.sim 给程序连接的 TCP 端口
-# 默认串口：环境变量 WWB_PORT（树莓派等用 UART 的上位机设成 /dev/serial0），否则 USB
-DEFAULT_PORT = os.environ.get("WWB_PORT") or "/dev/ttyACM0"
+def _default_port() -> str:
+    """默认串口：环境变量 WWB_PORT（树莓派等用 UART 的上位机设成 /dev/serial0）；
+    否则找 USB 上的 ESP32-C3（乐鑫 VID 0x303A，macOS 是 /dev/cu.usbmodem…，Windows 是 COMx）；都没有就用 /dev/ttyACM0"""
+    if os.environ.get("WWB_PORT"):
+        return os.environ["WWB_PORT"]
+    if os.path.exists("/dev/ttyACM0"):
+        return "/dev/ttyACM0"
+    try:
+        from serial.tools import list_ports
+        for p in sorted(list_ports.comports(), key=lambda p: p.device):
+            if p.vid == 0x303A and not p.device.startswith("/dev/tty."):  # macOS 上用 cu.*，tty.* 打开会等 DCD
+                return p.device
+    except Exception:
+        pass
+    return "/dev/ttyACM0"
+
+
+DEFAULT_PORT = _default_port()
 KEEPALIVE_S = 0.5  # 这么久没发命令就发一个 PING：设备 1.5s 收不到命令会认为控制器已拔出，交还给脱机程序
 
 
@@ -169,7 +185,7 @@ class Device:
 
     def _no_hupcl(self):
         """关闭串口时不拉低 DTR/RTS，避免 USB-Serial/JTAG 复位芯片"""
-        if sys.platform.startswith("linux"):
+        if sys.platform != "win32":  # Linux、macOS 都有 HUPCL
             import termios
             attrs = termios.tcgetattr(self.ser.fd)
             attrs[2] &= ~termios.HUPCL

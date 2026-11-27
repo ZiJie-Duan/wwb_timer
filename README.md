@@ -1,11 +1,104 @@
-# wwb_timer
+<h1 align="center">wwb timer</h1>
 
-ESP32-C3 驱动的交互设备：1 个开关 + 0.96 寸 OLED + TM1637 四位数码管 + MAX7219 8×8 点阵。
+<p align="center">
+  一台拨一下开关就开始计时的桌面小机器：ESP32-C3 + OLED + 数码管 + 8×8 点阵。<br>
+  不接电脑时自己计时，插上树莓派就变成可编程的三屏终端。
+</p>
 
-项目分两条线：
+<p align="center">
+  <a href="https://zijie-duan.github.io/wwb_timer/"><b>▶ 在线试玩</b></a> ·
+  <a href="docs/build.md"><b>🔧 复刻指南</b></a> ·
+  <a href="https://github.com/ZiJie-Duan/wwb_timer/releases"><b>⬇ 下载固件</b></a> ·
+  <a href="#english">English</a>
+</p>
 
-1. **设备 API**：ESP32-C3 作为驱动器，把四个器件封装成一套高速二进制串口协议，USB 和 UART 两条通道共用。上位机（“控制器”）通过它扩展和控制设备。
-2. **脱机计时器 wwb timer**：没有控制器时芯片自己运行的程序。开关拨上计时、拨下停止，时间累计断电保留，每次开关在点阵上多亮一个点；插上控制器就交给控制器，拔掉再回来。C++ 写成，同一份源码编进固件、也编成 WebAssembly 在网页模拟器里运行。见 [docs/offline.md](docs/offline.md)。
+<p align="center">
+  <img src="docs/images/hero.jpg" width="720" alt="wwb timer 成品：数码管、OLED、钮子开关、点阵，左边是树莓派控制器">
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/ESP32--C3-RISC--V-E7352C" alt="ESP32-C3">
+  <img src="https://img.shields.io/badge/PlatformIO-Arduino%203-F5822A" alt="PlatformIO">
+  <img src="https://img.shields.io/badge/WebAssembly-模拟器-654FF0" alt="WebAssembly">
+  <img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT">
+</p>
+
+## 它能做什么
+
+<img src="docs/images/demo.gif" width="440" align="right" alt="开机动画和拨开关计时">
+
+- **拨上开关计时，拨下停止。** 数码管显示累计的 `时:分`，OLED 显示秒数和一分钟进度条，每完成一次“开 → 关”，点阵上多亮一个点。时间存在芯片里，断电不丢。
+- **插上控制器解锁更多玩法。** 树莓派通过串口接管三块屏，运行 Python 程序；拔掉后自动交还给芯片里的计时器，计时不中断。
+- **dao timer：道家赛博计时器。** 开关拨上开一场法事（燃香、画符、炼丹……55 种），拨下是歇（煮茶、听雨、寒江独钓……54 种），全部是 1 位像素动画。
+- **网页模拟器。** 不用硬件也能玩：芯片上的计时器源码同时编译成 WebAssembly，在浏览器里跑的就是同一份程序。
+- **高速串口 API。** 设备端是一套二进制协议，OLED 整帧 95 fps、点阵约 2.7 万帧/s，可以拿来做自己的程序。
+
+<br clear="right">
+
+<p align="center"><img src="docs/images/dao-scenes.png" width="820" alt="dao timer 的几个场景：燃香、炼丹、朱砂画符、赛博烧香、煮茶、寒江独钓"></p>
+
+## 自己做一台
+
+不需要画 PCB，也不需要蚀刻：所有芯片都在现成模块上，照着接线图连二十来根线就行。桌面版物料约 **45 元**，电池版约 **70 元**（不含打印和树莓派）。
+
+<p align="center"><a href="docs/build.md#2-接线"><img src="docs/images/wiring.svg" width="820" alt="接线图"></a></p>
+
+[**复刻指南 →**](docs/build.md)：物料清单（带淘宝关键词和参考价）、接线、供电、3D 打印外壳、组装、刷固件、排错。
+
+| 器件 | 型号 |
+|---|---|
+| 主控 | ESP32-C3 SuperMini |
+| OLED | 0.96 寸 SSD1306，I²C |
+| 数码管 | TM1637 0.56 寸四位，带冒号 |
+| 点阵 | MAX7219 8×8 |
+| 开关 | 钮子开关（任意两脚开关） |
+| 电池版 | 18650 + CD42 充放电模块 + 船型开关 |
+| 控制器（可选） | 树莓派 Zero 2 W |
+| 外壳 | 3D 打印，Fusion 360 源文件在 [`hardware/enclosure/`](hardware/enclosure/) |
+
+## 快速开始
+
+**刷固件**：从 [Releases](https://github.com/ZiJie-Duan/wwb_timer/releases) 下载 `.bin`，然后
+
+```bash
+pip install esptool
+esptool --chip esp32c3 write_flash 0x0 wwb_timer-v0.2.0-esp32c3.bin
+```
+
+或者从源码编译：`pip install platformio && cd firmware && pio run -t upload`。
+
+**用电脑控制**（串口自动识别；树莓派上设 `WWB_PORT=/dev/serial0`）：
+
+```bash
+pip install -e host
+python -m wwb info                   # 设备信息
+python -m wwb text "你好" -f 5       # OLED 写中文
+python -m wwb seg 12:34              # 数码管
+python -m wwb events                 # 实时打印开关事件
+python -m wwb.showcase               # 赛博风多场景演示（拨开关切场景）
+python -m apps.dao                   # dao timer
+```
+
+**不接设备，在浏览器里跑**：
+
+```bash
+python -m wwb.sim                    # 打开 http://127.0.0.1:8765，右侧选程序运行，点击或按空格拨开关
+```
+
+没有程序运行时，网页里跑的是芯片上同一份脱机计时器（WebAssembly）；运行一个 Python 程序 = 插入控制器。模拟器按固件逐条执行协议命令，并模拟真机的刷新时序，实测刷新数和真机相差 1% 左右。程序放在 `apps/<名字>/`，同一个程序加 `--port sim` 跑在模拟器上，去掉就跑在真机上。详见 [docs/simulator.md](docs/simulator.md)。
+
+## 文档
+
+| 文档 | 内容 |
+|---|---|
+| [build.md](docs/build.md) | **复刻指南** |
+| [hardware.md](docs/hardware.md) | 器件、GPIO、供电、原机实测结论 |
+| [offline.md](docs/offline.md) | 芯片里的计时器 wwb timer：操作、动画、怎么写脱机程序 |
+| [dao.md](docs/dao.md) | dao timer：规则和全部场景一览 |
+| [simulator.md](docs/simulator.md) | 网页模拟器 |
+| [raspberrypi.md](docs/raspberrypi.md) | 树莓派作控制器（UART）、开机自启 |
+| [protocol.md](docs/protocol.md) | 串口协议规范 |
+| [benchmarks.md](docs/benchmarks.md) | 性能极限实测 |
 
 ## 目录
 
@@ -29,60 +122,17 @@ host/wwb/            上位机 Python 库
   protocol.py        协议常量与编解码
   bench.py           性能极限测试
   maxdemo.py         三屏同时全速演示
-  showcase.py        赛博风多场景演示：开机自检、星空跃迁、四维超立方体、代码雨、等离子、频谱、故障标志
-  visual.py          目测验证（时钟档位）
+  showcase.py        赛博风多场景演示
   cli.py             命令行
   remote.py          把程序同步到树莓派并在那里运行（UART 驱动设备）
-  sim.py             网页模拟器的 Python 桥：程序启停、自动重启、协议转发
+  sim.py             网页模拟器的 Python 桥
   app.py             程序入口 run(main)
-apps/                程序，每个一个包（stopwatch：秒表；dao：道家赛博计时器，dao_fast / dao_gallery 是它的快进版与画廊）
-web/                 网页模拟器：三块屏 + 开关 + 程序列表
-docs/
-  hardware.md        器件、接线、供电、实测结论
-  protocol.md        协议规范
-  benchmarks.md      性能极限实测
-  simulator.md       网页模拟器
-  offline.md         脱机程序与 wwb timer
-  dao.md             dao timer：道家赛博计时器（法事 / 歇 / 起卦，全部场景一览）
-  raspberrypi.md     树莓派作上位机（GPIO 串口接 UART）
+apps/                程序，每个一个包（stopwatch：秒表；dao：道家赛博计时器）
+web/                 网页模拟器
+hardware/enclosure/  外壳 Fusion 360 源文件
+docs/                文档和图片
 results/             跑分原始数据（JSON）
 ```
-
-## 快速开始
-
-```bash
-conda activate esp32
-cd ~/wwb_timer/firmware && pio run -t upload        # 编译并烧录
-pip install -e ~/wwb_timer/host                      # 已装过可跳过
-
-python -m wwb info                   # 设备信息
-python -m wwb text "你好" -f 5       # OLED 写中文
-python -m wwb seg 12:34              # 数码管
-python -m wwb events                 # 实时打印开关事件
-python -m wwb.bench                  # 跑全部性能测试
-python -m wwb.maxdemo                # 三屏同时全速演示，实时显示各屏刷新率
-python -m wwb.maxdemo --rate 320     # 数码管、点阵限速 320 帧/s（点阵指针一秒一圈）
-python -m wwb.showcase               # 赛博风多场景演示（拨开关切场景，按 BOOT 反色）
-```
-
-## 网页模拟器（不接设备）
-
-```bash
-python -m wwb.sim                    # 打开 http://127.0.0.1:8765，在右侧选程序运行，拨开关试交互
-```
-
-没有程序运行时，网页里跑的是芯片上同一份脱机计时器（WebAssembly）；运行一个 Python 程序 = 插入控制器。
-模拟器按固件逐条执行协议命令，并模拟真机的刷新时序（OLED 约 95fps、数码管只写变化的位、20ms 消抖），实测刷新数与真机误差在 1% 左右。
-程序放在 `apps/<名字>/`（Python 包，入口用 `wwb.app.run(main)`），会自动出现在网页列表里，改了文件自动重启。
-同一个程序加 `--port sim` 跑在模拟器上，去掉就跑在真机上。详见 [docs/simulator.md](docs/simulator.md)。
-
-## dao timer
-
-道家赛博计时器：开关拨上开一场法事（燃香、画符、结印、炼丹……55 种），拨下是歇（品茗、高卧、观云……54 种），起卦 9 种。计时以芯片为准，法事进度存在芯片里，断线重连接得上。在模拟器里选“dao timer 画廊”逐个看。见 [docs/dao.md](docs/dao.md)。
-
-## 树莓派作上位机
-
-树莓派的 GPIO14/15 接 ESP32 的 GPIO20/21（UART1，921600），程序在电脑上开发，用 `python -m wwb.remote apps.stopwatch` 通过 WiFi 同步到树莓派上运行。见 [docs/raspberrypi.md](docs/raspberrypi.md)。
 
 ## 关键数字
 
@@ -100,9 +150,18 @@ python -m wwb.sim                    # 打开 http://127.0.0.1:8765，在右侧�
 
 ## 注意
 
-- 开发板只用 USB 供电；外部 5V 只给模块，**不要接开发板 5V 引脚**，所有 GND 相连。见 [docs/hardware.md](docs/hardware.md)。
-- 打开 `/dev/ttyACM0` 时要保持 DTR、RTS 同为有效，并关闭 HUPCL，否则会复位芯片。`wwb.Device` 已处理。
+- 电池版插 USB 调试前先关电源开关，否则电脑的 USB 5V 会和电池升压输出接在一起。见 [docs/build.md](docs/build.md#3-供电)。
+- ESP32-C3 的 IO 不耐 5V：TM1637 用 5V 供电时必须加电平转换，简化接法是让它用 3.3V。
+- 在 Linux / macOS 上打开串口时要保持 DTR、RTS 同为有效，并关闭 HUPCL，否则会复位芯片。`wwb.Device` 已处理。
+
+## English
+
+**wwb timer** is a desk gadget built around an ESP32-C3 SuperMini, a 0.96" SSD1306 OLED, a TM1637 4-digit display, a MAX7219 8×8 LED matrix and a toggle switch. Flip the switch up to start timing, down to stop; total time is kept in flash, and each completed session lights one more dot on the matrix. Plug in a Raspberry Pi over UART and it becomes a scriptable three-display terminal (see `apps/dao`, a pixel-art Taoist-themed timer with 120 scenes). The offline timer is written in C++ and compiled both into the firmware and to WebAssembly, so the [online demo](https://zijie-duan.github.io/wwb_timer/) runs the exact same code.
+
+- **Build one**: no custom PCB needed — every chip is on an off-the-shelf module. See the [build guide](docs/build.md) (Chinese) for the wiring diagram, BOM, power options and enclosure; the wiring diagram and pin table are self-explanatory.
+- **Flash**: download the merged `.bin` from [Releases](https://github.com/ZiJie-Duan/wwb_timer/releases) and run `esptool --chip esp32c3 write_flash 0x0 <file>.bin`, or build with `pio run -t upload` in `firmware/`.
+- **Host library**: `pip install -e host`, then `python -m wwb info`. The binary serial protocol is documented in [docs/protocol.md](docs/protocol.md).
 
 ## 许可证
 
-[MIT](LICENSE)
+[MIT](LICENSE)。dao timer 用到的 Fusion Pixel 字体是 OFL 协议，见 `apps/dao/assets/fonts`。

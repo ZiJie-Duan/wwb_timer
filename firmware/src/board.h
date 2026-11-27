@@ -18,4 +18,4 @@ constexpr int MATRIX_CS  = 10;
 constexpr int UART_RX = 20;
 constexpr int UART_TX = 21;
 
-constexpr const char *FW_VERSION = "0.1.0";
+constexpr const char *FW_VERSION = "0.2.0";

@@ -11,7 +11,7 @@
   const P = WWB.proto, G = WWB.u8g2;
   const { Op, Flag, Err } = P;
   const W = 128, PAGES = 8;
-  const FW_VERSION = "0.1.0";
+  const FW_VERSION = "0.2.0";
   const MAX_LAG_US = 20000;  // 页面卡住很久后不补算积压的推送
   const FONT_NAMES = ["6x10", "9x15", "logisoso16", "logisoso24n", "logisoso32n", "wqy12"];
   const ARROW_UP = [0x18, 0x3c, 0x7e, 0xdb, 0x18, 0x18, 0x18, 0x18];

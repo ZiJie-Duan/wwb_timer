@@ -182,6 +182,14 @@
     pill.classList.toggle("ok", ok);
   }
 
+  let bridgeSeen = false;
+  function showDemo() {
+    setPill("在线演示：芯片上的脱机计时器", false);
+    const autoLabel = autoEl.closest("label");
+    if (autoLabel) autoLabel.style.display = "none";
+    appsEl.innerHTML = '<div class="empty muted">这里跑的是芯片上同一份脱机计时器（WebAssembly）。拨开关试试。<br>想运行 apps/ 里的 Python 程序，克隆仓库后运行 <code>python -m wwb.sim</code>。</div>';
+  }
+
   function connectBridge() {
     if (!bridgeUrl) {
       setPill("Python 桥：未连接（直接打开的文件）", false);
@@ -189,12 +197,13 @@
       return;
     }
     let link = null, fresh = false;
-    try { ws = new WebSocket(bridgeUrl); } catch { return; }
+    try { ws = new WebSocket(bridgeUrl); } catch { return showDemo(); }
     ws.binaryType = "arraybuffer";
     ws.onopen = () => {
       link = emu.addLink("usb", (data) => ws.readyState === 1 && ws.send(data));
       setPill("Python 桥：已连接", true);
       fresh = true;
+      bridgeSeen = true;
     };
     ws.onmessage = (e) => {
       if (typeof e.data !== "string") {
@@ -224,6 +233,8 @@
         log("info", "Python 桥断开" + (e.reason ? `：${e.reason}` : ""));
       }
       link = null;
+      // 从没连上过：页面不是 python -m wwb.sim 给的（比如 GitHub Pages 上的在线演示），只跑脱机计时器
+      if (!bridgeSeen) return showDemo();
       setPill("Python 桥：未连接", false);
       if (e.code !== 4000) setTimeout(connectBridge, 2000);  // 4000 = 被新打开的页面顶替
     };
